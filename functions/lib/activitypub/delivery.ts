@@ -1,5 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { resolveRemoteActor } from './fetch.ts';
+
 /**
  * Delivery of activities to remote instances.
  *
@@ -16,7 +18,7 @@ export interface DeliveryEnv {
 }
 
 export interface DeliveryActivity {
-  type: string;
+  type?: string;
   [key: string]: unknown;
 }
 
@@ -95,6 +97,65 @@ export async function deliverToRemoteActor(
     .first<{ target_inbox_url: string; shared_inbox_url: string | null }>();
 
   const inboxUrl = following?.shared_inbox_url || following?.target_inbox_url;
+  if (!inboxUrl) return;
+  await deliverToInbox(env, { inboxUrl, username: options.username, activity: options.activity });
+}
+
+/**
+ * The inbox a remote actor is reached at.
+ *
+ * The cached actor document is used when it is known, otherwise the document
+ * is fetched once and cached. The shared inbox of the instance wins over the
+ * personal inbox of the actor.
+ */
+export async function resolveActorInbox(env: DeliveryEnv, actorUrl: string): Promise<string | null> {
+  const cached = await env.DB.prepare('SELECT inbox_url, shared_inbox_url FROM ap_actors WHERE actor_url = ? LIMIT 1')
+    .bind(actorUrl)
+    .first<{ inbox_url: string; shared_inbox_url: string | null }>();
+  if (cached) return cached.shared_inbox_url || cached.inbox_url;
+
+  const actor = await resolveRemoteActor(actorUrl, env);
+  if (!actor) return null;
+
+  await env.DB.prepare(`
+    INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ON CONFLICT(actor_url) DO UPDATE SET
+      inbox_url = excluded.inbox_url,
+      shared_inbox_url = excluded.shared_inbox_url,
+      public_key_pem = excluded.public_key_pem,
+      preferred_username = excluded.preferred_username,
+      display_name = excluded.display_name,
+      icon_url = excluded.icon_url,
+      domain = excluded.domain,
+      fetched_at = excluded.fetched_at
+  `)
+    .bind(
+      actor.actorUrl,
+      actor.inbox,
+      actor.sharedInbox,
+      actor.publicKeyPem,
+      actor.preferredUsername,
+      actor.displayName,
+      actor.iconUrl,
+      actor.domain,
+    )
+    .run();
+
+  return actor.sharedInbox || actor.inbox;
+}
+
+/**
+ * Queue an activity for the inbox of a remote actor.
+ *
+ * Used for the activities that address a single remote account, such as the
+ * like of a post that was published by that account.
+ */
+export async function deliverToActorInbox(
+  env: DeliveryEnv,
+  options: { actorUrl: string; username: string; activity: DeliveryActivity },
+): Promise<void> {
+  const inboxUrl = await resolveActorInbox(env, options.actorUrl);
   if (!inboxUrl) return;
   await deliverToInbox(env, { inboxUrl, username: options.username, activity: options.activity });
 }

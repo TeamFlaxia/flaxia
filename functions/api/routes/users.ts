@@ -3,6 +3,8 @@ import { nanoid } from 'nanoid';
 import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
+import { buildFollowActivity, buildUndoActivity } from '../../lib/activitypub/activities';
+import { resolveRemoteActor } from '../../lib/activitypub/fetch';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import {
   clearSessionCookie,
@@ -254,28 +256,15 @@ users.post('/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    let actorUrl: string;
-    let actorResponse: Response;
-    try {
-      const actorResult = await fetchRemoteJson(selfLink.href, 'application/activity+json, application/ld+json');
-      actorUrl = actorResult.url;
-      actorResponse = actorResult.response;
-    } catch (error: unknown) {
-      if (error instanceof SsrfError) return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
-      throw error;
-    }
-
-    if (!actorResponse.ok) {
+    // The actor document is the source of truth for the inbox: it is only
+    // accepted when it lives on the same origin as the actor and when it
+    // points at a public inbox.
+    const actor = await resolveRemoteActor(selfLink.href, c.env);
+    if (!actor) {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
-
-    const actorData = (await actorResponse.json()) as { inbox?: string };
-    let inboxUrl: string;
-    try {
-      inboxUrl = parsePublicHttpUrl(String(actorData.inbox ?? '')).toString();
-    } catch {
-      return c.json({ error: 'Remote actor has no valid inbox' }, 400);
-    }
+    const actorUrl = actor.actorUrl;
+    const inboxUrl = actor.inbox;
 
     const existing = await c.env.DB.prepare(
       'SELECT id FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?',
@@ -289,20 +278,40 @@ users.post('/remote-follow', requireAuth, async (c) => {
 
     const followId = nanoid();
     await c.env.DB.prepare(`
-      INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, target_username, target_domain, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, shared_inbox_url, target_username, target_domain, display_name, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     `)
-      .bind(followId, localUser.id, actorUrl, inboxUrl, remoteUsername, domain)
+      .bind(followId, localUser.id, actorUrl, inboxUrl, actor.sharedInbox, remoteUsername, domain, actor.displayName)
       .run();
 
-    const followActivity = {
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      id: `${c.env.BASE_URL}/activities/follow-${followId}`,
-      type: 'Follow',
-      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-      object: actorUrl,
-      to: [actorUrl],
-    };
+    // Remember the actor document so later deliveries do not have to fetch
+    // it again.
+    await c.env.DB.prepare(`
+      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      ON CONFLICT(actor_url) DO UPDATE SET
+        inbox_url = excluded.inbox_url,
+        shared_inbox_url = excluded.shared_inbox_url,
+        public_key_pem = excluded.public_key_pem,
+        preferred_username = excluded.preferred_username,
+        display_name = excluded.display_name,
+        icon_url = excluded.icon_url,
+        domain = excluded.domain,
+        fetched_at = excluded.fetched_at
+    `)
+      .bind(
+        actor.actorUrl,
+        actor.inbox,
+        actor.sharedInbox,
+        actor.publicKeyPem,
+        actor.preferredUsername,
+        actor.displayName,
+        actor.iconUrl,
+        actor.domain,
+      )
+      .run();
+
+    const followActivity = buildFollowActivity(c.env.BASE_URL, localUser.username, actorUrl, followId);
 
     if (c.env.AP_DELIVERY_QUEUE) {
       await c.env.AP_DELIVERY_QUEUE.send({
@@ -386,20 +395,10 @@ users.delete('/remote-follow', requireAuth, async (c) => {
 
     await c.env.DB.prepare('DELETE FROM ap_following WHERE id = ?').bind(following.id).run();
 
-    const followActivityId = `${c.env.BASE_URL}/activities/follow-${following.id}`;
-    const undoActivity = {
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      id: `${c.env.BASE_URL}/activities/undo-${following.id}`,
-      type: 'Undo',
-      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-      object: {
-        id: followActivityId,
-        type: 'Follow',
-        actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-        object: actorUrl,
-      },
+    const followActivity = buildFollowActivity(c.env.BASE_URL, localUser.username, actorUrl, following.id);
+    const undoActivity = buildUndoActivity(c.env.BASE_URL, localUser.username, followActivity, following.id, {
       to: [actorUrl],
-    };
+    });
 
     if (c.env.AP_DELIVERY_QUEUE && following.target_inbox_url) {
       await c.env.AP_DELIVERY_QUEUE.send({

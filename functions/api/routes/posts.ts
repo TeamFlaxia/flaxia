@@ -11,7 +11,8 @@ import {
 } from '../../../src/lib/recommendation/vector-codec.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
-import { buildDeleteActivity } from '../../lib/activitypub/activities';
+import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';
+import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
   type AttachmentInput,
@@ -41,7 +42,6 @@ import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
-import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
   addBusinessDays,
   batchGetFreshAndBookmarkStatus,
@@ -51,7 +51,7 @@ import {
   requireAuth,
   resolveMentions,
 } from '../helpers';
-import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
+import type { Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
 import { extractGameDescription } from './post-versions';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -2085,19 +2085,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
           );
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
-          // Get followers from ap_followers
-          const followers = (await c.env.DB.prepare('SELECT inbox_url FROM ap_followers WHERE local_user_id = ?')
-            .bind(userId)
-            .all()) as { results: Array<{ inbox_url: string }> };
-
-          // Send to queue for each follower
-          for (const follower of followers.results) {
-            await c.env.AP_DELIVERY_QUEUE.send({
-              inboxUrl: follower.inbox_url,
-              activity,
-              senderUsername: username,
-            });
-          }
+          // One delivery per remote inbox: an instance with a shared inbox
+          // expects a single activity, not one per follower.
+          await deliverToFollowers(c.env, { userId, username, activity });
         }
       }
     } catch (e) {
@@ -2199,10 +2189,16 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
 
   // Get post to check ownership for notification and remote actor
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published'",
+    "SELECT user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
   )
     .bind(postId)
-    .first()) as { user_id: string; actor_id: string | null; username: string; text: string } | null;
+    .first()) as {
+    user_id: string;
+    actor_id: string | null;
+    username: string;
+    text: string;
+    ap_object_id: string | null;
+  } | null;
 
   if (!post) {
     return c.json({ error: 'Post not found' }, 404);
@@ -2222,6 +2218,18 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
+
+    // The like of a post of another instance is retracted there as well.
+    if (post.actor_id && currentUser) {
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
+      const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
+      await deliverToActorInbox(c.env, {
+        actorUrl: post.actor_id,
+        username: currentUser.username,
+        activity: undo,
+      });
+    }
 
     return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
@@ -2285,36 +2293,17 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
       }
     }
 
-    // If the post is from a remote actor, send Like activity
-    if (post.actor_id && currentUser && c.env.AP_DELIVERY_QUEUE) {
-      try {
-        const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
-          headers: { Accept: 'application/activity+json, application/ld+json' },
-          timeoutMs: 10_000,
-        });
-        if (actorResponse.ok) {
-          const actorData = (await actorResponse.json()) as ActorData;
-          const inboxUrl = actorData.inbox;
-          if (inboxUrl) {
-            const likeActivity = {
-              '@context': 'https://www.w3.org/ns/activitystreams',
-              id: `${c.env.BASE_URL}/activities/like-${nanoid()}`,
-              type: 'Like',
-              actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
-              object: `${c.env.BASE_URL}/notes/${postId}`,
-              to: [post.actor_id],
-            };
-            await c.env.AP_DELIVERY_QUEUE.send({
-              type: 'delivery',
-              inboxUrl,
-              activity: likeActivity,
-              senderUsername: currentUser.username,
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Failed to send Like activity for remote post:', e);
-      }
+    // A post of another instance is liked on the instance that published it:
+    // the activity has to reference the object id of that note, not a note
+    // URL of this instance.
+    if (post.actor_id && currentUser) {
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
+      await deliverToActorInbox(c.env, {
+        actorUrl: post.actor_id,
+        username: currentUser.username,
+        activity: likeActivity,
+      });
     }
 
     return c.json({ freshed: true, fresh_count: result?.fresh_count ?? 0 });
@@ -2757,24 +2746,17 @@ type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 async function deliverReloadActivity(
   c: PostsContext,
   post: { actor_id: string | null },
-  currentUser: { username: string },
+  currentUser: { id: string; username: string },
   activity: Record<string, unknown>,
 ): Promise<void> {
   if (!c.env.AP_DELIVERY_QUEUE) return;
 
   try {
-    const followers = await c.env.DB.prepare('SELECT DISTINCT inbox_url FROM ap_followers WHERE local_user_id = ?')
-      .bind(c.get('user')?.id || '')
-      .all<{ inbox_url: string }>();
-
-    for (const follower of followers.results || []) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
-        inboxUrl: follower.inbox_url,
-        activity,
-        senderUsername: currentUser.username,
-      });
-    }
+    await deliverToFollowers(c.env, {
+      userId: currentUser.id,
+      username: currentUser.username,
+      activity,
+    });
   } catch (e) {
     console.error('Failed to deliver reload activity to followers:', e);
   }
@@ -2782,20 +2764,10 @@ async function deliverReloadActivity(
   if (!post.actor_id) return;
 
   try {
-    const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
-      headers: { Accept: 'application/activity+json, application/ld+json' },
-      timeoutMs: 10_000,
-    });
-    if (!actorResponse.ok) return;
-
-    const actorData = (await actorResponse.json()) as ActorData;
-    if (!actorData.inbox) return;
-
-    await c.env.AP_DELIVERY_QUEUE.send({
-      type: 'delivery',
-      inboxUrl: actorData.inbox,
+    await deliverToActorInbox(c.env, {
+      actorUrl: post.actor_id,
+      username: currentUser.username,
       activity,
-      senderUsername: currentUser.username,
     });
   } catch (e) {
     console.error('Failed to deliver reload activity to remote actor:', e);
@@ -2810,13 +2782,14 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     if (!currentUser) return c.json({ error: 'Unauthorized' }, 401);
 
     const post = (await c.env.DB.prepare(
-      "SELECT id, user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, actor_id, ap_object_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first()) as {
       id: string;
       user_id: string;
       actor_id: string | null;
+      ap_object_id: string | null;
       username: string;
       text: string;
     } | null;
@@ -2830,7 +2803,9 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
       .first()) as { id: string } | null;
 
     const actorUrl = `${c.env.BASE_URL}/api/actors/${currentUser.username}`;
-    const noteUrl = `${c.env.BASE_URL}/notes/${postId}`;
+    // A post of another instance is announced with the object id of that
+    // note: a note URL of this instance does not exist for it.
+    const noteUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
     const publicAudience = 'https://www.w3.org/ns/activitystreams#Public';
 
     if (existing) {
@@ -3977,25 +3952,12 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
           const noteId = `${c.env.BASE_URL}/notes/${postId}`;
           const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown');
 
-          // Get all followers to deliver to
-          const followers = await c.env.DB.prepare(`
-            SELECT inbox_url FROM ap_followers WHERE local_user_id = ?
-          `)
-            .bind(user.id)
-            .all();
-
-          // Queue delivery to each follower
-          for (const follower of followers.results) {
-            const inboxUrl = follower.inbox_url;
-            if (inboxUrl) {
-              await c.env.AP_DELIVERY_QUEUE.send({
-                type: 'delivery',
-                inboxUrl,
-                activity,
-                senderUsername: user.username,
-              });
-            }
-          }
+          // Queue one delivery per remote inbox of the followers
+          await deliverToFollowers(c.env, {
+            userId: user.id,
+            username: user.username,
+            activity,
+          });
         }
       } catch (deliveryError) {
         console.error('Failed to queue ActivityPub delete delivery:', deliveryError);
