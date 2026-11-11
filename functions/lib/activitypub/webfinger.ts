@@ -40,7 +40,9 @@ export async function webfingerResponse(env: WebFingerEnv, resource: string | un
     return { status: 404, body: { error: 'User not found' } };
   }
 
-  const domain = new URL(env.BASE_URL).hostname;
+  // The host carries the port of a local instance, so the subject matches
+  // the address the peer used.
+  const domain = new URL(env.BASE_URL).host;
   return {
     status: 200,
     contentType: 'application/jrd+json',

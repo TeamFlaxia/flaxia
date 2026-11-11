@@ -63,20 +63,81 @@ async function findActor(db: Bindings['DB'], username: string): Promise<LocalAct
     .first<LocalActorUser>();
 }
 
-// GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery
-app.get('/.well-known/webfinger', async (c) => {
+// GET /api/.well-known/webfinger - WebFinger endpoint for ActivityPub discovery
+app.get('/api/.well-known/webfinger', async (c) => {
   const result = await webfingerResponse(c.env, c.req.query('resource'));
   return c.json(result.body, result.status as 200, result.contentType ? { 'Content-Type': result.contentType } : {});
 });
 
-// GET /host-meta - LRDD host meta, points at the WebFinger endpoint
-app.get('/host-meta', (c) => {
+// GET /api/host-meta - LRDD host meta, points at the WebFinger endpoint
+app.get('/api/host-meta', (c) => {
   const base = new URL(c.env.BASE_URL);
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
   <Link rel="lrdd" template="${base.origin}/.well-known/webfinger?resource={uri}"/>
 </XRD>`;
   return new Response(body, { status: 200, headers: { 'Content-Type': 'application/xrd+xml' } });
+});
+
+// GET /api/.well-known/nodeinfo - NodeInfo discovery document
+app.get('/api/.well-known/nodeinfo', (c) => {
+  return c.json(
+    {
+      links: [
+        {
+          rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1',
+          href: `${c.env.BASE_URL}/api/nodeinfo/2.1`,
+        },
+      ],
+    },
+    200,
+    { 'Content-Type': 'application/json' },
+  );
+});
+
+// GET /api/nodeinfo/2.1 - NodeInfo document of the instance
+app.get('/api/nodeinfo/2.1', async (c) => {
+  const userCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first()) as { count: number };
+  const postCount = (await c.env.DB.prepare(
+    "SELECT COUNT(*) as count FROM posts WHERE status = 'published'",
+  ).first()) as { count: number };
+
+  return c.json(
+    {
+      version: '2.1',
+      software: {
+        name: 'flaxia',
+        version: '1.0.0',
+        repository: 'https://github.com/TeamFlaxia/flaxia',
+        homepage: 'https://flaxia.app',
+      },
+      protocols: ['activitypub'],
+      services: {
+        inbound: [],
+        outbound: [],
+      },
+      openRegistrations: true,
+      usage: {
+        users: {
+          total: userCount?.count || 0,
+          activeMonth: userCount?.count || 0,
+          activeHalfyear: userCount?.count || 0,
+        },
+        localPosts: postCount?.count || 0,
+        localComments: 0,
+      },
+      metadata: {
+        nodeName: 'Flaxia',
+        nodeDescription: 'A Flaxia instance',
+        maintainer: {
+          name: 'Flaxia',
+          email: 'admin@flaxia.app',
+        },
+      },
+    },
+    200,
+    { 'Content-Type': 'application/json; profile=http://nodeinfo.diaspora.software/ns/schema/2.1#' },
+  );
 });
 
 // GET /api/actors/:username - ActivityPub Actor (Person) endpoint
@@ -383,38 +444,6 @@ app.get('/api/actors/:username/outbox', async (c) => {
   if (current > 1) document.prev = `${collections.outbox}?page=${current - 1}`;
 
   return jsonLd(activityContentType(c.req.header('accept')), document);
-});
-
-// GET /notes/:noteId - ActivityPub Note endpoint
-app.get('/notes/:noteId', async (c) => {
-  const noteId = c.req.param('noteId');
-  if (!noteId) return c.json({ error: 'Note ID required' }, 400);
-
-  const post = await c.env.DB.prepare(
-    `SELECT p.id, p.text, p.created_at, p.user_id, p.username FROM posts p
-     WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
-       AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)`,
-  )
-    .bind(noteId)
-    .first<{ id: string; text: string; created_at: string; user_id: string; username: string }>();
-  if (!post) return c.json({ error: 'Note not found' }, 404);
-
-  const user = await c.env.DB.prepare(
-    'SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL',
-  )
-    .bind(post.username)
-    .first<{ id: string; username: string; display_name: string | null }>();
-  if (!user) return c.json({ error: 'User not found' }, 404);
-
-  const collections = actorCollectionUrls(c.env.BASE_URL, user.username);
-  const note = buildNoteObject(
-    { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
-    { id: user.id, username: user.username, display_name: user.display_name },
-    c.env.BASE_URL,
-    { followersUrl: collections.followers },
-  );
-
-  return jsonLd(activityContentType(c.req.header('accept')), note);
 });
 
 // GET /api/notes/:noteId - ActivityPub Note endpoint (no /api prefix)

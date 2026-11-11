@@ -135,7 +135,13 @@ export function parseWebfingerResource(resource: string, baseUrl: string): { use
   if (acct) {
     const [, username, domain] = acct;
     if (!username) return null;
-    if (domain.toLowerCase() !== base.hostname.toLowerCase()) return null;
+    // The port is not part of the identity of an instance: a local instance
+    // is reached as `user@localhost:8788`.
+    const host = domain
+      .toLowerCase()
+      .replace(/^\[|\]$/g, '')
+      .split(':')[0];
+    if (host !== base.hostname.toLowerCase()) return null;
     return { username };
   }
 
