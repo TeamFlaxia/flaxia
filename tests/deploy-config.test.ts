@@ -137,6 +137,10 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
       'AP_ALLOWED_PRIVATE_PEERS',
       'only the federation test peer may be private; the variable is inert outside test and development',
     ],
+    [
+      'AP_DIRECT_DELIVERY',
+      'only the federation test delivers without a queue; the variable is inert outside test and development',
+    ],
   ]);
 
   async function walk(dir: string): Promise<string[]> {
