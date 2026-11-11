@@ -1,883 +1,452 @@
 import { Hono } from 'hono';
+import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../../lib/activitypub/actor.ts';
+import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../../lib/activitypub/crypto';
-import { resolveActorPublicKey } from '../../lib/activitypub/fetch';
+import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
-import { verifyDigest, verifyHttpSignature } from '../../lib/activitypub/signature';
-import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import { webfingerResponse } from '../../lib/activitypub/webfinger';
 import type { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-/**
- * Max accepted ActivityPub inbox body: activities are small JSON documents.
- * The declared Content-Length is checked first so oversized payloads are
- * rejected before the body is buffered.
- */
-const MAX_INBOX_BODY_BYTES = 256 * 1024;
+const COLLECTION_PAGE_SIZE = 20;
 
-async function readInboxBody(req: Request): Promise<string | null> {
-  const declared = Number(req.headers.get('content-length') || 0);
-  if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) return null;
-  const text = await req.text();
-  if (text.length > MAX_INBOX_BODY_BYTES) return null;
-  return text;
+function jsonLd(contentType: string, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': contentType },
+  });
 }
 
-async function checkInboxRateLimit(env: Bindings, req: Request): Promise<boolean> {
-  return checkRateLimit(env.CACHE, `ap:inbox:${getClientIp(req)}`, { maxRequests: 60, windowSeconds: 60 });
-}
+/** The actor key of a local account, created on first use. */
+async function ensureActorKey(db: Bindings['DB'], userId: string): Promise<string> {
+  const keyRecord = await db
+    .prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
+    .bind(userId)
+    .first<{ public_key_pem: string }>();
+  if (keyRecord?.public_key_pem) return keyRecord.public_key_pem;
 
-/**
- * Replay fingerprint for an inbox delivery (#117): the same signed request
- * stays cryptographically valid for the ±30 minute Date window, so remember
- * recently seen (signature, date, digest) triples in KV for 35 minutes and
- * acknowledge repeats without re-queueing. KV failure fails open — replays
- * are then bounded by the signature window alone.
- */
-async function inboxReplayKey(req: Request): Promise<string | null> {
-  const sig = req.headers.get('Signature');
-  const date = req.headers.get('Date');
-  const digest = req.headers.get('Digest');
-  if (!sig || !date || !digest) return null;
-  try {
-    const bytes = new TextEncoder().encode(`${sig}\n${date}\n${digest}`);
-    const hash = await crypto.subtle.digest('SHA-256', bytes);
-    return `ap:replay:${Array.from(new Uint8Array(hash))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('')}`;
-  } catch {
-    return null;
-  }
-}
-
-// GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery (first variant)
-app.get('/.well-known/webfinger', async (c) => {
-  try {
-    const resource = c.req.query('resource');
-
-    if (!resource) {
-      return c.json({ error: 'Missing resource parameter' }, 400);
-    }
-
-    // Parse resource parameter: acct:username@domain
-    const match = resource.match(/^acct:([^@]+)@(.+)$/);
-    if (!match) {
-      return c.json({ error: 'Invalid resource format' }, 400);
-    }
-
-    const [, username, domain] = match;
-    if (!username) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Verify domain matches our BASE_URL
-    const baseUrl = new URL(c.env.BASE_URL);
-    if (domain !== baseUrl.hostname) {
-      return c.json({ error: 'Domain mismatch' }, 400);
-    }
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Check if user exists (case-insensitive)
-    const user = await c.env.DB.prepare(
-      'SELECT username FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL',
+  const keyPair = await generateKeyPair();
+  const generatedPublicKey = await exportPublicKey(keyPair.publicKey);
+  // Concurrent GETs must never replace an already published actor key.
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at)
+       VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
     )
-      .bind(username)
-      .first();
+    .bind(userId, generatedPublicKey, await exportPrivateKey(keyPair.privateKey))
+    .run();
+  const stored = await db
+    .prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
+    .bind(userId)
+    .first<{ public_key_pem: string }>();
+  if (!stored) throw new Error('Actor key could not be initialized');
+  return stored.public_key_pem;
+}
 
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+interface LocalActorUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+  bio: string | null;
+  avatar_key: string | null;
+  created_at: string | null;
+}
 
-    // Return WebFinger response
-    const webfingerResponse = {
-      subject: `acct:${username}@${domain}`,
-      links: [
-        {
-          rel: 'self',
-          type: 'application/activity+json',
-          href: `${c.env.BASE_URL}/api/actors/${username}`,
-        },
-      ],
-    };
+async function findActor(db: Bindings['DB'], username: string): Promise<LocalActorUser | null> {
+  return db
+    .prepare(
+      `SELECT id, username, display_name, bio, avatar_key, created_at FROM users
+       WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL`,
+    )
+    .bind(username)
+    .first<LocalActorUser>();
+}
 
-    return c.json(webfingerResponse, 200, {
-      'Content-Type': 'application/jrd+json',
-    });
-  } catch (error: unknown) {
-    console.error('WebFinger error:', error);
-    return c.json({ error: 'WebFinger failed' }, 500);
-  }
+// GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery
+app.get('/.well-known/webfinger', async (c) => {
+  const result = await webfingerResponse(c.env, c.req.query('resource'));
+  return c.json(result.body, result.status as 200, result.contentType ? { 'Content-Type': result.contentType } : {});
+});
+
+// GET /host-meta - LRDD host meta, points at the WebFinger endpoint
+app.get('/host-meta', (c) => {
+  const base = new URL(c.env.BASE_URL);
+  const body = `<?xml version="1.0" encoding="UTF-8"?>
+<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
+  <Link rel="lrdd" template="${base.origin}/.well-known/webfinger?resource={uri}"/>
+</XRD>`;
+  return new Response(body, { status: 200, headers: { 'Content-Type': 'application/xrd+xml' } });
 });
 
 // GET /api/actors/:username - ActivityPub Actor (Person) endpoint
 app.get('/api/actors/:username', async (c) => {
-  try {
-    const username = c.req.param('username');
-    const user = (await c.env.DB.prepare(
-      `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL`,
-    )
-      .bind(username)
-      .first()) as {
-      id: string;
-      username: string;
-      display_name: string | null;
-      bio: string | null;
-      avatar_key: string | null;
-    } | null;
-    if (!user) return c.json({ error: 'User not found' }, 404);
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
 
-    const keyRecord = (await c.env.DB.prepare(`SELECT public_key_pem FROM actor_keys WHERE user_id = ?`)
-      .bind(user.id)
-      .first()) as { public_key_pem: string } | null;
-    let publicKeyPem = keyRecord?.public_key_pem;
-    if (!publicKeyPem) {
-      const keyPair = await generateKeyPair();
-      const generatedPublicKey = await exportPublicKey(keyPair.publicKey);
-      // Concurrent GETs must never replace an already published actor key.
-      await c.env.DB.prepare(
-        `INSERT OR IGNORE INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-      )
-        .bind(user.id, generatedPublicKey, await exportPrivateKey(keyPair.privateKey))
-        .run();
-      const stored = await c.env.DB.prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
-        .bind(user.id)
-        .first<{ public_key_pem: string }>();
-      if (!stored) throw new Error('Actor key could not be initialized');
-      publicKeyPem = stored.public_key_pem;
-    }
+  const publicKeyPem = await ensureActorKey(c.env.DB, user.id);
+  const document = buildActorDocument({
+    baseUrl: c.env.BASE_URL,
+    user,
+    publicKeyPem,
+  });
 
-    const actorUrl = `${c.env.BASE_URL}/api/actors/${username}`;
-
-    const actor: Record<string, unknown> = {
-      '@context': ['https://www.w3.org/ns/activitystreams', 'https://w3id.org/security/v1'],
-      type: 'Person',
-      id: actorUrl,
-      preferredUsername: user.username,
-      name: user.display_name,
-      summary: user.bio || '',
-      url: `${c.env.BASE_URL}/users/${username}`,
-      inbox: `${c.env.BASE_URL}/api/actors/${username}/inbox`,
-      outbox: `${c.env.BASE_URL}/api/actors/${username}/outbox`,
-      followers: `${c.env.BASE_URL}/api/actors/${username}/followers`,
-      following: `${c.env.BASE_URL}/api/actors/${username}/following`,
-      publicKey: {
-        id: `${actorUrl}#main-key`,
-        owner: actorUrl,
-        publicKeyPem: publicKeyPem,
-      },
-      endpoints: {
-        sharedInbox: `${c.env.BASE_URL}/api/inbox`,
-      },
-    };
-
-    if (user.avatar_key) {
-      actor.icon = {
-        type: 'Image',
-        url: `${c.env.BASE_URL}/api/images/${user.avatar_key}`,
-      };
-    }
-
-    return c.json(actor, 200, { 'Content-Type': 'application/activity+json' });
-  } catch (error: unknown) {
-    console.error('Actor endpoint error:', error);
-    return c.json({ error: 'Actor endpoint failed' }, 500);
-  }
+  return jsonLd(activityContentType(c.req.header('accept')), document);
 });
 
 // POST /api/actors/:username/inbox - ActivityPub inbox endpoint
 app.post('/api/actors/:username/inbox', async (c) => {
-  try {
-    const username = c.req.param('username');
-    const contentType = c.req.header('content-type') || '';
-
-    if (!contentType.includes('application/activity+json')) {
-      return c.json({ error: 'Invalid content type' }, 400);
-    }
-
-    if (!(await checkInboxRateLimit(c.env, c.req.raw))) {
-      return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    const targetUser = (await c.env.DB.prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE')
-      .bind(username)
-      .first()) as { id: string; username: string } | null;
-
-    if (!targetUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const body = await readInboxBody(c.req.raw);
-    if (body === null) {
-      return c.json({ error: 'Inbox body too large' }, 413);
-    }
-    let activity: Record<string, unknown>;
-    try {
-      activity = JSON.parse(body) as Record<string, unknown>;
-    } catch {
-      return c.json({ error: 'Invalid JSON' }, 400);
-    }
-
-    const actorId = activity.actor as string;
-    if (!actorId || typeof actorId !== 'string') {
-      return c.json({ error: 'Invalid actor' }, 400);
-    }
-
-    // Validate that the actor origin matches the keyId origin (H-5 fix)
-    const signatureHeader = c.req.header('Signature');
-    let keyIdOrigin: string | null = null;
-    if (signatureHeader) {
-      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
-      if (keyIdMatch) {
-        try {
-          keyIdOrigin = new URL(keyIdMatch[1]).origin;
-          const actorOrigin = new URL(actorId).origin;
-          if (keyIdOrigin !== actorOrigin) {
-            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
-            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
-          }
-        } catch {
-          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
-        }
-      }
-    }
-
-    // Try to get local user's keys for signed fetch (authorized fetch support)
-    let signKeyPem: string | undefined;
-    let signKeyId: string | undefined;
-    try {
-      const keyRecord = (await c.env.DB.prepare(
-        `SELECT ak.private_key_pem FROM actor_keys ak
-         JOIN users u ON u.id = ak.user_id
-         WHERE u.username = ? COLLATE NOCASE`,
-      )
-        .bind(username)
-        .first()) as { private_key_pem: string } | null;
-      if (keyRecord?.private_key_pem) {
-        signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
-      }
-    } catch {
-      // Proceed without signing
-    }
-
-    // Verify HTTP Signature (with signed fetch if keys available)
-    const publicKeyPem = await resolveActorPublicKey(actorId, c.env, signKeyId, { privateKeyPem: signKeyPem });
-    if (!publicKeyPem) {
-      return c.json({ error: 'Could not fetch actor public key' }, 401);
-    }
-
-    const sigValid = await verifyHttpSignature(c.req.raw, publicKeyPem);
-    if (!sigValid) {
-      return c.json({ error: 'Invalid HTTP Signature' }, 401);
-    }
-
-    const digestValid = await verifyDigest(c.req.raw, body);
-    if (!digestValid) {
-      return c.json({ error: 'Invalid Digest' }, 401);
-    }
-
-    // Queue for async processing
-    if (c.env.AP_DELIVERY_QUEUE) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'inbox' as const,
-        username,
-        activity,
-        actorId,
-      });
-    }
-
-    return c.json({ ok: true }, 202);
-  } catch (error: unknown) {
-    console.error('Inbox error:', error);
-    return c.json({ error: 'Inbox processing failed' }, 500);
-  }
+  return handlePersonalInbox(c.env, c.req.raw, c.req.param('username'));
 });
-
-// Extract a local username from an actor URL, but only when the URL really
-// points at this instance. startsWith(baseUrl) accepted look-alikes such as
-// `https://flaxia.app@evil.example/actors/victim`, which let a remote actor
-// address an arbitrary local user in to/cc/object.
-function localActorUsername(value: unknown, baseUrl: string): string | null {
-  if (typeof value !== 'string') return null;
-  let parsed: URL;
-  let base: URL;
-  try {
-    parsed = new URL(value);
-    base = new URL(baseUrl);
-  } catch {
-    return null;
-  }
-  if (parsed.origin !== base.origin) return null;
-  const match = parsed.pathname.match(/^\/actors\/([^/]+)/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
 
 // POST /api/inbox - ActivityPub sharedInbox endpoint
 app.post('/api/inbox', async (c) => {
-  try {
-    const contentType = c.req.header('content-type') || '';
-
-    if (!contentType.includes('application/activity+json')) {
-      return c.json({ error: 'Invalid content type' }, 400);
-    }
-
-    if (!(await checkInboxRateLimit(c.env, c.req.raw))) {
-      return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    const body = await readInboxBody(c.req.raw);
-    if (body === null) {
-      return c.json({ error: 'Inbox body too large' }, 413);
-    }
-    let activity: Record<string, unknown>;
-    try {
-      activity = JSON.parse(body) as Record<string, unknown>;
-    } catch {
-      return c.json({ error: 'Invalid JSON' }, 400);
-    }
-
-    const actorId = activity.actor as string;
-    if (!actorId || typeof actorId !== 'string') {
-      return c.json({ error: 'Invalid actor' }, 400);
-    }
-
-    // Validate that the actor origin matches the keyId origin (H-5 fix)
-    const signatureHeader = c.req.header('Signature');
-    if (signatureHeader) {
-      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
-      if (keyIdMatch) {
-        try {
-          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
-          const actorOrigin = new URL(actorId).origin;
-          if (keyIdOrigin !== actorOrigin) {
-            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
-            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
-          }
-        } catch {
-          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
-        }
-      }
-    }
-
-    // Determine target username(s) from the activity
-    const baseUrl = c.env.BASE_URL;
-
-    // Shared inbox is not owned by any one local user. Do not sign remote
-    // actor lookups with a randomly selected user's private key: doing so
-    // leaks that user's identity to an unrelated remote instance.
-    const publicKeyPem = await resolveActorPublicKey(actorId, c.env);
-    if (!publicKeyPem) {
-      return c.json({ error: 'Could not fetch actor public key' }, 401);
-    }
-
-    const sigValid = await verifyHttpSignature(c.req.raw, publicKeyPem);
-    if (!sigValid) {
-      return c.json({ error: 'Invalid HTTP Signature' }, 401);
-    }
-
-    const digestValid = await verifyDigest(c.req.raw, body);
-    if (!digestValid) {
-      return c.json({ error: 'Invalid Digest' }, 401);
-    }
-
-    // #117: drop exact replays of an already-accepted delivery instead of
-    // re-queueing its fan-out a second time.
-    const replayKey = await inboxReplayKey(c.req.raw);
-    if (replayKey && c.env.CACHE) {
-      try {
-        if (await c.env.CACHE.get(replayKey)) {
-          return c.json({ ok: true, duplicate: true }, 202);
-        }
-        await c.env.CACHE.put(replayKey, '1', { expirationTtl: 2100 });
-      } catch {
-        // fail open: bounded by the signature Date window alone
-      }
-    }
-    // #117: bound the fan-out surface before expanding it. Only the first
-    // entries are considered and only a handful of local targets are queued.
-    const audienceValues: unknown[] = [
-      ...(Array.isArray(activity.to) ? activity.to : activity.to ? [activity.to] : []),
-      ...(Array.isArray(activity.cc) ? activity.cc : activity.cc ? [activity.cc] : []),
-    ].slice(0, 50);
-    const MAX_INBOX_TARGETS = 10;
-
-    // Extract usernames from URLs that canonically point at local actors.
-    const targetUsernames = new Set<string>();
-    for (const value of audienceValues) {
-      const username = localActorUsername(value, baseUrl);
-      if (username) targetUsernames.add(username);
-    }
-
-    // If no local target found via to/cc, try the object field (for Follow
-    // activities). It is held to the same canonical-origin rule.
-    if (targetUsernames.size === 0) {
-      const objectValue = activity.object as unknown;
-      const candidate =
-        typeof objectValue === 'string' ? objectValue : ((objectValue as { id?: unknown } | null)?.id ?? '');
-      const username = localActorUsername(candidate, baseUrl);
-      if (username) targetUsernames.add(username);
-    }
-
-    if (targetUsernames.size === 0) {
-      console.error(
-        JSON.stringify({
-          event: 'sharedInbox:no_target_user',
-          activityType: activity.type,
-          actorId,
-          activityId: (activity.id as string) || null,
-          timestamp: new Date().toISOString(),
-        }),
-      );
-      return c.json({ ok: true }, 202);
-    }
-
-    // Queue for async processing for each target, capped: one signed
-    // activity must not fan out to an unbounded number of queue messages.
-    if (c.env.AP_DELIVERY_QUEUE) {
-      let queued = 0;
-      for (const username of targetUsernames) {
-        if (queued >= MAX_INBOX_TARGETS) break;
-        await c.env.AP_DELIVERY_QUEUE.send({
-          type: 'inbox' as const,
-          username,
-          activity,
-          actorId,
-        });
-        queued++;
-      }
-    }
-
-    return c.json({ ok: true }, 202);
-  } catch (error: unknown) {
-    console.error('sharedInbox error:', error);
-    return c.json({ error: 'sharedInbox processing failed', details: (error as { message?: string })?.message }, 500);
-  }
+  return handleSharedInbox(c.env, c.req.raw);
 });
+
+/** Build the JSON-LD document of a collection. */
+function collection(input: {
+  id: string;
+  type: 'OrderedCollection' | 'OrderedCollectionPage';
+  totalItems: number;
+  items?: string[];
+  partOf?: string;
+  next?: string;
+  prev?: string;
+}): Record<string, unknown> {
+  const document: Record<string, unknown> = {
+    '@context': AS2_CONTEXT,
+    id: input.id,
+    type: input.type,
+    totalItems: input.totalItems,
+  };
+  if (input.items) document.orderedItems = input.items;
+  if (input.partOf) document.partOf = input.partOf;
+  if (input.next) document.next = input.next;
+  if (input.prev) document.prev = input.prev;
+  return document;
+}
+
+function pageNumber(value: string | undefined): number {
+  const parsed = Number.parseInt(value ?? '1', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+}
 
 // GET /api/actors/:username/followers - ActivityPub Followers collection
 app.get('/api/actors/:username/followers', async (c) => {
-  try {
-    const username = c.req.param('username');
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
 
-    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL')
-      .bind(username)
-      .first()) as { id: string } | null;
+  const localCount =
+    (
+      await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
+        .bind(user.id)
+        .first<{ count: number }>()
+    )?.count ?? 0;
+  const remoteCount =
+    (
+      await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
+        .bind(user.id)
+        .first<{ count: number }>()
+    )?.count ?? 0;
+  const totalItems = localCount + remoteCount;
+  const collections = actorCollectionUrls(c.env.BASE_URL, username);
+  const page = c.req.query('page');
 
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const pageSize = 20;
-    const pageParam = c.req.query('page');
-
-    // Count local followers
-    const localCount =
-      (
-        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
-          .bind(user.id)
-          .first<{ count: number }>()
-      )?.count || 0;
-
-    // Count remote followers
-    const remoteCount =
-      (
-        await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
-          .bind(user.id)
-          .first<{ count: number }>()
-      )?.count || 0;
-
-    const totalItems = localCount + remoteCount;
-
-    // If page parameter is present, return OrderedCollectionPage
-    if (pageParam) {
-      const pageNum = parseInt(pageParam, 10) || 1;
-      const offset = (pageNum - 1) * pageSize;
-
-      // Fetch local followers (users table via follows)
-      const localFollowers = (await c.env.DB.prepare(`
-        SELECT u.username FROM follows f
-        JOIN users u ON u.id = f.follower_id
-        WHERE f.followee_id = ?
-        ORDER BY u.username ASC LIMIT ? OFFSET ?
-      `)
-        .bind(user.id, pageSize, offset)
-        .all()) as { results: Array<{ username: string }> };
-
-      // If we still have room and it's the first page, also fetch remote followers
-      const remoteFetched: Array<{ actor_url: string }> = [];
-      if (localFollowers.results.length < pageSize) {
-        const remoteOffset = Math.max(0, offset - localCount);
-        const remaining = pageSize - localFollowers.results.length;
-        const remoteFollowers = (await c.env.DB.prepare(`
-          SELECT actor_url FROM ap_followers WHERE local_user_id = ?
-          ORDER BY actor_url ASC LIMIT ? OFFSET ?
-        `)
-          .bind(user.id, remaining, remoteOffset)
-          .all()) as { results: Array<{ actor_url: string }> };
-        remoteFetched.push(...remoteFollowers.results);
-      }
-
-      const orderedItems = [
-        ...localFollowers.results.map((f) => `${c.env.BASE_URL}/api/actors/${f.username}`),
-        ...remoteFetched.map((f) => f.actor_url),
-      ];
-
-      const hasNext = offset + pageSize < totalItems;
-
-      return c.json(
-        {
-          '@context': 'https://www.w3.org/ns/activitystreams',
-          type: 'OrderedCollectionPage',
-          id: `${c.env.BASE_URL}/api/actors/${username}/followers?page=${pageNum}`,
-          partOf: `${c.env.BASE_URL}/api/actors/${username}/followers`,
-          totalItems: totalItems,
-          orderedItems: orderedItems,
-          ...(hasNext && { next: `${c.env.BASE_URL}/api/actors/${username}/followers?page=${pageNum + 1}` }),
-        },
-        200,
-        { 'Content-Type': 'application/activity+json' },
-      );
-    }
-
-    return c.json(
-      {
-        '@context': 'https://www.w3.org/ns/activitystreams',
+  if (!page) {
+    return jsonLd(
+      activityContentType(c.req.header('accept')),
+      collection({
+        id: collections.followers,
         type: 'OrderedCollection',
-        id: `${c.env.BASE_URL}/api/actors/${username}/followers`,
-        totalItems: totalItems,
-        first: `${c.env.BASE_URL}/api/actors/${username}/followers?page=1`,
-      },
-      200,
-      { 'Content-Type': 'application/activity+json' },
+        totalItems,
+      }),
     );
-  } catch (error: unknown) {
-    console.error('Followers endpoint error:', error);
-    return c.json({ error: 'Followers endpoint failed' }, 500);
   }
+
+  const current = pageNumber(page);
+  const offset = (current - 1) * COLLECTION_PAGE_SIZE;
+  const localFollowers = await c.env.DB.prepare(
+    `SELECT u.username FROM follows f JOIN users u ON u.id = f.follower_id
+     WHERE f.followee_id = ? ORDER BY u.username ASC LIMIT ? OFFSET ?`,
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, offset)
+    .all<{ username: string }>();
+
+  const remoteFollowers = await c.env.DB.prepare(
+    `SELECT actor_url FROM ap_followers WHERE local_user_id = ?
+     ORDER BY actor_url ASC LIMIT ? OFFSET ?`,
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, Math.max(0, offset - localCount))
+    .all<{ actor_url: string }>();
+
+  const items = [
+    ...(localFollowers.results ?? []).map((row) => actorUrl(c.env.BASE_URL, row.username)),
+    ...(remoteFollowers.results ?? []).map((row) => row.actor_url),
+  ];
+
+  return jsonLd(
+    activityContentType(c.req.header('accept')),
+    collection({
+      id: `${collections.followers}?page=${current}`,
+      type: 'OrderedCollectionPage',
+      totalItems,
+      items,
+      partOf: collections.followers,
+      next: offset + COLLECTION_PAGE_SIZE < totalItems ? `${collections.followers}?page=${current + 1}` : undefined,
+      prev: current > 1 ? `${collections.followers}?page=${current - 1}` : undefined,
+    }),
+  );
 });
 
 // GET /api/actors/:username/following - ActivityPub Following collection
 app.get('/api/actors/:username/following', async (c) => {
-  try {
-    const username = c.req.param('username');
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
 
-    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL')
-      .bind(username)
-      .first()) as { id: string } | null;
+  const localCount =
+    (
+      await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
+        .bind(user.id)
+        .first<{ count: number }>()
+    )?.count ?? 0;
+  const remoteCount =
+    (
+      await c.env.DB.prepare(
+        `SELECT COUNT(*) as count FROM ap_following WHERE local_user_id = ? AND status = 'accepted'`,
+      )
+        .bind(user.id)
+        .first<{ count: number }>()
+    )?.count ?? 0;
+  const totalItems = localCount + remoteCount;
+  const collections = actorCollectionUrls(c.env.BASE_URL, username);
+  const page = c.req.query('page');
 
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const pageSize = 20;
-    const pageParam = c.req.query('page');
-
-    // Count local following (remote following not counted here for simplicity)
-    const totalCount =
-      (
-        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
-          .bind(user.id)
-          .first<{ count: number }>()
-      )?.count || 0;
-
-    // If page parameter is present, return OrderedCollectionPage
-    if (pageParam) {
-      const pageNum = parseInt(pageParam, 10) || 1;
-      const offset = (pageNum - 1) * pageSize;
-
-      const following = (await c.env.DB.prepare(`
-        SELECT u.username FROM follows f
-        JOIN users u ON u.id = f.followee_id
-        WHERE f.follower_id = ?
-        ORDER BY u.username ASC LIMIT ? OFFSET ?
-      `)
-        .bind(user.id, pageSize, offset)
-        .all()) as { results: Array<{ username: string }> };
-
-      const orderedItems = following.results.map((f) => `${c.env.BASE_URL}/api/actors/${f.username}`);
-      const hasNext = offset + pageSize < totalCount;
-
-      return c.json(
-        {
-          '@context': 'https://www.w3.org/ns/activitystreams',
-          type: 'OrderedCollectionPage',
-          id: `${c.env.BASE_URL}/api/actors/${username}/following?page=${pageNum}`,
-          partOf: `${c.env.BASE_URL}/api/actors/${username}/following`,
-          totalItems: totalCount,
-          orderedItems: orderedItems,
-          ...(hasNext && { next: `${c.env.BASE_URL}/api/actors/${username}/following?page=${pageNum + 1}` }),
-        },
-        200,
-        { 'Content-Type': 'application/activity+json' },
-      );
-    }
-
-    return c.json(
-      {
-        '@context': 'https://www.w3.org/ns/activitystreams',
-        type: 'OrderedCollection',
-        id: `${c.env.BASE_URL}/api/actors/${username}/following`,
-        totalItems: totalCount,
-        first: `${c.env.BASE_URL}/api/actors/${username}/following?page=1`,
-      },
-      200,
-      { 'Content-Type': 'application/activity+json' },
+  if (!page) {
+    return jsonLd(
+      activityContentType(c.req.header('accept')),
+      collection({ id: collections.following, type: 'OrderedCollection', totalItems }),
     );
-  } catch (error: unknown) {
-    console.error('Following endpoint error:', error);
-    return c.json({ error: 'Following endpoint failed' }, 500);
   }
+
+  const current = pageNumber(page);
+  const offset = (current - 1) * COLLECTION_PAGE_SIZE;
+  const localFollowing = await c.env.DB.prepare(
+    `SELECT u.username FROM follows f JOIN users u ON u.id = f.followee_id
+     WHERE f.follower_id = ? ORDER BY u.username ASC LIMIT ? OFFSET ?`,
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, offset)
+    .all<{ username: string }>();
+  const remoteFollowing = await c.env.DB.prepare(
+    `SELECT target_actor_url FROM ap_following WHERE local_user_id = ? AND status = 'accepted'
+     ORDER BY target_actor_url ASC LIMIT ? OFFSET ?`,
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, Math.max(0, offset - localCount))
+    .all<{ target_actor_url: string }>();
+
+  const items = [
+    ...(localFollowing.results ?? []).map((row) => actorUrl(c.env.BASE_URL, row.username)),
+    ...(remoteFollowing.results ?? []).map((row) => row.target_actor_url),
+  ];
+
+  return jsonLd(
+    activityContentType(c.req.header('accept')),
+    collection({
+      id: `${collections.following}?page=${current}`,
+      type: 'OrderedCollectionPage',
+      totalItems,
+      items,
+      partOf: collections.following,
+      next: offset + COLLECTION_PAGE_SIZE < totalItems ? `${collections.following}?page=${current + 1}` : undefined,
+      prev: current > 1 ? `${collections.following}?page=${current - 1}` : undefined,
+    }),
+  );
 });
 
-// GET /api/notes/:noteId - ActivityPub individual Note endpoint
-app.get('/api/notes/:noteId', async (c) => {
-  try {
-    const noteId = c.req.param('noteId');
+// GET /api/actors/:username/liked - ActivityPub Liked collection
+app.get('/api/actors/:username/liked', async (c) => {
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
 
-    if (!noteId) {
-      return c.json({ error: 'Note ID required' }, 400);
-    }
+  const collections = actorCollectionUrls(c.env.BASE_URL, username);
+  const totalItems =
+    (
+      await c.env.DB.prepare('SELECT COUNT(*) as count FROM likes WHERE user_id = ?')
+        .bind(user.id)
+        .first<{ count: number }>()
+    )?.count ?? 0;
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Get post with user info
-    const post = (await c.env.DB.prepare(`
-      SELECT p.id, p.text, p.created_at, p.status, p.user_id, p.username
-      FROM posts p
-      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
-        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)
-    `)
-      .bind(noteId)
-      .first()) as {
-      id: string;
-      text: string;
-      created_at: string;
-      status: string;
-      user_id: string;
-      username: string;
-    } | null;
-
-    if (!post) {
-      return c.json({ error: 'Note not found' }, 404);
-    }
-
-    // Get user info by username (posts store username, not user_id)
-    const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE
-    `)
-      .bind(post.username)
-      .first()) as { id: string; username: string; display_name: string } | null;
-
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Build Note object
-    const note = buildNoteObject(
-      {
-        id: post.id,
-        text: post.text,
-        created_at: post.created_at,
-        visibility: post.status === 'published' ? 'public' : 'private',
-      },
-      user,
-      c.env.BASE_URL,
+  const page = c.req.query('page');
+  if (!page) {
+    return jsonLd(
+      activityContentType(c.req.header('accept')),
+      collection({ id: collections.liked, type: 'OrderedCollection', totalItems }),
     );
-
-    // Build Create activity wrapping the note
-    const activity = buildCreateActivity(note, user, c.env.BASE_URL);
-
-    return c.json(activity, 200, {
-      'Content-Type': 'application/activity+json',
-    });
-  } catch (error: unknown) {
-    console.error('Note endpoint error:', error);
-    return c.json({ error: 'Note endpoint failed' }, 500);
   }
+
+  const current = pageNumber(page);
+  const offset = (current - 1) * COLLECTION_PAGE_SIZE;
+  const likes = await c.env.DB.prepare(
+    'SELECT post_id FROM likes WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, offset)
+    .all<{ post_id: string }>();
+
+  return jsonLd(
+    activityContentType(c.req.header('accept')),
+    collection({
+      id: `${collections.liked}?page=${current}`,
+      type: 'OrderedCollectionPage',
+      totalItems,
+      items: (likes.results ?? []).map((row) => noteUrl(c.env.BASE_URL, row.post_id)),
+      partOf: collections.liked,
+      next: offset + COLLECTION_PAGE_SIZE < totalItems ? `${collections.liked}?page=${current + 1}` : undefined,
+      prev: current > 1 ? `${collections.liked}?page=${current - 1}` : undefined,
+    }),
+  );
+});
+
+// GET /api/actors/:username/featured - ActivityPub Featured collection
+app.get('/api/actors/:username/featured', async (c) => {
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const collections = actorCollectionUrls(c.env.BASE_URL, username);
+  return jsonLd(
+    activityContentType(c.req.header('accept')),
+    collection({ id: collections.featured, type: 'OrderedCollection', totalItems: 0, items: [] }),
+  );
 });
 
 // GET /api/actors/:username/outbox - ActivityPub Outbox endpoint (paginated)
 app.get('/api/actors/:username/outbox', async (c) => {
-  try {
-    const username = c.req.param('username');
-    const page = c.req.query('page');
-    const pageSize = 20;
+  const username = c.req.param('username');
+  const user = await findActor(c.env.DB, username);
+  if (!user) return c.json({ error: 'User not found' }, 404);
 
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400);
-    }
+  const collections = actorCollectionUrls(c.env.BASE_URL, username);
+  const totalItems =
+    (
+      await c.env.DB.prepare(
+        "SELECT COUNT(*) as total FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
+      )
+        .bind(user.id)
+        .first<{ total: number }>()
+    )?.total ?? 0;
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Find user in database
-    const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name FROM users 
-      WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL
-    `)
-      .bind(username)
-      .first()) as { id: string; username: string; display_name: string } | null;
-
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Get total count of published posts
-    const countResult = (await c.env.DB.prepare(`
-      SELECT COUNT(*) as total FROM posts
-      WHERE user_id = ? AND status = 'published' AND hidden = 0
-    `)
-      .bind(user.id)
-      .first()) as { total: number };
-    const totalItems = countResult?.total || 0;
-
-    // If page parameter is present, return OrderedCollectionPage
-    // Supports both ?page=true (legacy) and ?page=N (Mastodon-style)
-    if (page !== null && page !== undefined) {
-      let offsetNum = 0;
-      if (page === 'true') {
-        offsetNum = parseInt(c.req.query('offset') || '0', 10);
-      } else {
-        const pageNum = parseInt(page, 10) || 1;
-        offsetNum = (pageNum - 1) * pageSize;
-      }
-
-      // Get posts for this page
-      const posts = (await c.env.DB.prepare(`
-        SELECT id, text, created_at, status FROM posts
-        WHERE user_id = ? AND status = 'published'
-        ORDER BY created_at DESC LIMIT ? OFFSET ?
-      `)
-        .bind(user.id, pageSize, offsetNum)
-        .all()) as { results: Array<{ id: string; text: string; created_at: string; status: string }> };
-
-      // Build activities from posts
-      const activities = posts.results.map((post) => {
-        const note = buildNoteObject(
-          {
-            ...post,
-            visibility: post.status === 'published' ? 'public' : 'private',
-          },
-          user,
-          c.env.BASE_URL,
-        );
-        return buildCreateActivity(note, user, c.env.BASE_URL);
-      });
-
-      const nextOffset = offsetNum + pageSize;
-      const hasNext = nextOffset < totalItems;
-
-      return c.json(
-        {
-          '@context': 'https://www.w3.org/ns/activitystreams',
-          type: 'OrderedCollectionPage',
-          id: `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${page}&offset=${offsetNum}`,
-          partOf: `${c.env.BASE_URL}/api/actors/${username}/outbox`,
-          totalItems: totalItems,
-          orderedItems: activities,
-          ...(hasNext && { next: `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${page}&offset=${nextOffset}` }),
-        },
-        200,
-        { 'Content-Type': 'application/activity+json' },
-      );
-    }
-
-    // Return main OrderedCollection with first link
-    return c.json(
-      {
-        '@context': 'https://www.w3.org/ns/activitystreams',
-        type: 'OrderedCollection',
-        id: `${c.env.BASE_URL}/api/actors/${username}/outbox`,
-        totalItems: totalItems,
-        first: `${c.env.BASE_URL}/api/actors/${username}/outbox?page=1`,
-      },
-      200,
-      { 'Content-Type': 'application/activity+json' },
+  const page = c.req.query('page');
+  if (!page) {
+    return jsonLd(
+      activityContentType(c.req.header('accept')),
+      collection({ id: collections.outbox, type: 'OrderedCollection', totalItems }),
     );
-  } catch (error: unknown) {
-    console.error('Outbox endpoint error:', error);
-    return c.json({ error: 'Outbox endpoint failed' }, 500);
   }
-});
 
-// GET /notes/:noteId - ActivityPub individual Note endpoint (no /api prefix)
-app.get('/notes/:noteId', async (c) => {
-  try {
-    const noteId = c.req.param('noteId');
+  const current = pageNumber(page);
+  const offset = (current - 1) * COLLECTION_PAGE_SIZE;
+  const posts = await c.env.DB.prepare(
+    `SELECT id, text, created_at FROM posts
+     WHERE user_id = ? AND status = 'published' AND hidden = 0
+     ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+  )
+    .bind(user.id, COLLECTION_PAGE_SIZE, offset)
+    .all<{ id: string; text: string; created_at: string }>();
 
-    if (!noteId) {
-      return c.json({ error: 'Note ID required' }, 400);
-    }
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Get post with user info
-    const post = (await c.env.DB.prepare(`
-      SELECT p.id, p.text, p.created_at, p.status, p.user_id, p.username
-      FROM posts p
-      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
-        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)
-    `)
-      .bind(noteId)
-      .first()) as {
-      id: string;
-      text: string;
-      created_at: string;
-      status: string;
-      user_id: string;
-      username: string;
-    } | null;
-
-    if (!post) {
-      return c.json({ error: 'Note not found' }, 404);
-    }
-
-    // Get user info by username (posts store username, not user_id)
-    const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL
-    `)
-      .bind(post.username)
-      .first()) as { id: string; username: string; display_name: string } | null;
-
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Build Note object
+  const activities = (posts.results ?? []).map((post) => {
     const note = buildNoteObject(
-      {
-        id: post.id,
-        text: post.text,
-        created_at: post.created_at,
-        visibility: post.status === 'published' ? 'public' : 'private',
-      },
-      user,
+      { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
+      { id: user.id, username: user.username, display_name: user.display_name },
+      c.env.BASE_URL,
+      { followersUrl: collections.followers },
+    );
+    return buildCreateActivity(
+      note,
+      { id: user.id, username: user.username, display_name: user.display_name },
       c.env.BASE_URL,
     );
+  });
 
-    // Build Create activity wrapping the note
-    const activity = buildCreateActivity(note, user, c.env.BASE_URL);
+  const document: Record<string, unknown> = {
+    '@context': AS2_CONTEXT,
+    id: `${collections.outbox}?page=${current}`,
+    type: 'OrderedCollectionPage',
+    totalItems,
+    orderedItems: activities,
+    partOf: collections.outbox,
+  };
+  if (offset + COLLECTION_PAGE_SIZE < totalItems) document.next = `${collections.outbox}?page=${current + 1}`;
+  if (current > 1) document.prev = `${collections.outbox}?page=${current - 1}`;
 
-    return c.json(activity, 200, {
-      'Content-Type': 'application/activity+json',
-    });
-  } catch (error: unknown) {
-    console.error('Note endpoint error:', error);
-    return c.json({ error: 'Note endpoint failed' }, 500);
-  }
+  return jsonLd(activityContentType(c.req.header('accept')), document);
+});
+
+// GET /notes/:noteId - ActivityPub Note endpoint
+app.get('/notes/:noteId', async (c) => {
+  const noteId = c.req.param('noteId');
+  if (!noteId) return c.json({ error: 'Note ID required' }, 400);
+
+  const post = await c.env.DB.prepare(
+    `SELECT p.id, p.text, p.created_at, p.user_id, p.username FROM posts p
+     WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+       AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)`,
+  )
+    .bind(noteId)
+    .first<{ id: string; text: string; created_at: string; user_id: string; username: string }>();
+  if (!post) return c.json({ error: 'Note not found' }, 404);
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL',
+  )
+    .bind(post.username)
+    .first<{ id: string; username: string; display_name: string | null }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const collections = actorCollectionUrls(c.env.BASE_URL, user.username);
+  const note = buildNoteObject(
+    { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
+    { id: user.id, username: user.username, display_name: user.display_name },
+    c.env.BASE_URL,
+    { followersUrl: collections.followers },
+  );
+
+  return jsonLd(activityContentType(c.req.header('accept')), note);
+});
+
+// GET /api/notes/:noteId - ActivityPub Note endpoint (no /api prefix)
+app.get('/api/notes/:noteId', async (c) => {
+  const noteId = c.req.param('noteId');
+  if (!noteId) return c.json({ error: 'Note ID required' }, 400);
+
+  const post = await c.env.DB.prepare(
+    `SELECT p.id, p.text, p.created_at, p.user_id, p.username FROM posts p
+     WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+       AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)`,
+  )
+    .bind(noteId)
+    .first<{ id: string; text: string; created_at: string; user_id: string; username: string }>();
+  if (!post) return c.json({ error: 'Note not found' }, 404);
+
+  const user = await c.env.DB.prepare(
+    'SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL',
+  )
+    .bind(post.username)
+    .first<{ id: string; username: string; display_name: string | null }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const collections = actorCollectionUrls(c.env.BASE_URL, user.username);
+  const note = buildNoteObject(
+    { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
+    { id: user.id, username: user.username, display_name: user.display_name },
+    c.env.BASE_URL,
+    { followersUrl: collections.followers },
+  );
+
+  return jsonLd(activityContentType(c.req.header('accept')), note);
 });
 
 export default app;
