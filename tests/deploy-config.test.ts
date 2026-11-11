@@ -133,6 +133,10 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
     ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
     ['AUTH_UI_ORIGIN', 'login UI origin defaults to https://auth.flaxia.app'],
+    [
+      'AP_ALLOWED_PRIVATE_PEERS',
+      'only the federation test peer may be private; the variable is inert outside test and development',
+    ],
   ]);
 
   async function walk(dir: string): Promise<string[]> {
