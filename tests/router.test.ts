@@ -20,6 +20,13 @@ describe('parseRoute', () => {
     assert.equal(parseRoute('/nope', '')?.view, 'timeline');
   });
 
+  it('parses the profile of a remote account', () => {
+    const route = parseRoute('/@remote.example/alice', '');
+    assert.equal(route?.view, 'remote-profile');
+    assert.equal(route?.username, 'alice');
+    assert.equal(route?.remoteDomain, 'remote.example');
+  });
+
   it('parses thread, profile, and arcade routes', () => {
     assert.deepEqual(parseRoute('/thread/abc', ''), {
       view: 'thread',
