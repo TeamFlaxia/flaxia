@@ -1183,5 +1183,9 @@
   "mail.unlock_to_read": "Vault を解除してメールを読む",
   "mail.unlock_to_read_desc": "メールは Personal Vault で暗号化されています。この端末で Vault を解除すると復号できます。",
   "mail.key_unavailable": "この端末では暗号化メールを開けませんでした。Vault を解除して再試行してください。",
-  "mail.payload_unavailable": "このメッセージを復号できませんでした。"
+  "mail.payload_unavailable": "このメッセージを復号できませんでした。",
+  "remote_profile.not_found": "このアカウントはこのインスタンスに見つかりませんでした。",
+  "remote_profile.title": "リモートアカウント",
+  "remote_profile.posts": "届いた投稿",
+  "remote_profile.empty": "このアカウントの投稿はまだ届いていません。"
 }

@@ -1183,5 +1183,9 @@
   "mail.unlock_to_read": "Unlock to read mail",
   "mail.unlock_to_read_desc": "Your messages are encrypted with the Personal Vault. Unlock it on this device to decrypt the mailbox.",
   "mail.key_unavailable": "Encrypted mail could not be opened on this device. Unlock the vault and try again.",
-  "mail.payload_unavailable": "This message could not be decrypted."
+  "mail.payload_unavailable": "This message could not be decrypted.",
+  "remote_profile.not_found": "This account could not be found on this instance.",
+  "remote_profile.title": "Remote account",
+  "remote_profile.posts": "Notes received",
+  "remote_profile.empty": "No notes of this account have arrived yet."
 }
