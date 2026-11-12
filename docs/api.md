@@ -2,6 +2,10 @@
 
 All API endpoints are served from `functions/api/[[route]].ts` via Hono framework.
 
+> 開発者向けドキュメントは [docs/developer/](developer/) にまとめています。
+> ゲーム作者は [Flaxia Game API](developer/game-api.md) と [Game SDK](developer/sdk.md) を、
+> 連携アプリ開発者は [REST API](developer/rest-api.md) を参照してください。
+
 ---
 
 ## Authentication
