@@ -77,6 +77,22 @@ async function checkInboxRateLimit(env: InboxEnv, req: Request): Promise<boolean
 }
 
 /**
+ * Remember a verified delivery. Returns true when the exact request was
+ * already accepted, so both inbox endpoints can drop a replay.
+ */
+async function isReplayDelivery(env: InboxEnv, req: Request): Promise<boolean> {
+  const replayKey = await inboxReplayKey(req);
+  if (!replayKey || !env.CACHE) return false;
+  try {
+    if (await env.CACHE.get(replayKey)) return true;
+    await env.CACHE.put(replayKey, '1', { expirationTtl: 2100 });
+  } catch {
+    // fail open: bounded by the signature date window alone
+  }
+  return false;
+}
+
+/**
  * The local accounts an activity addresses.
  *
  * Only URLs that really point at an actor of this instance count, and the
@@ -245,6 +261,10 @@ export async function handlePersonalInbox(env: InboxEnv, req: Request, username:
     return Response.json({ error: verified.error }, { status: verified.status });
   }
 
+  if (await isReplayDelivery(env, req)) {
+    return Response.json({ ok: true, duplicate: true }, { status: 202 });
+  }
+
   await enqueueForTargets(env, [username], verified.activity, verified.actorId);
   return Response.json({ ok: true }, { status: 202 });
 }
@@ -273,16 +293,8 @@ export async function handleSharedInbox(env: InboxEnv, req: Request): Promise<Re
   }
 
   // Drop an exact replay of a delivery that was already accepted.
-  const replayKey = await inboxReplayKey(req);
-  if (replayKey && env.CACHE) {
-    try {
-      if (await env.CACHE.get(replayKey)) {
-        return Response.json({ ok: true, duplicate: true }, { status: 202 });
-      }
-      await env.CACHE.put(replayKey, '1', { expirationTtl: 2100 });
-    } catch {
-      // fail open: bounded by the signature date window alone
-    }
+  if (await isReplayDelivery(env, req)) {
+    return Response.json({ ok: true, duplicate: true }, { status: 202 });
   }
 
   const targets = resolveLocalTargets(verified.activity, env.BASE_URL);

@@ -70,7 +70,7 @@ the flags a peer needs (`manuallyApprovesFollowers`, `discoverable`,
 
 | Activity | Direction | Notes |
 |---|---|---|
-| `Create` (Note) | Both | A post of a follower is stored with the remote author |
+| `Create` (Note) | Both | A post of an account the user follows is stored with the remote author |
 | `Follow` | Both | The `Accept` is queued, not delivered inline |
 | `Accept` | Inbound | Marks a remote follow as accepted |
 | `Reject` | Inbound | Marks a remote follow as rejected |

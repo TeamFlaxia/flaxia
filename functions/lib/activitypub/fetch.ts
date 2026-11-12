@@ -36,6 +36,12 @@ export interface FetchOptions {
   /** Sign the request with the actor key (authorized fetch). */
   privateKeyPem?: string;
   keyId?: string;
+  /**
+   * Reject a redirect that leaves the origin of the requested document.
+   * Actor and key documents use this: an open redirect on a public host must
+   * not be able to serve another origin's key for this actor.
+   */
+  sameOrigin?: boolean;
 }
 
 /** Environments in which a private federation peer may be contacted. */
@@ -94,6 +100,7 @@ export async function fetchFederationDocument(
     return null;
   }
 
+  const initialOrigin = current.origin;
   const headers: Record<string, string> = {
     Accept: 'application/activity+json, application/ld+json',
     // Some instances refuse a request without a user agent.
@@ -137,7 +144,13 @@ export async function fetchFederationDocument(
       return null;
     }
 
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      if (options.sameOrigin && current.origin !== initialOrigin) {
+        console.error(`Blocked cross-origin ActivityPub redirect: ${initialOrigin} -> ${current.origin}`);
+        return null;
+      }
+      return response;
+    }
 
     const location = response.headers.get('Location');
     if (!location) return response;
@@ -145,6 +158,10 @@ export async function fetchFederationDocument(
     try {
       next = new URL(location, current);
     } catch {
+      return null;
+    }
+    if (options.sameOrigin && next.origin !== initialOrigin) {
+      console.error(`Blocked cross-origin ActivityPub redirect: ${initialOrigin} -> ${next.origin}`);
       return null;
     }
     if (!isAllowlisted(next, env)) {
@@ -186,28 +203,66 @@ async function signWithKey(privateKeyPem: string, signingString: string): Promis
   return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 }
 
-function extractPublicKeyPem(document: Record<string, unknown> | null): string | null {
+interface ExtractedKey {
+  pem: string;
+  owner: string | null;
+  id: string | null;
+}
+
+const stringField = (value: unknown): string | null => (typeof value === 'string' && value.length > 0 ? value : null);
+
+function extractPublicKey(document: Record<string, unknown> | null): ExtractedKey | null {
   if (!document) return null;
   const key = document.publicKey;
-  if (typeof key === 'object' && key !== null) {
-    const pem = (key as { publicKeyPem?: unknown }).publicKeyPem;
-    if (typeof pem === 'string' && pem.includes('BEGIN PUBLIC KEY')) return pem;
+  if (typeof key === 'object' && key !== null && !Array.isArray(key)) {
+    const record = key as Record<string, unknown>;
+    const pem = stringField(record.publicKeyPem);
+    if (pem && pem.includes('BEGIN PUBLIC KEY')) {
+      return {
+        pem,
+        owner:
+          stringField(record.owner) ??
+          stringField(record.controller) ??
+          stringField(document.owner) ??
+          stringField(document.controller),
+        id: stringField(record.id) ?? stringField(document.id),
+      };
+    }
   }
-  const pem = document.publicKeyPem;
-  if (typeof pem === 'string' && pem.includes('BEGIN PUBLIC KEY')) return pem;
+  const pem = stringField(document.publicKeyPem);
+  if (pem && pem.includes('BEGIN PUBLIC KEY')) {
+    return {
+      pem,
+      owner: stringField(document.owner) ?? stringField(document.controller),
+      id: stringField(document.id),
+    };
+  }
   return null;
 }
+
+/** Compare two actor URLs without a trailing slash or fragment. */
+const canonicalActorUrl = (value: string): string => {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return value;
+  }
+};
 
 /**
  * Resolve the public key of a remote actor.
  *
  * The `keyId` of the signature is the authoritative reference: a peer may host
  * its key on a different document than the actor. The key is only fetched
- * from the actor's own origin, otherwise a key from another instance could
- * vouch for this actor.
+ * from the actor's own origin (and a redirect may not leave it), otherwise a
+ * key from another instance could vouch for this actor.
  *
- * When the key document cannot be resolved the actor document is used as a
- * fallback, which is what most implementations publish.
+ * A same-origin key is not enough: a user of a multi-user instance could
+ * otherwise sign as another user of that instance. When the key document
+ * names an `owner`, it has to be this actor. A separate key document without
+ * an owner is only accepted when the actor document advertises the same key.
  */
 export async function resolveActorPublicKey(
   actorUrl: string,
@@ -222,22 +277,49 @@ export async function resolveActorPublicKey(
     return null;
   }
 
+  let unverified: ExtractedKey | null = null;
   if (keyId) {
     try {
       const keyUrl = new URL(keyId);
       keyUrl.hash = '';
       if (keyUrl.origin === actorOrigin) {
-        const document = await fetchActivityPubJson(keyUrl.toString(), env, options);
-        const pem = extractPublicKeyPem(document);
-        if (pem) return pem;
+        const document = await fetchActivityPubJson(keyUrl.toString(), env, { ...options, sameOrigin: true });
+        const key = extractPublicKey(document);
+        if (key?.owner) {
+          return canonicalActorUrl(key.owner) === canonicalActorUrl(actorUrl) ? key.pem : null;
+        }
+        if (key) {
+          // The keyId pointed at the actor document itself, so this is the
+          // document we would fetch for the fallback anyway.
+          if (canonicalActorUrl(keyUrl.toString()) === canonicalActorUrl(actorUrl)) {
+            const documentId = stringField(document?.id);
+            if (documentId && canonicalActorUrl(documentId) !== canonicalActorUrl(actorUrl)) return null;
+            return key.pem;
+          }
+          unverified = key;
+        }
       }
     } catch {
       // fall through to the actor document
     }
   }
 
-  const actorDocument = await fetchActivityPubJson(actorUrl, env, options);
-  return extractPublicKeyPem(actorDocument);
+  const actorDocument = await fetchActivityPubJson(actorUrl, env, { ...options, sameOrigin: true });
+  const actorDocumentId = stringField(actorDocument?.id);
+  if (actorDocumentId && canonicalActorUrl(actorDocumentId) !== canonicalActorUrl(actorUrl)) return null;
+  const actorKey = extractPublicKey(actorDocument);
+  if (!actorKey) return null;
+  if (actorKey.owner && canonicalActorUrl(actorKey.owner) !== canonicalActorUrl(actorUrl)) {
+    return null;
+  }
+  if (keyId && actorKey.id) {
+    const expected = canonicalActorUrl(keyId.split('#')[0] ?? '');
+    if (canonicalActorUrl(actorKey.id.split('#')[0] ?? '') !== expected) return null;
+  }
+  // A key hosted on its own document with no owner is only trusted when the
+  // actor document publishes the exact same key.
+  if (unverified && unverified.pem !== actorKey.pem) return null;
+  return actorKey.pem;
 }
 
 /**
@@ -251,8 +333,8 @@ export async function fetchActorPublicKey(
   env: FederationEnv,
   options: FetchOptions = {},
 ): Promise<string | null> {
-  const document = await fetchActivityPubJson(actorUrl, env, options);
-  return extractPublicKeyPem(document);
+  const document = await fetchActivityPubJson(actorUrl, env, { ...options, sameOrigin: true });
+  return extractPublicKey(document)?.pem ?? null;
 }
 
 /**
@@ -306,8 +388,10 @@ export async function resolveRemoteActor(
   env: FederationEnv,
   options: FetchOptions = {},
 ): Promise<RemoteActor | null> {
-  const document = await fetchActivityPubJson(actorUrl, env, options);
+  const document = await fetchActivityPubJson(actorUrl, env, { ...options, sameOrigin: true });
   if (!document) return null;
+  const documentId = stringField(document.id);
+  if (documentId && canonicalActorUrl(documentId) !== canonicalActorUrl(actorUrl)) return null;
 
   const inbox = normalizeRemoteInbox(actorUrl, document.inbox, env);
   if (!inbox) return null;
@@ -339,7 +423,7 @@ export async function resolveRemoteActor(
     actorUrl,
     inbox: inbox.inbox,
     sharedInbox,
-    publicKeyPem: extractPublicKeyPem(document),
+    publicKeyPem: extractPublicKey(document)?.pem ?? null,
     preferredUsername: typeof document.preferredUsername === 'string' ? document.preferredUsername : null,
     displayName: typeof document.name === 'string' ? document.name : null,
     iconUrl,
