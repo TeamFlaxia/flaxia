@@ -83,13 +83,40 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 認証 | 説明 |
 |---|---|---|---|
-| GET | `/api/me` | 必須 | 現在ユーザー（`ng_words` 含む） |
+| GET | `/api/me` | 必須 | 現在ユーザー（`ng_words`、バッジ、装備中の実績を含む） |
 | PATCH | `/api/users/me` | 必須 | プロフィール更新（`equipped_title_id` 等） |
 | PATCH | `/api/users/me/email` | 必須 | メール変更（再認証必要） |
 | PATCH | `/api/users/me/password` | 必須 | パスワード変更（Vault 再ラップ必要） |
 | POST | `/api/users/me/avatar` | 必須 | アバター画像アップロード |
 | DELETE | `/api/users/me` | 必須 | アカウント削除 |
 | GET | `/api/users/me/blocked` | 必須 | ブロック一覧 |
+
+### バッジと実績（ユーザー表示項目）
+
+ユーザー・投稿・通知の actor など、ユーザーを表すオブジェクトはバッジと
+実績（称号）の表示項目を返します。アプリ側はこれらを同期して表示します。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `badge_type` | `string \| null` | アバターバッジ。現状 `flaxia_plus`（Flaxia+ のチェックマーク）または `null`。`null` 以外は必ず描画可能な値のみ |
+| `name_color` | `string \| null` | 表示名の色。`badge_type` が有効なときのみ意味を持つ |
+| `equipped_title_id` | `string \| null` | 装備中の実績 ID。未装備は `null` |
+| `title_name` / `title_name_ja` | `string \| null` | 実績の表示名（英 / 日） |
+| `title_description` / `title_description_ja` | `string \| null` | 実績の説明（英 / 日） |
+| `title_icon` | `string \| null` | 実績アイコンの画像 URL。非画像のレガシー値は名前のみで描画 |
+
+これらの項目は次で返ります。
+
+| エンドポイント | バッジ | 実績 |
+|---|---|---|
+| `GET /api/me` | ✓ | ✓（装備中の実績を解決済み） |
+| `GET /api/users/:username` | ✓ | ✓ |
+| `GET /api/users/suggest` / `/api/users/suggestions` | ✓ | ✓ |
+| `GET /api/users/:username/followers` / `/following` | ✓ | ✓ |
+| `GET /api/users/me/blocked` | ✓ | ✓ |
+| `GET /api/search?type=users` / 投稿検索の `users` | ✓ | ✓ |
+| `GET /api/notifications`（`actor` / `actors`） | ✓ | ✓ |
+| `GET /api/posts` 等の投稿作者 | ✓ | ✓ |
 
 ---
 
@@ -115,6 +142,9 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 | DELETE | `/api/profile/pin` | 必須 | ピン解除 |
 | POST | `/api/users/me/credentials/retry` | 必須 | 資格情報リトライ |
 | POST | `/api/users/me/deletion/retry` | 必須 | 削除リトライ |
+
+プロフィール / 提案 / フォロワー一覧のユーザーには [バッジと実績](#バッジと実績ユーザー表示項目)
+の表示項目が含まれます。
 
 ---
 
@@ -180,7 +210,7 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/search` | `q`, `type=posts|users|hashtags` |
+| GET | `/api/search` | `q`, `type=posts|users|hashtags`（ユーザー結果に[バッジと実績](#バッジと実績ユーザー表示項目)を含む） |
 | GET | `/api/tags/trending` | トレンドタグ |
 | GET | `/api/tags/suggest` | タグ補完 |
 | GET | `/api/current-topic` | 現在の話題 |
@@ -222,7 +252,7 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/notifications` | 通知一覧 |
+| GET | `/api/notifications` | 通知一覧（`actor`/`actors` に[バッジと実績](#バッジと実績ユーザー表示項目)を含む） |
 | POST | `/api/notifications/read-all` | すべて既読 |
 | GET | `/api/push/vapid-key` | VAPID 公開鍵 |
 | POST | `/api/push/register` | プッシュ登録 |
