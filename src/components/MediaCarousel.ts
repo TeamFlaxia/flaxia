@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import type { MediaCue } from '../lib/post-cues.js';
 import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';
@@ -9,6 +10,8 @@ import { createVideoPlayer } from './VideoPlayer.js';
 export interface MediaCarouselProps {
   postId: string;
   attachments: PostAttachment[];
+  /** Timed comments parsed from the owning post's body, applied to every video/audio slide. */
+  cues?: MediaCue[];
 }
 
 /**
@@ -61,7 +64,7 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
         }),
       );
     } else if (att.kind === 'video') {
-      slide.appendChild(createVideoPlayer({ gifKey: att.r2_key, postId: props.postId }));
+      slide.appendChild(createVideoPlayer({ gifKey: att.r2_key, postId: props.postId, cues: props.cues }));
     } else if (att.kind === 'document') {
       if (att.r2_key.toLowerCase().endsWith('.pdf')) {
         slide.appendChild(createDocumentViewer({ r2Key: att.r2_key }));
@@ -74,7 +77,7 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
         slide.appendChild(link);
       }
     } else {
-      slide.appendChild(createAudioPlayer({ gifKey: att.r2_key, postId: props.postId }));
+      slide.appendChild(createAudioPlayer({ gifKey: att.r2_key, postId: props.postId, cues: props.cues }));
     }
 
     track.appendChild(slide);

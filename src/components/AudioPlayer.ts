@@ -4,6 +4,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
 import { GifPreviewProps } from '../types/post.js';
 import { AudioVisualizer } from './AudioVisualizer.js';
+import { createMediaCueOverlay } from './MediaCues.js';
 
 export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   // Data-saver: don't fetch audio bytes until the user taps.
@@ -146,6 +147,10 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   container.appendChild(loadingEl);
   container.appendChild(overlay);
   container.appendChild(controls);
+
+  // --- Media cue overlay (Niconico-style timed comments) ---
+  const cueOverlay = createMediaCueOverlay(props.cues);
+  if (cueOverlay) container.appendChild(cueOverlay.element);
 
   let isDragging = false;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -320,6 +325,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   audio.addEventListener('timeupdate', () => {
     updateSeekbar();
     updateBuffered();
+    cueOverlay?.update(audio.currentTime);
   });
 
   audio.addEventListener('progress', updateBuffered);
@@ -477,6 +483,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
 
   // --- Cleanup ---
   container.addEventListener('DOMNodeRemoved', () => {
+    cueOverlay?.destroy();
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;
