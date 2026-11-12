@@ -76,14 +76,14 @@ describe('ActivityPub inbox handlers', () => {
     db.close();
   });
 
-  it('stores a Note of a follower and answers it with a mention notification', async () => {
+  it('stores a Note of an account the user follows and answers it with a mention notification', async () => {
     const originalFetch = globalThis.fetch;
     const restore = stubRemoteActor(originalFetch);
     try {
       await db
         .prepare(
-          `INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-           VALUES ('f-1', 'local-1', ?, ?, '2026-01-01T00:00:00.000Z')`,
+          `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+           VALUES ('following-create', 'local-1', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
         )
         .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
         .run();
@@ -138,6 +138,83 @@ describe('ActivityPub inbox handlers', () => {
     } finally {
       restore();
     }
+  });
+
+  it('stores the same Note only once even with different activity ids', async () => {
+    const object = {
+      id: `${REMOTE}/notes/duplicate`,
+      type: 'Note',
+      attributedTo: REMOTE_ACTOR,
+      content: 'only once',
+    };
+    for (const activityId of ['duplicate-1', 'duplicate-2']) {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/${activityId}`,
+          type: 'Create',
+          actor: REMOTE_ACTOR,
+          object,
+        },
+      });
+    }
+    const count = await db
+      .prepare('SELECT COUNT(*) AS n FROM posts WHERE ap_object_id = ?')
+      .bind(object.id)
+      .first<{ n: number }>();
+    assert.equal(count?.n, 1);
+  });
+
+  it('ignores a Note whose object id lives on another origin', async () => {
+    await handleIncomingActivity(envFor(db), {
+      actorId: REMOTE_ACTOR,
+      username: 'alice',
+      activity: {
+        id: `${REMOTE}/activities/foreign-object`,
+        type: 'Create',
+        actor: REMOTE_ACTOR,
+        object: {
+          id: `${BASE}/notes/post-1`,
+          type: 'Note',
+          attributedTo: REMOTE_ACTOR,
+          content: 'not a local note',
+        },
+      },
+    });
+    const count = await db
+      .prepare('SELECT COUNT(*) AS n FROM posts WHERE ap_object_id = ?')
+      .bind(`${BASE}/notes/post-1`)
+      .first<{ n: number }>();
+    assert.equal(count?.n, 0);
+  });
+
+  it('ignores a Note of a follower the account does not follow back', async () => {
+    const followerOnly = `${REMOTE}/users/stranger`;
+    await db
+      .prepare(
+        `INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
+         VALUES ('follower-only', 'local-1', ?, ?, '2026-01-01T00:00:00.000Z')`,
+      )
+      .bind(followerOnly, `${followerOnly}/inbox`)
+      .run();
+    await handleIncomingActivity(envFor(db), {
+      actorId: followerOnly,
+      username: 'alice',
+      activity: {
+        id: `${REMOTE}/activities/follower-only`,
+        type: 'Create',
+        actor: followerOnly,
+        object: {
+          id: `${REMOTE}/notes/follower-only`,
+          type: 'Note',
+          attributedTo: followerOnly,
+          content: 'not in my timeline',
+        },
+      },
+    });
+    const post = await db.prepare('SELECT id FROM posts WHERE actor_id = ?').bind(followerOnly).first<{ id: string }>();
+    assert.equal(post, null);
   });
 
   it('ignores a Note of an actor that does not follow the account', async () => {
@@ -252,24 +329,24 @@ describe('ActivityPub inbox handlers', () => {
   it('marks a remote follow as accepted and as rejected', async () => {
     await db
       .prepare(
-        `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+        `INSERT OR REPLACE INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
          VALUES ('following-1', 'local-1', ?, ?, 'sent', '2026-01-01T00:00:00.000Z')`,
       )
-      .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
+      .bind(REMOTE_BOB, `${REMOTE}/users/bob/inbox`)
       .run();
 
     await handleIncomingActivity(envFor(db), {
-      actorId: REMOTE_ACTOR,
+      actorId: REMOTE_BOB,
       username: 'alice',
       activity: {
         id: `${REMOTE}/activities/6`,
         type: 'Accept',
-        actor: REMOTE_ACTOR,
+        actor: REMOTE_BOB,
         object: {
           id: `${BASE}/activities/follow-1`,
           type: 'Follow',
           actor: `${BASE}/api/actors/alice`,
-          object: REMOTE_ACTOR,
+          object: REMOTE_BOB,
         },
       },
     });
@@ -281,17 +358,17 @@ describe('ActivityPub inbox handlers', () => {
     assert.equal(following?.status, 'accepted');
 
     await handleIncomingActivity(envFor(db), {
-      actorId: REMOTE_ACTOR,
+      actorId: REMOTE_BOB,
       username: 'alice',
       activity: {
         id: `${REMOTE}/activities/7`,
         type: 'Reject',
-        actor: REMOTE_ACTOR,
+        actor: REMOTE_BOB,
         object: {
           id: `${BASE}/activities/follow-2`,
           type: 'Follow',
           actor: `${BASE}/api/actors/alice`,
-          object: REMOTE_ACTOR,
+          object: REMOTE_BOB,
         },
       },
     });
@@ -471,6 +548,33 @@ describe('ActivityPub inbox handlers', () => {
       .bind(REMOTE_BOB)
       .first<{ id: string }>();
     assert.equal(follower, null);
+  });
+
+  it('records the blocker, not the blocked local actor', async () => {
+    await handleIncomingActivity(envFor(db), {
+      actorId: REMOTE_ACTOR,
+      username: 'alice',
+      activity: {
+        id: `${REMOTE}/activities/block`,
+        type: 'Block',
+        actor: REMOTE_ACTOR,
+        object: `${BASE}/api/actors/alice`,
+      },
+    });
+    const block = await db
+      .prepare('SELECT actor_url FROM ap_blocks WHERE local_user_id = ? AND actor_url = ?')
+      .bind('local-1', REMOTE_ACTOR)
+      .first<{ actor_url: string }>();
+    assert.ok(block, 'the remote blocker must be recorded');
+    const selfBlock = await db
+      .prepare('SELECT actor_url FROM ap_blocks WHERE local_user_id = ? AND actor_url = ?')
+      .bind('local-1', `${BASE}/api/actors/alice`)
+      .first<{ actor_url: string }>();
+    assert.equal(selfBlock, null, 'the local actor must not block itself');
+    await db
+      .prepare('DELETE FROM ap_blocks WHERE local_user_id = ? AND actor_url = ?')
+      .bind('local-1', REMOTE_ACTOR)
+      .run();
   });
 
   it('updates the cached profile of a remote actor', async () => {

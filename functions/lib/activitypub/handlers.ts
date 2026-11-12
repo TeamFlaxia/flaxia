@@ -85,6 +85,16 @@ async function localUserId(env: HandlerEnv, username: string): Promise<string | 
   return user?.id ?? null;
 }
 
+/** True when the local account has blocked the remote actor. */
+async function isBlocked(env: HandlerEnv, localUserId: string, actorId: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    'SELECT 1 AS blocked FROM ap_blocks WHERE local_user_id = ? AND actor_url = ? LIMIT 1',
+  )
+    .bind(localUserId, actorId)
+    .first<{ blocked: number }>();
+  return Boolean(row);
+}
+
 /**
  * Claim an activity.
  *
@@ -212,12 +222,48 @@ async function handleCreate(
     return;
   }
 
+  if (await isBlocked(env, userId, actorId)) {
+    console.error('Ignoring Create from a blocked actor:', actorId);
+    return;
+  }
+
   // Only actors the target user follows may have their Notes published.
-  const followRel = await env.DB.prepare('SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+  // `ap_followers` is the remote actor following the local user; the notes we
+  // want are the ones from `ap_following`, where the local user follows the
+  // remote actor. A follow that is still `sent` can already receive posts
+  // from an instance that auto-accepts; a rejected follow cannot.
+  const followRel = await env.DB.prepare(
+    "SELECT id FROM ap_following WHERE local_user_id = ? AND target_actor_url = ? AND status != 'rejected'",
+  )
     .bind(userId, actorId)
     .first();
   if (!followRel) {
-    console.error('Ignoring Create from non-follower actor:', actorId);
+    console.error('Ignoring Create from an actor the user does not follow:', actorId);
+    return;
+  }
+
+  // The object id has to live on the actor's origin. Otherwise a remote
+  // actor could claim a local note id and confuse Delete/Like resolution.
+  const objectId = typeof object.id === 'string' ? object.id : null;
+  if (objectId) {
+    try {
+      if (new URL(objectId).origin !== new URL(actorId).origin) {
+        console.error('Note id origin does not match the actor:', objectId);
+        return;
+      }
+    } catch {
+      console.error('Note id is not a URL:', objectId);
+      return;
+    }
+  }
+
+  // A remote actor can send the same Note with different activity ids.
+  // The Note itself is the identity of the post, so keep it unique.
+  const existingNote = objectId
+    ? await env.DB.prepare('SELECT id FROM posts WHERE ap_object_id = ? LIMIT 1').bind(objectId).first()
+    : null;
+  if (existingNote) {
+    console.log('Note already exists:', objectId);
     return;
   }
 
@@ -255,7 +301,6 @@ async function handleCreate(
   }
 
   const postId = randomPostId();
-  const objectId = typeof object.id === 'string' ? object.id : null;
 
   await env.DB.prepare(`
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, ap_object_id, created_at)
@@ -308,6 +353,11 @@ async function handleFollow(
   const followerUserId = await localUserId(env, username);
   if (!followerUserId) {
     console.error('User not found:', username);
+    return;
+  }
+
+  if (await isBlocked(env, followerUserId, actorId)) {
+    console.log('Ignoring Follow from a blocked actor:', actorId);
     return;
   }
 
@@ -452,10 +502,15 @@ async function handleAccept(
     return;
   }
   // The Accept refers to the Follow we sent: its object is the actor we
-  // wanted to follow, not the actor that accepted the request.
+  // wanted to follow, not the actor that accepted the request. Only that
+  // actor may accept it.
   const followActor = typeof object.object === 'string' ? object.object : object.actor;
   if (typeof followActor !== 'string') {
     console.error('Accept activity missing object actor');
+    return;
+  }
+  if (followActor !== actorId) {
+    console.warn('Ignoring Accept from a different actor');
     return;
   }
 
@@ -483,6 +538,10 @@ async function handleReject(
   }
   const followActor = typeof object.object === 'string' ? object.object : object.actor;
   if (typeof followActor !== 'string') return;
+  if (followActor !== actorId) {
+    console.warn('Ignoring Reject from a different actor');
+    return;
+  }
 
   const userId = await localUserId(env, username);
   if (!userId) return;
@@ -517,6 +576,10 @@ async function handleLike(
     .first<{ id: string; user_id: string }>();
   if (!post) {
     console.log('Liked post not found:', postId);
+    return;
+  }
+  if (post.user_id && (await isBlocked(env, post.user_id, actorId))) {
+    console.log('Ignoring Like from a blocked actor:', actorId);
     return;
   }
 
@@ -582,6 +645,10 @@ async function handleAnnounce(
     .first<{ id: string; user_id: string }>();
   if (!post) {
     console.log('Announced post not found:', postId);
+    return;
+  }
+  if (post.user_id && (await isBlocked(env, post.user_id, actorId))) {
+    console.log('Ignoring Announce from a blocked actor:', actorId);
     return;
   }
 
@@ -778,13 +845,16 @@ async function handleBlock(
   if (!target) return;
   const userId = await localUserId(env, username);
   if (!userId) return;
+  // A Block from a remote actor means "I block you", not "block the target
+  // you named". Record the sender as blocked; the target is the local actor
+  // and storing it would put the user's own actor URL on their block list.
   await env.DB.prepare(`
     INSERT OR IGNORE INTO ap_blocks (id, local_user_id, actor_url, created_at)
     VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(randomId(), userId, target)
+    .bind(randomId(), userId, actorId)
     .run();
-  console.log('Block recorded:', target);
+  console.log('Block recorded from:', actorId, 'target:', target);
 }
 
 async function handleMove(

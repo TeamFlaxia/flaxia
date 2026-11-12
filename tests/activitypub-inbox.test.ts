@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
-import { handleSharedInbox, type InboxEnv } from '../functions/lib/activitypub/inbox.ts';
+import { handlePersonalInbox, handleSharedInbox, type InboxEnv } from '../functions/lib/activitypub/inbox.ts';
 import { signRequest } from '../functions/lib/activitypub/signature.ts';
 import { createTestDatabase, seedLocalUser, type TestDatabase } from './helpers/d1.ts';
 
@@ -188,6 +188,29 @@ describe('ActivityPub inbox', () => {
       assert.equal(second.status, 202);
       const body = (await second.json()) as { duplicate?: boolean };
       assert.equal(body.duplicate, true);
+      assert.equal(queue.length, 1, 'a replay must not be queued twice');
+    } finally {
+      restore();
+    }
+  });
+
+  it('drops an exact replay on the personal inbox too', async () => {
+    const restore = stubRemoteActor();
+    try {
+      queue.length = 0;
+      const target = `${BASE}/api/actors/alice/inbox`;
+      const activity = {
+        id: `${REMOTE}/activities/inbox-personal-1`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        object: `${BASE}/api/actors/alice`,
+      };
+      const personalEnv = env();
+      const first = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      assert.equal(first.status, 202);
+      const second = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      assert.equal(second.status, 202);
+      assert.equal(((await second.json()) as { duplicate?: boolean }).duplicate, true);
       assert.equal(queue.length, 1, 'a replay must not be queued twice');
     } finally {
       restore();

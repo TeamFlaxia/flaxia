@@ -197,6 +197,48 @@ describe('ActivityPub signature verification', () => {
     assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
   });
 
+  it('verifies a signature that covers (created) and (expires)', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const body = '{}';
+    const digestBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body));
+    const digest = btoa(String.fromCharCode(...new Uint8Array(digestBuffer)));
+    const date = new Date().toUTCString();
+    const created = Math.floor(Date.now() / 1000);
+    const expires = created + 300;
+    const signedHeaders = '(request-target) host date digest (created) (expires)';
+    const signingString = [
+      '(request-target): post /inbox',
+      'host: remote.example',
+      `date: ${date}`,
+      `digest: sha-256=${digest}`,
+      `(created): ${created}`,
+      `(expires): ${expires}`,
+    ].join('\n');
+    const signatureBuffer = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      await importKey(privateKeyPem),
+      new TextEncoder().encode(signingString),
+    );
+    const signature = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
+    const headers = new Headers({
+      Host: 'remote.example',
+      Date: date,
+      Digest: `sha-256=${digest}`,
+      Signature: `keyId="https://remote.example/users/alice#main-key",created="${created}",expires="${expires}",headers="${signedHeaders}",signature="${signature}"`,
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), true);
+
+    // The (created) value is part of the signature, not a placeholder.
+    const tampered = new Headers(headers);
+    tampered.set(
+      'Signature',
+      `keyId="https://remote.example/users/alice#main-key",created="${created + 1}",expires="${expires}",headers="${signedHeaders}",signature="${signature}"`,
+    );
+    const tamperedRequest = new Request(URL_UNDER_TEST, { method: 'POST', headers: tampered, body });
+    assert.equal(await verifyHttpSignature(tamperedRequest, publicKeyPem), false);
+  });
+
   it('builds the signing string from the request', () => {
     const request = new Request('https://remote.example/inbox?x=1', {
       method: 'POST',
@@ -235,6 +277,54 @@ describe('ActivityPub key resolution', () => {
       assert.equal(resolved, publicKeyPem);
       assert.equal(requested.length, 1);
       assert.equal(requested[0], 'https://remote.example/users/alice');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects a key owned by another actor on the same origin', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          publicKey: {
+            id: 'https://remote.example/users/mallory#main-key',
+            owner: 'https://remote.example/users/mallory',
+            publicKeyPem: '-----BEGIN PUBLIC KEY-----mallory',
+          },
+        }),
+        { headers: { 'Content-Type': 'application/activity+json' } },
+      )) as typeof fetch;
+    try {
+      const resolved = await resolveActorPublicKey(
+        'https://remote.example/users/alice',
+        {},
+        'https://remote.example/users/mallory#main-key',
+      );
+      assert.equal(resolved, null);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('rejects a cross-origin redirect for the actor document', async () => {
+    const originalFetch = globalThis.fetch;
+    const requested: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'https://evil.example/users/alice' },
+      });
+    }) as typeof fetch;
+    try {
+      const resolved = await resolveActorPublicKey(
+        'https://remote.example/users/alice',
+        {},
+        'https://remote.example/users/alice#main-key',
+      );
+      assert.equal(resolved, null);
+      assert.ok(!requested.some((url) => url.startsWith('https://evil.example')));
     } finally {
       globalThis.fetch = originalFetch;
     }

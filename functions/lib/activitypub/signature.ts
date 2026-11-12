@@ -93,7 +93,12 @@ export function parseSignatureHeader(signatureHeader: string): SignatureHeader {
  * other entry is the header value with the original casing preserved for the
  * header name in lower case.
  */
-export function buildSigningString(request: Request, headers: string[]): string {
+export interface SigningParameters {
+  created?: number;
+  expires?: number;
+}
+
+export function buildSigningString(request: Request, headers: string[], parameters: SigningParameters = {}): string {
   const url = new URL(request.url);
   const lines: string[] = [];
 
@@ -104,7 +109,11 @@ export function buildSigningString(request: Request, headers: string[]): string 
       const path = url.pathname + url.search;
       lines.push(`(request-target): ${method} ${path}`);
     } else if (normalized === '(created)') {
-      lines.push('(created): 0');
+      if (parameters.created === undefined) throw new Error('Missing signature parameter: created');
+      lines.push(`(created): ${parameters.created}`);
+    } else if (normalized === '(expires)') {
+      if (parameters.expires === undefined) throw new Error('Missing signature parameter: expires');
+      lines.push(`(expires): ${parameters.expires}`);
     } else if (normalized === 'host') {
       // The host is not always part of the request headers: a runtime that
       // strips it still lets the URL name the host the request addresses.
@@ -193,7 +202,10 @@ export async function verifyHttpSignature(
       return false;
     }
 
-    const signingString = buildSigningString(request, parsed.headers);
+    const signingString = buildSigningString(request, parsed.headers, {
+      created: parsed.created,
+      expires: parsed.expires,
+    });
     const publicKey = await importPublicKey(publicKeyPem);
 
     let signatureBase64 = parsed.signature.replace(/\s/g, '');
