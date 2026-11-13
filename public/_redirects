@@ -1,6 +1,3 @@
-/.well-known/webfinger /api/.well-known/webfinger 200
-/.well-known/nodeinfo /api/.well-known/nodeinfo 200
-/host-meta /api/host-meta 200
 # /users/:username is rendered by the SPA for browsers and by
 # functions/users/[username].ts for crawlers. Do not redirect it to the JSON API.
 /users/:username/inbox /api/actors/:username/inbox 308
