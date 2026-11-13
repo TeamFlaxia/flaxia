@@ -133,6 +133,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
     ['EXPORT_KV', 'dataset export artifact falls back when unset'],
     ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
+    ['VECTORIZE_WEB', 'web embeddings stay disabled until a dedicated index is created'],
     ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
     ['AUTH_UI_ORIGIN', 'login UI origin defaults to https://auth.flaxia.app'],
   ]);

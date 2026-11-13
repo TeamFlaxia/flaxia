@@ -471,7 +471,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       tag?: string,
       adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter',
       searchQuery?: string,
-      searchType?: 'posts' | 'users' | 'arcade',
+      searchType?: 'posts' | 'users' | 'arcade' | 'web',
     ) => {
       // Authentication UI lives on auth.flaxia.app. A full navigation keeps the
       // login flow out of this SPA and returns through /api/auth/callback.

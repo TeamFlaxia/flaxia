@@ -81,6 +81,8 @@ export interface CrowdNodeConfig {
   containerImageOrigins?: string[];
   /** Exact same-origin API host allowed to serve signed scan-file tickets. */
   fileSourceOrigins?: string[];
+  /** Exact origins allowed to serve signed Common Crawl byte ranges. */
+  ccRangeOrigins?: string[];
   maxCpuLoad?: number;
 }
 
@@ -180,6 +182,8 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
     },
     capabilities: CROWD_SITE_CAPABILITIES,
     fileSourceOrigins:
+      typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
+    ccRangeOrigins:
       typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
     maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
   };

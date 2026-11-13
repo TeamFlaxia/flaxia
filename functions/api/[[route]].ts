@@ -22,6 +22,7 @@ import postsRouter from './routes/posts';
 import pushRouter from './routes/push';
 import recommendationsRouter from './routes/recommendations';
 import reportRouter from './routes/report';
+import searchRouter from './routes/search';
 import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
 import testsRouter from './routes/tests';
@@ -126,6 +127,7 @@ app.route('/api', topicRouter);
 
 // Report route (extracted to routes/report.ts)
 app.route('/api', reportRouter);
+app.route('/api', searchRouter);
 
 // Public GitHub issue submission for authenticated Flaxia users.
 app.route('/api', bugReportsRouter);
