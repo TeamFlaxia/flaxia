@@ -3,6 +3,20 @@ import type { D1Database } from '@cloudflare/workers-types';
 /** Awarded to every account on registration and on later logins. */
 export const NEWCOMER_TITLE_ID = 'flaxian_newcomer';
 
+/**
+ * SQL fragments that attach the equipped title (achievement) to any query that
+ * already selects from `users u`. Keep the alias `u` so the join stays valid in
+ * follows/blocks/search queries.
+ */
+export const USER_TITLE_JOIN = `LEFT JOIN titles t ON t.id = u.equipped_title_id
+  AND (t.game_post_id IS NULL OR EXISTS (
+    SELECT 1 FROM posts gt WHERE gt.id = t.game_post_id AND gt.hidden = 0 AND gt.status = 'published'
+  ))`;
+export const USER_TITLE_COLUMNS = `u.equipped_title_id,
+  t.name AS title_name, t.name_ja AS title_name_ja,
+  t.description AS title_description, t.description_ja AS title_description_ja,
+  t.icon AS title_icon`;
+
 export interface TitleRow {
   id: string;
   icon: string;
@@ -42,6 +56,185 @@ export async function ensureNewcomerTitle(db: D1Database, userId: string): Promi
   } catch (error) {
     console.error('Failed to award newcomer title:', error);
   }
+}
+
+/** Longest game title id. Bounded so ids stay usable as API path/JSON values. */
+export const GAME_TITLE_ID_MAX = 128;
+/** Authoring limits applied to every game-authored title. */
+export const GAME_TITLE_NAME_MAX = 64;
+export const GAME_TITLE_DESCRIPTION_MAX = 200;
+export const GAME_TITLE_ICON_MAX = 512;
+
+/** Fallback icon for a game title that does not ship one. */
+export const DEFAULT_GAME_TITLE_ICON = '/icons/badge-96.png';
+/** Titles a single game post may author. */
+export const MAX_TITLES_PER_GAME = 200;
+/** Game titles sort after the platform catalog. */
+const GAME_TITLE_SORT_ORDER = 1000;
+
+export interface GameTitleInput {
+  postId: string;
+  titleId: string;
+  name: string;
+  nameJa: string;
+  description: string;
+  descriptionJa: string;
+  icon: string;
+}
+
+export type GameTitleCreation = 'created' | 'exists' | 'conflict' | 'limit';
+export type GameTitleAward = 'awarded' | 'not_found' | 'conflict';
+
+/**
+ * Game title icons must stay same-origin paths. A profile that rendered an
+ * absolute third-party URL would phone that host on every timeline view, and
+ * the catalog has no review step for game-authored art.
+ */
+export function isGameTitleIcon(icon: string): boolean {
+  return icon.startsWith('/') && !icon.startsWith('//') && icon.length <= GAME_TITLE_ICON_MAX;
+}
+
+/**
+ * Authors a title owned by `input.postId`. Definitions are write-once: the
+ * first writer fixes the display text, and a title id that already belongs to
+ * another game (or to the platform) is a conflict rather than a takeover.
+ */
+export async function createGameTitle(db: D1Database, input: GameTitleInput): Promise<GameTitleCreation> {
+  const existing = await db
+    .prepare('SELECT game_post_id FROM titles WHERE id = ?')
+    .bind(input.titleId)
+    .first<{ game_post_id: string | null }>();
+  if (existing) return existing.game_post_id === input.postId ? 'exists' : 'conflict';
+
+  const owned = await db
+    .prepare('SELECT COUNT(*) AS n FROM titles WHERE game_post_id = ?')
+    .bind(input.postId)
+    .first<{ n: number }>();
+  if ((owned?.n ?? 0) >= MAX_TITLES_PER_GAME) return 'limit';
+
+  try {
+    await db
+      .prepare(
+        `INSERT INTO titles (id, icon, name, name_ja, description, description_ja, sort_order, game_post_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(
+        input.titleId,
+        input.icon,
+        input.name,
+        input.nameJa,
+        input.description,
+        input.descriptionJa,
+        GAME_TITLE_SORT_ORDER,
+        input.postId,
+      )
+      .run();
+  } catch {
+    // Concurrent authoring of the same id: fall through to the ownership check.
+    const raced = await db.prepare('SELECT game_post_id FROM titles WHERE id = ?').bind(input.titleId).first<{
+      game_post_id: string | null;
+    }>();
+    return raced && raced.game_post_id === input.postId ? 'exists' : 'conflict';
+  }
+  return 'created';
+}
+
+/**
+ * Grants an already authored game title to a user. Only the game's own titles
+ * are awardable; a missing title is `not_found`, and a title belonging to
+ * another game (or the platform) is `conflict`. Creating a definition is a
+ * separate, author-only operation (`createGameTitle`).
+ */
+export async function awardGameTitle(
+  db: D1Database,
+  userId: string,
+  postId: string,
+  titleId: string,
+): Promise<GameTitleAward> {
+  const title = await db
+    .prepare('SELECT game_post_id FROM titles WHERE id = ?')
+    .bind(titleId)
+    .first<{ game_post_id: string | null }>();
+  if (!title) return 'not_found';
+  if (title.game_post_id !== postId) return 'conflict';
+
+  await db.prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)').bind(userId, titleId).run();
+  return 'awarded';
+}
+
+/**
+ * Remove every game title authored by the given posts, its awards, and any
+ * equipped reference. Called when a game post (and its replies) are deleted so
+ * the public catalog cannot keep orphaned achievements.
+ */
+export async function deleteGameTitlesForPosts(db: D1Database, postIds: string[]): Promise<void> {
+  if (postIds.length === 0) return;
+  for (let i = 0; i < postIds.length; i += 400) {
+    const ids = postIds.slice(i, i + 400);
+    const placeholders = ids.map(() => '?').join(',');
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE users SET equipped_title_id = NULL
+           WHERE equipped_title_id IN (SELECT id FROM titles WHERE game_post_id IN (${placeholders}))`,
+        )
+        .bind(...ids),
+      db
+        .prepare(
+          `DELETE FROM user_titles
+           WHERE title_id IN (SELECT id FROM titles WHERE game_post_id IN (${placeholders}))`,
+        )
+        .bind(...ids),
+      db.prepare(`DELETE FROM titles WHERE game_post_id IN (${placeholders})`).bind(...ids),
+    ]);
+  }
+}
+
+/** Flattened display fields of an equipped title, or nulls when unequipped. */
+export interface EquippedTitleFields {
+  title_name: string | null;
+  title_name_ja: string | null;
+  title_description: string | null;
+  title_description_ja: string | null;
+  title_icon: string | null;
+}
+
+export const NULL_EQUIPPED_TITLE: EquippedTitleFields = {
+  title_name: null,
+  title_name_ja: null,
+  title_description: null,
+  title_description_ja: null,
+  title_icon: null,
+};
+
+/**
+ * Resolves the equipped title's display fields for API responses that only
+ * carry `equipped_title_id` (for example `/api/me`). Returns all-null fields
+ * when no title is equipped or the catalog row is missing.
+ */
+export async function equippedTitleFields(
+  db: D1Database,
+  titleId: string | null | undefined,
+): Promise<EquippedTitleFields> {
+  if (!titleId) return NULL_EQUIPPED_TITLE;
+  const row = await db
+    .prepare(
+      `SELECT t.name, t.name_ja, t.description, t.description_ja, t.icon
+       FROM titles t
+       WHERE t.id = ? AND (t.game_post_id IS NULL OR EXISTS (
+         SELECT 1 FROM posts gp WHERE gp.id = t.game_post_id AND gp.hidden = 0 AND gp.status = 'published'
+       ))`,
+    )
+    .bind(titleId)
+    .first<{ name: string; name_ja: string; description: string; description_ja: string; icon: string }>();
+  if (!row) return NULL_EQUIPPED_TITLE;
+  return {
+    title_name: row.name,
+    title_name_ja: row.name_ja,
+    title_description: row.description,
+    title_description_ja: row.description_ja,
+    title_icon: row.icon,
+  };
 }
 
 /**

@@ -2912,6 +2912,14 @@
   flex: 1;
 }
 
+/* Mail is a focused workspace too: hide the right rail like settings. */
+.main-container:has(.mail-page) .right-panel,
+.main-container:has(.mail-thread-page) .right-panel,
+.main-container:has(.mail-compose-page) .right-panel,
+.main-container:has(.mail-settings-page) .right-panel {
+  display: none;
+}
+
 /* Arcade is an immersive game view: hide the right rail and let the game
    viewport fill every available pixel. */
 .main-container:has(.arcade-page) {
@@ -2967,4 +2975,160 @@
   border-color: var(--accent);
   color: var(--accent-text);
   transform: translateX(-50%) scale(1.08);
+}
+
+/* Translate page (Google-style panes, Flaxia quiet-craft surface) */
+.translate-page {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+.translate-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.translate-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.translate-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.translate-mode-row {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+}
+.translate-mode-button {
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.translate-mode-button--active {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.translate-mode-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.translate-bar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.translate-select {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.translate-swap {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.translate-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.translate-pane {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  overflow: hidden;
+}
+.translate-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: vertical;
+  min-height: 160px;
+  padding: 14px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: transparent;
+}
+.translate-pane-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+.translate-count,
+.translate-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.translate-status[data-status="local"] {
+  color: var(--accent-text);
+}
+.translate-mini-button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.translate-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.translate-credit {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 768px) {
+  .translate-panes {
+    grid-template-columns: 1fr;
+  }
+  .translate-page {
+    padding: 12px;
+  }
 }

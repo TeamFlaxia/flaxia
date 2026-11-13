@@ -12,6 +12,7 @@ import topicRouter from './routes/current-topic';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
 import mailRouter from './routes/mail';
+import mapsRouter from './routes/maps';
 import meRouter from './routes/me';
 import mediaRouter from './routes/media';
 import multiplayerRouter from './routes/multiplayer';
@@ -21,10 +22,12 @@ import postsRouter from './routes/posts';
 import pushRouter from './routes/push';
 import recommendationsRouter from './routes/recommendations';
 import reportRouter from './routes/report';
+import searchRouter from './routes/search';
 import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
 import testsRouter from './routes/tests';
 import titlesRouter from './routes/titles';
+import translateRouter from './routes/translate';
 import usersRouter from './routes/users';
 import vaultRouter from './routes/vault';
 
@@ -63,6 +66,7 @@ type Bindings = {
   MAIL_SERVICE?: Fetcher;
   MAIL_INTERNAL_SECRET?: string;
   MAIL_DOMAIN?: string;
+  MAPS_STYLE_URL?: string;
 };
 
 type Variables = {
@@ -123,12 +127,16 @@ app.route('/api', topicRouter);
 
 // Report route (extracted to routes/report.ts)
 app.route('/api', reportRouter);
+app.route('/api', searchRouter);
 
 // Public GitHub issue submission for authenticated Flaxia users.
 app.route('/api', bugReportsRouter);
 
 // Auth/me routes (extracted to routes/me.ts)
 app.route('/api', meRouter);
+
+// Flaxia Maps & Weathers routes
+app.route('/api', mapsRouter);
 
 // Ad routes (extracted to routes/ads.ts)
 app.route('/api', adsRouter);
@@ -159,6 +167,9 @@ app.route('/api', vaultRouter);
 
 // Mail proxy (extracted to routes/mail.ts) — see docs/mail.md
 app.route('/api/mail', mailRouter);
+
+// Public translation (extracted to routes/translate.ts) — Light Inference backend path
+app.route('/api', translateRouter);
 
 export async function onRequest(context: Record<string, unknown>) {
   const request = context.request as Request;

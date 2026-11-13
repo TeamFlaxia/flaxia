@@ -8,6 +8,15 @@ SNS where posts are living, interactive applications.
 
 ZIP (HTML5 ゲーム), SWF (Flash), 画像, 音声を投稿に添付でき、サンドボックス環境で安全に実行できます。
 
+## 開発者向けドキュメント
+
+ゲーム作者・連携アプリ開発者向けのドキュメントは [docs/developer/](docs/developer/) にまとめています。
+
+- [Flaxia Game API](docs/developer/game-api.md) — サンドボックスゲームの契約
+- [Flaxia Game SDK](docs/developer/sdk.md) — `@flaxia/game-sdk`
+- [REST API](docs/developer/rest-api.md) — 全エンドポイント
+- [ゲームの公開](docs/developer/publishing.md) — ZIP 仕様と公開フロー
+
 ## Development
 
 ### Deployment

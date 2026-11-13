@@ -3,8 +3,10 @@ import { Hono } from 'hono';
 import { isTitleIconImage } from '../../../src/lib/title-icon.ts';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
+import { reapStaleSubmissions } from '../../lib/cc-ingest.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import { ensureFileScansTable } from '../../lib/scan/db.ts';
+import { reapWebDocuments } from '../../lib/web-index.ts';
 import type { Bindings, Variables } from '../types';
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
@@ -101,6 +103,11 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'post_embeddings',
       'post_translations',
       'freshs',
+      'embed_queue',
+      'cc_queue',
+      'cc_sources',
+      'web_documents',
+      'search_documents',
       'custom_stamps',
       'transactions',
       'subscriptions',
@@ -131,8 +138,130 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     if (statements.length > 0) {
       await db.batch(statements);
     }
+
+    // Game titles are authored at runtime and scoped to posts that just got
+    // deleted; the platform catalog (game_post_id IS NULL) stays seeded.
+    // Local dev can still hold a pre-0132 database here, so probe first.
+    if (existing.has('titles')) {
+      const titleColumns = (await db.prepare("SELECT name FROM pragma_table_info('titles')").all()) as {
+        results: { name: string }[];
+      };
+      if (titleColumns.results.some((column) => column.name === 'game_post_id')) {
+        await db.prepare('DELETE FROM titles WHERE game_post_id IS NOT NULL').run();
+      }
+    }
+  }
+  // Drop the short-lived search caches as well: the KV entries survive database
+  // resets otherwise and leak stale results into the next test.
+  const cache = c.env.CACHE;
+  if (cache) {
+    try {
+      for (const prefix of ['searchv2:', 'searchweb:']) {
+        const keys = await cache.list({ prefix });
+        for (const key of keys.keys) {
+          await cache.delete(key.name);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to purge search caches during test reset:', error);
+    }
   }
   return c.json({ ok: true });
+});
+
+// POST /api/test/maintenance - run the hourly retention/sweep maintenance inline.
+app.post('/api/test/maintenance', requireTestEnvironment, async (c) => {
+  const db = c.env.DB_TEST || c.env.DB;
+  if (!db) return c.json({ error: 'Database not available' }, 500);
+  const submissions = await reapStaleSubmissions(db);
+  const retention = await reapWebDocuments(db, c.env);
+  return c.json({ ok: true, submissions, retention });
+});
+
+// POST /api/test/web-doc - seed a Common Crawl web-index document for search tests.
+app.post('/api/test/web-doc', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const url = typeof body.url === 'string' ? body.url.trim() : '';
+  if (!url) return c.json({ error: 'Missing url' }, 400);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('protocol');
+  } catch {
+    return c.json({ error: 'Invalid url' }, 400);
+  }
+  const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID();
+  const title = typeof body.title === 'string' ? body.title.slice(0, 300) : '';
+  const excerpt = typeof body.excerpt === 'string' ? body.excerpt.slice(0, 400) : '';
+  const lang = typeof body.lang === 'string' ? body.lang.slice(0, 16) : null;
+  const publishedAt = typeof body.publishedAt === 'string' ? body.publishedAt.slice(0, 40) : null;
+  let fetchedAt = new Date().toISOString();
+  if (typeof body.fetchedAt === 'string' && !Number.isNaN(Date.parse(body.fetchedAt))) {
+    fetchedAt = body.fetchedAt;
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO web_documents
+       (id, url, canonical_url, domain, lang, title, excerpt, published_at, crawl, status, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CC-MAIN-TEST', 'active', ?)
+     ON CONFLICT(id) DO UPDATE SET
+       url = excluded.url,
+       canonical_url = excluded.canonical_url,
+       domain = excluded.domain,
+       lang = excluded.lang,
+       title = excluded.title,
+       excerpt = excluded.excerpt,
+       published_at = excluded.published_at,
+       status = 'active',
+       fetched_at = excluded.fetched_at`,
+  )
+    .bind(
+      id,
+      parsed.toString(),
+      parsed.toString(),
+      parsed.hostname.toLowerCase(),
+      lang,
+      title,
+      excerpt,
+      publishedAt,
+      fetchedAt,
+    )
+    .run();
+  return c.json({ ok: true, id }, 201);
+});
+
+// POST /api/test/cc-queue - seed a Common Crawl queue row for webhook tests.
+app.post('/api/test/cc-queue', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const url = typeof body.url === 'string' ? body.url : '';
+  const warcFilename = typeof body.warcFilename === 'string' ? body.warcFilename : '';
+  const offset = Number(body.offset);
+  const length = Number(body.length);
+  if (!url || !warcFilename || !Number.isSafeInteger(offset) || !Number.isSafeInteger(length)) {
+    return c.json({ error: 'Invalid queue row' }, 400);
+  }
+  const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID();
+  const crawl = typeof body.crawl === 'string' ? body.crawl : 'CC-MAIN-TEST';
+  const taskId = typeof body.taskId === 'string' ? body.taskId : null;
+  const status = typeof body.status === 'string' ? body.status : 'submitted';
+  const contentDigest = typeof body.contentDigest === 'string' ? body.contentDigest.slice(0, 200) : null;
+  await c.env.DB.prepare(
+    `INSERT INTO cc_queue (id, crawl, url, warc_filename, offset, length, content_digest, status, task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       crawl = excluded.crawl,
+       url = excluded.url,
+       warc_filename = excluded.warc_filename,
+       offset = excluded.offset,
+       length = excluded.length,
+       content_digest = COALESCE(excluded.content_digest, cc_queue.content_digest),
+       status = excluded.status,
+       task_id = excluded.task_id,
+       error = NULL,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+  )
+    .bind(id, crawl, url, warcFilename, offset, length, contentDigest, status, taskId)
+    .run();
+  return c.json({ ok: true, id }, 201);
 });
 
 // POST /api/test/vault-item - seed an encrypted vault item for rotation tests.

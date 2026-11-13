@@ -193,6 +193,109 @@ describe('user titles', () => {
     assert.equal(post.title_icon, FIRST_CLEAR.icon);
   });
 
+  it('exposes the equipped title on /api/me', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await grantTitle('testuser1', FIRST_CLEAR.id);
+    await fetch(`${BASE_URL}/api/titles/me/equipped`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ titleId: FIRST_CLEAR.id }),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      user: {
+        badge_type: string | null;
+        equipped_title_id: string | null;
+        title_name: string | null;
+        title_name_ja: string | null;
+        title_description: string | null;
+        title_description_ja: string | null;
+        title_icon: string | null;
+      };
+    };
+    assert.equal(body.user.equipped_title_id, FIRST_CLEAR.id);
+    assert.equal(body.user.title_name, FIRST_CLEAR.name);
+    assert.equal(body.user.title_name_ja, FIRST_CLEAR.name_ja);
+    assert.equal(body.user.title_description, FIRST_CLEAR.description);
+    assert.equal(body.user.title_description_ja, FIRST_CLEAR.description_ja);
+    assert.equal(body.user.title_icon, FIRST_CLEAR.icon);
+    assert.equal(body.user.badge_type, null);
+  });
+
+  it('returns null title fields on /api/me when nothing is equipped', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      user: { equipped_title_id: string | null; title_name: string | null; title_icon: string | null };
+    };
+    assert.equal(body.user.equipped_title_id, null);
+    assert.equal(body.user.title_name, null);
+    assert.equal(body.user.title_icon, null);
+  });
+
+  it('includes title fields in followers, suggest, and search user results', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await grantTitle('testuser1', FIRST_CLEAR.id);
+    await fetch(`${BASE_URL}/api/titles/me/equipped`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ titleId: FIRST_CLEAR.id }),
+    });
+
+    const follower = await seedUserAndLogin('2');
+    const followRes = await fetch(`${BASE_URL}/api/users/testuser1/follow`, {
+      method: 'POST',
+      headers: { Cookie: follower.cookie },
+    });
+    assert.equal(followRes.status, 200);
+
+    type UserRow = {
+      username: string;
+      badge_type: string | null;
+      equipped_title_id: string | null;
+      title_name: string | null;
+      title_icon: string | null;
+    };
+
+    // followers list shows the follower (user2, no title equipped)
+    const followersRes = await fetch(`${BASE_URL}/api/users/testuser1/followers`);
+    assert.equal(followersRes.status, 200);
+    const followersBody = (await followersRes.json()) as { users: UserRow[] };
+    const followerRow = followersBody.users.find((u) => u.username === 'testuser2');
+    assert.ok(followerRow, 'follower row present');
+    assert.equal(followerRow.equipped_title_id, null);
+    assert.equal(followerRow.title_name, null);
+
+    // following list shows testuser1 with the equipped title
+    const followingRes = await fetch(`${BASE_URL}/api/users/testuser2/following`);
+    assert.equal(followingRes.status, 200);
+    const followingBody = (await followingRes.json()) as { users: UserRow[] };
+    const followedRow = followingBody.users.find((u) => u.username === 'testuser1');
+    assert.ok(followedRow, 'following row present');
+    assert.equal(followedRow.equipped_title_id, FIRST_CLEAR.id);
+    assert.equal(followedRow.title_name, FIRST_CLEAR.name);
+    assert.equal(followedRow.title_icon, FIRST_CLEAR.icon);
+
+    const suggestRes = await fetch(`${BASE_URL}/api/users/suggest?q=testuser1`, { headers: { Cookie: cookie } });
+    assert.equal(suggestRes.status, 200);
+    const suggestBody = (await suggestRes.json()) as { users: UserRow[] };
+    const suggestRow = suggestBody.users.find((u) => u.username === 'testuser1');
+    assert.ok(suggestRow, 'suggest row present');
+    assert.equal(suggestRow.equipped_title_id, FIRST_CLEAR.id);
+    assert.equal(suggestRow.title_name, FIRST_CLEAR.name);
+
+    const searchRes = await fetch(`${BASE_URL}/api/search?q=testuser1&type=users`);
+    assert.equal(searchRes.status, 200);
+    const searchBody = (await searchRes.json()) as { results: UserRow[] };
+    const searchRow = searchBody.results.find((u) => u.username === 'testuser1');
+    assert.ok(searchRow, 'search row present');
+    assert.equal(searchRow.equipped_title_id, FIRST_CLEAR.id);
+    assert.equal(searchRow.title_name, FIRST_CLEAR.name);
+  });
+
   it('clears the equipped title with null', async () => {
     const { cookie } = await seedUserAndLogin('1');
     await grantTitle('testuser1', FIRST_CLEAR.id);

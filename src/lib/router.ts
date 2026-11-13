@@ -10,6 +10,7 @@ export type RouteView =
   | 'profile'
   | 'explore'
   | 'search'
+  | 'translate'
   | 'notifications'
   | 'bookmarks'
   | 'terms'
@@ -20,6 +21,7 @@ export type RouteView =
   | 'admin'
   | 'settings'
   | 'arcade'
+  | 'maps'
   | 'billing-success'
   | 'billing-canceled'
   | 'download'
@@ -35,7 +37,7 @@ export interface RouteInfo {
   tag: string | null;
   adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
   searchQuery?: string;
-  searchType?: 'posts' | 'users' | 'arcade';
+  searchType?: 'posts' | 'users' | 'arcade' | 'web';
 }
 
 export function parseRoute(path: string, search: string): RouteInfo | null {
@@ -97,8 +99,13 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
       username: null,
       tag: null,
       searchQuery: q,
-      searchType: type as 'posts' | 'users' | 'arcade',
+      searchType: type as 'posts' | 'users' | 'arcade' | 'web',
     };
+  }
+
+  // Flaxia Maps & Weathers route - public, no auth required
+  if (cleanPath === '/maps') {
+    return { view: 'maps', postId: null, username: null, tag: null };
   }
 
   // Arcade game route - public, no auth required
@@ -171,6 +178,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   // App download page - public, no auth required
   if (cleanPath === '/download') {
     return { view: 'download', postId: null, username: null, tag: null };
+  }
+
+  // Translation page - public, no auth required
+  if (cleanPath === '/translate') {
+    return { view: 'translate', postId: null, username: null, tag: null };
   }
 
   // Sandbox route - public, no auth required

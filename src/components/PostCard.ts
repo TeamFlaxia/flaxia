@@ -5,6 +5,7 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { stripPostColors } from '../lib/post-colors.js';
+import { stripMediaCues } from '../lib/post-cues.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
@@ -199,7 +200,7 @@ export class PostCard {
     // raw `{red}` markers. `originalText` stays raw for editing.
     textElement.textContent = canUsePostColors({ badge_type: this.props.post.badge_type })
       ? stripPostColors(displayText)
-      : displayText;
+      : stripMediaCues(displayText);
     this.postTextContainer.appendChild(textElement);
 
     container.appendChild(this.postTextContainer);
