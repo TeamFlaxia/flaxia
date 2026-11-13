@@ -134,6 +134,7 @@ export class RightPanel {
       [commandShortcutLabel(), label('検索・コマンド', 'Search or command')],
       ['N', label('投稿', 'New post')],
       ['T', label('テーマ切替', 'Toggle theme')],
+      ['Alt+1/2/3', label('フォロー中 / おすすめ / 全体', 'Following / For you / Global')],
     ];
 
     for (const [keys, text] of rows) {

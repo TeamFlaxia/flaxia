@@ -11,7 +11,8 @@ export type VaultItemKind =
   | 'private_note'
   | 'personal_setting'
   | 'recommendation_profile'
-  | 'mail_identity';
+  | 'mail_identity'
+  | 'oauth_connection';
 
 interface StoredVaultItem {
   id: string;

@@ -1,7 +1,9 @@
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import type { MediaCue } from '../lib/post-cues.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
+import { createMediaCueOverlay } from './MediaCues.js';
 
 export interface VideoPlayerProps {
   gifKey: string;
@@ -9,6 +11,8 @@ export interface VideoPlayerProps {
   src?: string;
   /** Set by the data-saver tap-to-load placeholder once the user tapped. */
   dataSaverConfirmed?: boolean;
+  /** Timed comments parsed from the post body (media cues), for the overlay. */
+  cues?: MediaCue[];
 }
 
 function formatTime(seconds: number): string {
@@ -178,6 +182,11 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   container.appendChild(overlay);
   container.appendChild(controls);
 
+  // --- Media cue overlay (Niconico-style timed comments) ---
+  const cueOverlay = createMediaCueOverlay(props.cues);
+  if (cueOverlay) container.appendChild(cueOverlay.element);
+  container.addEventListener('DOMNodeRemoved', () => cueOverlay?.destroy());
+
   let isDragging = false;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
   let speedIndex = 1;
@@ -318,6 +327,7 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   video.addEventListener('timeupdate', () => {
     updateSeekbar();
     updateBuffered();
+    cueOverlay?.update(video.currentTime);
   });
 
   video.addEventListener('progress', updateBuffered);
