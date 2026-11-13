@@ -198,8 +198,6 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
-        { id: 'translate', text: t('nav.translate'), icon: 'translate' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
@@ -379,6 +377,8 @@ export class LeftNav {
     const menuItems = [
       { id: 'profile', text: t('nav.profile'), icon: 'profile' },
       { id: 'mail', text: t('nav.mail'), icon: 'mail' },
+      { id: 'maps', text: t('nav.maps'), icon: 'maps' },
+      { id: 'translate', text: t('nav.translate'), icon: 'translate' },
       { id: 'settings', text: t('nav.settings'), icon: 'settings' },
     ];
 
@@ -731,8 +731,6 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
-        { id: 'translate', text: t('nav.translate'), icon: 'translate' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
