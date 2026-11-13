@@ -14,10 +14,44 @@ import {
   PAIRING_ID_PATTERN,
 } from '../../../src/lib/vault/primitives';
 import { getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
+import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
 import { requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
 
 const vault = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// Once Auth owns the account and its Vault, this router is a thin proxy. The
+// browser keeps using /api/vault; only the storage authority changes. Wrapped
+// keys are never copied into Flaxia's request path or persisted locally.
+// Scope the Auth proxy to the vault routes. Hono sub-app wildcards also
+// match sibling routes mounted later (for example /api/mail/*), which made
+// the vault proxy intercept them and return 503.
+vault.use('/vault/*', async (c, next) => {
+  if (!authIsAuthoritative(c.env)) return next();
+  const user = c.get('user');
+  const token = getSessionToken(c.req.raw);
+  if (!user || !token) return c.json({ error: 'Unauthorized' }, 401);
+  const grant = await sessionGrant(c.env.DB, token);
+  if (!grant) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await ensureAuthVault(c.env, grant, user.id))) {
+    return c.json({ error: 'Vault temporarily unavailable' }, 503);
+  }
+
+  let body: unknown;
+  if (c.req.method !== 'GET' && (c.req.header('Content-Type') ?? '').includes('application/json')) {
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid request' }, 400);
+    }
+  }
+  const url = new URL(c.req.url);
+  const result = await authVaultRequest(c.env, grant, user.id, c.req.method, url.pathname + url.search, body);
+  if (!result) return c.json({ error: 'Vault temporarily unavailable' }, 503);
+  c.header('Cache-Control', 'no-store');
+  return c.json(result.body, result.status as 200);
+});
 
 interface VaultEnvelopeRow {
   salt: string;
@@ -73,7 +107,15 @@ const MAX_ACTIVE_DEVICES = 10;
 const MAX_VAULT_ITEM_CIPHERTEXT_CHARS = 128_000;
 const MAX_VAULT_ITEMS = 200;
 const MAX_VAULT_STORAGE_CHARS = 5_000_000;
-const VAULT_ITEM_KINDS = new Set(['post_autosave', 'post_draft', 'private_note', 'personal_setting']);
+const VAULT_ITEM_KINDS = new Set([
+  'post_autosave',
+  'post_draft',
+  'private_note',
+  'personal_setting',
+  'recommendation_profile',
+  'mail_identity',
+  'oauth_connection',
+]);
 /** A QR left on screen should stop working quickly; clients may ask for less. */
 const DEFAULT_PAIRING_TTL_SECONDS = 600;
 const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";

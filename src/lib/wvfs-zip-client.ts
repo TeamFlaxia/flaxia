@@ -1,5 +1,7 @@
+import { registerGameFrame } from './game-badge-bridge.js';
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 import { isNativeApp } from './native-api.ts';
+import { isOffline } from './offline-status.js';
 import { createWvfsGameUrl } from './wvfs-game-url.js';
 import {
   createZipLoadingIndicator,
@@ -32,6 +34,8 @@ export async function executeWvfsZip(
     activeHandle = null;
   }
 
+  let unregisterFrame: (() => void) | null = null;
+
   try {
     containerEl.innerHTML = '';
     containerEl.style.position = 'relative';
@@ -41,14 +45,14 @@ export async function executeWvfsZip(
       const downloaded = await executeDownloadedGame(postId, containerEl, versionId).catch((error: unknown) => {
         // The local runtime supports fewer game formats than the online player.
         // Preserve the explicit compatibility error when no fallback is reachable.
-        if (navigator.onLine === false) throw error;
+        if (isOffline()) throw error;
         return undefined;
       });
       if (downloaded) {
         activeHandle = downloaded;
         return downloaded;
       }
-      if (navigator.onLine === false) throw new Error('This game has not been downloaded');
+      if (isOffline()) throw new Error('This game has not been downloaded');
     }
 
     let loadingEl: HTMLElement | null = null;
@@ -73,6 +77,9 @@ export async function executeWvfsZip(
       storageSnapshot,
     });
     const disconnectStorage = connectGameStorage(iframe, postId);
+    // Bind the frame to this post so the Game API can answer identity/title
+    // frames for it — the game itself never names a post.
+    unregisterFrame = registerGameFrame(iframe, postId);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
@@ -88,6 +95,8 @@ export async function executeWvfsZip(
       postId,
       destroy: () => {
         clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
+        unregisterFrame?.();
+        unregisterFrame = null;
         disconnectStorage();
         cleanup();
         const fullscreenBtn = containerEl.querySelector(`.${PREFIX}-fullscreen-btn`);
@@ -103,6 +112,7 @@ export async function executeWvfsZip(
     activeHandle = handle;
     return handle;
   } catch (error) {
+    unregisterFrame?.();
     if (activeHandle) {
       activeHandle.destroy();
       activeHandle = null;

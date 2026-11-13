@@ -1,39 +1,64 @@
 import {
   AlertTriangle,
+  Archive,
+  ArrowLeft,
+  ArrowLeftRight,
+  AtSign,
   BarChart3,
   Bell,
   Bookmark,
+  Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   createElement,
   Download,
   Eye,
+  EyeOff,
   FileText,
   Flag,
+  Forward,
   Gamepad2,
   Home,
   type IconNode,
   ImagePlus,
+  Inbox,
   Key,
   Leaf,
+  Lock,
+  Mail,
+  MailOpen,
+  Map as MapIcon,
   Maximize,
+  Megaphone,
   MessageCircle,
   Monitor,
+  MoreHorizontal,
   Music2,
+  Paperclip,
   Pencil,
+  PenLine,
   Quote,
+  RefreshCw,
   Repeat2,
+  Reply,
   Save,
   Search,
   Send,
   Settings,
   Share2,
+  ShieldCheck,
+  SlidersHorizontal,
   Smartphone,
   Smile,
   SmilePlus,
+  Star,
   StickyNote,
   Terminal,
+  Trash2,
   Upload,
   User,
+  Users,
   X,
 } from 'lucide';
 
@@ -66,6 +91,7 @@ export type IconName =
   | 'settings'
   | 'explore'
   | 'arcade'
+  | 'maps'
   | 'notifications'
   | 'profile'
   | 'maximize'
@@ -75,7 +101,31 @@ export type IconName =
   | 'download'
   | 'monitor'
   | 'smartphone'
-  | 'terminal';
+  | 'terminal'
+  | 'chevron-up'
+  | 'chevron-down'
+  | 'users'
+  | 'megaphone'
+  | 'at-sign'
+  | 'eye-off'
+  | 'mail'
+  | 'inbox'
+  | 'archive'
+  | 'trash'
+  | 'star'
+  | 'paperclip'
+  | 'arrow-left'
+  | 'reply-arrow'
+  | 'forward'
+  | 'more'
+  | 'shield'
+  | 'lock'
+  | 'compose'
+  | 'refresh'
+  | 'sliders'
+  | 'check'
+  | 'translate'
+  | 'mail-open';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -106,6 +156,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   settings: Settings,
   explore: Search,
   arcade: Gamepad2,
+  maps: MapIcon,
   notifications: Bell,
   profile: User,
   maximize: Maximize,
@@ -116,6 +167,30 @@ const ICON_NODES: Record<IconName, IconNode> = {
   monitor: Monitor,
   smartphone: Smartphone,
   terminal: Terminal,
+  'chevron-up': ChevronUp,
+  'chevron-down': ChevronDown,
+  users: Users,
+  megaphone: Megaphone,
+  'at-sign': AtSign,
+  'eye-off': EyeOff,
+  mail: Mail,
+  inbox: Inbox,
+  archive: Archive,
+  trash: Trash2,
+  star: Star,
+  paperclip: Paperclip,
+  'arrow-left': ArrowLeft,
+  'reply-arrow': Reply,
+  forward: Forward,
+  more: MoreHorizontal,
+  shield: ShieldCheck,
+  lock: Lock,
+  compose: PenLine,
+  refresh: RefreshCw,
+  sliders: SlidersHorizontal,
+  check: Check,
+  translate: ArrowLeftRight,
+  'mail-open': MailOpen,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

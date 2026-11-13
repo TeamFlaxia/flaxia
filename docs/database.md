@@ -98,7 +98,7 @@ include `document` by migration `0096_attachment_documents.sql`, which rebuilds 
 Index: `idx_post_attachments_post (post_id, position)`
 
 ### `search_documents` / `search_fts`
-Search index for `/api/search/v2` (migration `0129_search_v2.sql`).
+Search index for `/api/search/v2` (migration `0142_search_v2.sql`).
 
 | Column | Type | Notes |
 |---|---|---|

@@ -130,7 +130,7 @@ export function openGameUpdateModal(props: GameUpdateModalProps): void {
     border: none;
     border-radius: 0.5rem;
     background: var(--accent, #22c55e);
-    color: #fff;
+    color: var(--on-accent);
     cursor: pointer;
     font-size: 0.875rem;
     font-weight: 600;

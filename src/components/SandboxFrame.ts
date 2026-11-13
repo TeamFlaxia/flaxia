@@ -1,5 +1,6 @@
 import type { ParentMessage } from '../lib/bridge.js';
 import { isParentMessage } from '../lib/bridge.js';
+import { registerGameFrame } from '../lib/game-badge-bridge.js';
 import { MultiplayerManager } from '../lib/multiplayer-manager.js';
 import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import type { SandboxFrameProps } from '../types/post.js';
@@ -16,6 +17,7 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
   iframe.referrerPolicy = 'no-referrer';
 
   let multiplayerManager: MultiplayerManager | null = null;
+  let unregisterFrame: (() => void) | null = null;
 
   const messageHandler = (event: MessageEvent) => {
     // The game's response CSP and iframe sandbox both give it an opaque origin.
@@ -46,6 +48,8 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
   const observer = new MutationObserver(() => {
     if (!document.contains(container)) {
       window.removeEventListener('message', messageHandler);
+      unregisterFrame?.();
+      unregisterFrame = null;
       multiplayerManager?.destroy();
       observer.disconnect();
     }
@@ -54,6 +58,7 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
   observer.observe(document.body, { childList: true, subtree: true });
 
   container.appendChild(iframe);
+  unregisterFrame = registerGameFrame(iframe, props.postId);
   return container;
 }
 

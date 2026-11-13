@@ -25,6 +25,8 @@ interface Env {
   EXPORT_BUCKET?: R2Bucket;
   BUCKET?: R2Bucket;
   AUTH_SERVICE?: Fetcher;
+  MAIL_SERVICE?: Fetcher;
+  MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
 }
@@ -53,6 +55,13 @@ export default {
       if (reaped > 0) console.log(`Completed ${reaped} pending account deletions`);
     } catch (error) {
       console.error('Account deletion recovery failed:', (error as Error).message);
+    }
+    try {
+      const { reapMailDeletions } = await import('./lib/mail-deletion-reap');
+      const reaped = await reapMailDeletions(env);
+      if (reaped > 0) console.log(`Completed ${reaped} pending Mail deletions`);
+    } catch (error) {
+      console.error('Mail deletion retry failed:', (error as Error).message);
     }
     try {
       const { reapProfileMedia } = await import('./lib/profile-media-reap');

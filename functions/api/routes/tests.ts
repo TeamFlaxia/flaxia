@@ -71,6 +71,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'flaxia_auth_purge_in_progress',
       'flaxia_auth_deletion_receipts',
       'flaxia_auth_transition_assertions',
+      'mail_deletion_outbox',
       'profile_media_deletion_outbox',
       'poll_votes',
       'poll_options',
@@ -109,13 +110,11 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'device_keys',
       'vault_keys',
       'user_titles',
-      'user_profiles',
       'push_subscriptions',
       'device_tokens',
       'sessions',
       'ad_interactions',
       'admin_alerts',
-      'bandit_state',
       'ads',
       'users',
     ];
@@ -129,6 +128,18 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     const statements = resetOrder.filter((t) => existing.has(t)).map((t) => db.prepare(`DELETE FROM ${t}`));
     if (statements.length > 0) {
       await db.batch(statements);
+    }
+
+    // Game titles are authored at runtime and scoped to posts that just got
+    // deleted; the platform catalog (game_post_id IS NULL) stays seeded.
+    // Local dev can still hold a pre-0132 database here, so probe first.
+    if (existing.has('titles')) {
+      const titleColumns = (await db.prepare("SELECT name FROM pragma_table_info('titles')").all()) as {
+        results: { name: string }[];
+      };
+      if (titleColumns.results.some((column) => column.name === 'game_post_id')) {
+        await db.prepare('DELETE FROM titles WHERE game_post_id IS NOT NULL').run();
+      }
     }
   }
   return c.json({ ok: true });

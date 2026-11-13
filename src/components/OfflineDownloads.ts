@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.ts';
 import { offlineGames } from '../lib/native-offline-games.ts';
+import { isOffline } from '../lib/offline-status.ts';
 
 export function createOfflineDownloads() {
   const element = document.createElement('section');
@@ -25,7 +26,7 @@ export function createOfflineDownloads() {
         downloading: states.filter((state) => state === 'downloading').length,
         errors: states.filter((state) => state === 'error').length,
       });
-      retry.disabled = navigator.onLine === false || states.includes('downloading');
+      retry.disabled = isOffline() || states.includes('downloading');
     } catch {
       status.textContent = t('offline_games.storage_error');
     }
@@ -33,6 +34,7 @@ export function createOfflineDownloads() {
   window.addEventListener('flaxiaDownloadsChanged', render);
   window.addEventListener('online', render);
   window.addEventListener('offline', render);
+  window.addEventListener('flaxiaConnectivityChange', render);
   void render();
   return {
     element,
@@ -41,6 +43,7 @@ export function createOfflineDownloads() {
       window.removeEventListener('flaxiaDownloadsChanged', render);
       window.removeEventListener('online', render);
       window.removeEventListener('offline', render);
+      window.removeEventListener('flaxiaConnectivityChange', render);
     },
   };
 }

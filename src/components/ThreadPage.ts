@@ -193,7 +193,7 @@ export class ThreadPage {
     backButton.style.cssText = `
       background: none;
       border: none;
-      color: #22c55e;
+      color: var(--accent-text);
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 1rem;
       cursor: pointer;

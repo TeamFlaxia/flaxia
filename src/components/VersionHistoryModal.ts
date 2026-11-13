@@ -165,7 +165,7 @@ export function openVersionHistoryModal(props: VersionHistoryModalProps): void {
       list.innerHTML = '';
       const err = document.createElement('div');
       err.textContent = t('game.version_history_error');
-      err.style.cssText = 'color: var(--danger, #e74c3c); font-size: 0.875rem;';
+      err.style.cssText = 'color: var(--danger-text, #b91c1c); font-size: 0.875rem;';
       list.appendChild(err);
     });
 

@@ -238,6 +238,11 @@ test('local SRP account can provision Auth idempotently with password proof', {
   assert.equal(exchanged.status, 200, await exchanged.clone().text());
   const linkedCookie = exchanged.headers.get('set-cookie')?.split(';')[0];
   assert.ok(linkedCookie);
+  // Regression: the Auth vault proxy used to be a bare '*' sub-app middleware
+  // and intercepted sibling routes mounted later (for example /api/mail/*).
+  const mailAddresses = await fetch(`${appBase}/api/mail/addresses`, { headers: { Cookie: linkedCookie } });
+  const mailBody = await mailAddresses.clone().text();
+  assert.doesNotMatch(mailBody, /Vault temporarily unavailable/, 'mail routes must not hit the vault proxy');
   // Recovery enrollment must be available while the account is only linked,
   // before AUTH_AUTHORITY_MODE is enabled (a documented rollout prerequisite).
   const recoveryStatus = await fetch(`${appBase}/api/auth/recovery/status`, {

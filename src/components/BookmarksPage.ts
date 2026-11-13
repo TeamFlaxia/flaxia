@@ -177,30 +177,15 @@ export class BookmarksPage {
     section.innerHTML = '';
 
     const title = document.createElement('div');
+    title.className = 'bookmarks-section-title';
     title.textContent = t('explore.filter_arcade');
-    title.style.cssText = `
-      font-weight: 600;
-      font-size: 1rem;
-      color: var(--text-primary);
-      margin-bottom: 0.75rem;
-      padding: 0 0.25rem;
-    `;
     section.appendChild(title);
 
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position: relative;';
+    wrapper.className = 'bookmarks-rail-wrapper';
 
     const scrollContainer = document.createElement('div');
-    scrollContainer.style.cssText = `
-      display: flex;
-      overflow-x: auto;
-      gap: 0.75rem;
-      padding: 0.25rem 0 0.75rem;
-      scrollbar-width: thin;
-      scrollbar-color: var(--border) transparent;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-    `;
+    scrollContainer.className = 'bookmarks-rail';
     scrollContainer.addEventListener('wheel', (e) => {
       if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
         e.preventDefault();
@@ -209,18 +194,7 @@ export class BookmarksPage {
     });
 
     const fadeHint = document.createElement('div');
-    fadeHint.style.cssText = `
-      position: absolute;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: 48px;
-      background: linear-gradient(to right, transparent, var(--bg-primary));
-      pointer-events: none;
-      opacity: 1;
-      transition: opacity 0.3s;
-      z-index: 1;
-    `;
+    fadeHint.className = 'bookmarks-rail-fade';
     wrapper.appendChild(fadeHint);
 
     const updateFade = () => {
@@ -231,83 +205,43 @@ export class BookmarksPage {
 
     for (const post of gamePosts) {
       const card = document.createElement('div');
-      card.style.cssText = `
-        width: 150px;
-        flex-shrink: 0;
-        cursor: pointer;
-        border-radius: 0.75rem;
-        overflow: hidden;
-        transition: transform 0.2s, box-shadow 0.2s;
-        scroll-snap-align: start;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border);
-      `;
-      card.addEventListener('mouseenter', () => {
-        card.style.transform = 'translateY(-3px)';
-        card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
-      });
-      card.addEventListener('mouseleave', () => {
-        card.style.transform = 'none';
-        card.style.boxShadow = 'none';
-      });
+      card.className = 'bookmark-card';
       card.addEventListener('click', () => {
         pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
       });
 
       const thumb = document.createElement('div');
-      thumb.style.cssText = `
-        width: 100%;
-        aspect-ratio: 9 / 12;
-        overflow: hidden;
-        position: relative;
-        background: var(--bg-input);
-      `;
+      thumb.className = 'bookmark-thumb';
       if (post.thumbnail_key) {
         const img = document.createElement('img');
         img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
         img.loading = 'lazy';
         img.width = 150;
         img.height = 200;
-        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
         thumb.appendChild(img);
       } else {
         const icon = document.createElement('span');
+        icon.className = 'bookmark-thumb-icon';
         icon.textContent = '🎮';
-        icon.style.cssText =
-          'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
         thumb.appendChild(icon);
       }
 
       const badge = document.createElement('span');
-      badge.style.cssText = `
-        position: absolute; top: 4px; right: 4px;
-        padding: 0.1rem 0.35rem; border-radius: 4px;
-        background: var(--accent); color: white;
-        font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
-        line-height: 1.2;
-      `;
+      badge.className = 'bookmark-badge';
       badge.textContent = 'GAME';
       thumb.appendChild(badge);
 
       const info = document.createElement('div');
-      info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
+      info.className = 'bookmark-info';
 
       const cardTitle = document.createElement('div');
+      cardTitle.className = 'bookmark-title';
       cardTitle.textContent = stripPostColors(post.text || '').slice(0, 60) || '(no text)';
-      cardTitle.style.cssText = `
-        font-weight: 600; color: var(--text-primary);
-        font-size: 0.8rem; line-height: 1.3;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      `;
 
       const meta = document.createElement('div');
+      meta.className = 'bookmark-meta';
       meta.textContent = `@${post.username}`;
-      meta.style.cssText = `
-        font-size: 0.7rem; color: var(--text-muted);
-        margin-top: 0.15rem;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      `;
 
       info.appendChild(cardTitle);
       info.appendChild(meta);
@@ -325,12 +259,23 @@ export class BookmarksPage {
   private showEmpty(): void {
     const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement;
     const empty = document.createElement('div');
-    empty.style.cssText = `
-      text-align: center;
-      padding: 48px 24px;
-      color: var(--text-muted);
-    `;
-    empty.textContent = t('bookmarks.empty') || 'No bookmarks yet';
+    empty.className = 'page-empty';
+    const emptyIcon = document.createElement('span');
+    emptyIcon.className = 'page-empty-icon';
+    const emptyTitle = document.createElement('p');
+    emptyTitle.className = 'page-empty-title fx-display';
+    emptyTitle.textContent = t('bookmarks.empty') || 'No bookmarks yet';
+    const emptyCta = document.createElement('button');
+    emptyCta.type = 'button';
+    emptyCta.className = 'page-empty-cta';
+    emptyCta.textContent = t('nav.explore');
+    emptyCta.addEventListener('click', () => {
+      window.history.pushState({}, '', '/explore');
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
+    });
+    empty.appendChild(emptyIcon);
+    empty.appendChild(emptyTitle);
+    empty.appendChild(emptyCta);
     if (postsContainer) {
       postsContainer.appendChild(empty);
     } else {
@@ -344,33 +289,12 @@ export class BookmarksPage {
 
     const errorEl = document.createElement('div');
     errorEl.className = 'bookmarks-error';
-    errorEl.style.cssText = `
-      text-align: center;
-      padding: 48px 24px;
-      color: var(--text-muted);
-    `;
     const msg = document.createElement('p');
     msg.textContent = this.error;
-    msg.style.marginBottom = '16px';
 
     const retryBtn = document.createElement('button');
+    retryBtn.className = 'bookmarks-retry';
     retryBtn.textContent = t('bookmarks.retry') || 'Retry';
-    retryBtn.style.cssText = `
-      padding: 8px 20px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      cursor: pointer;
-      font-size: 0.875rem;
-      transition: background 0.2s;
-    `;
-    retryBtn.addEventListener('mouseenter', () => {
-      retryBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-    });
-    retryBtn.addEventListener('mouseleave', () => {
-      retryBtn.style.background = 'var(--bg-primary)';
-    });
     retryBtn.addEventListener('click', () => {
       this.posts = [];
       this.cursor = undefined;

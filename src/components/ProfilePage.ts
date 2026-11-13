@@ -57,46 +57,17 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
 
   // Top bar with back button
   const topBar = document.createElement('div');
-  topBar.style.cssText = `
-    display: flex;
-    align-items: center;
-    padding: 0.5rem;
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    z-index: 10;
-  `;
+  topBar.className = 'profile-topbar';
 
   const backBtn = document.createElement('button');
+  backBtn.className = 'profile-back-button';
   backBtn.textContent = '←';
-  backBtn.style.cssText = `
-    background: none;
-    border: none;
-    color: var(--text-primary, inherit);
-    cursor: pointer;
-    padding: 0.5rem 0.75rem;
-    font-size: 1.2rem;
-    border-radius: 0.5rem;
-    transition: background 0.2s;
-  `;
-  backBtn.addEventListener('mouseenter', () => {
-    backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-  });
-  backBtn.addEventListener('mouseleave', () => {
-    backBtn.style.background = 'none';
-  });
   backBtn.addEventListener('click', () => window.history.back());
   topBar.appendChild(backBtn);
 
   const topTitle = document.createElement('span');
+  topTitle.className = 'profile-topbar-title';
   topTitle.textContent = `@${username}`;
-  topTitle.style.cssText = `
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-left: 0.25rem;
-  `;
   topBar.appendChild(topTitle);
 
   container.appendChild(topBar);
@@ -119,14 +90,14 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
   avatarSection.className = 'profile-avatar-section';
 
   const avatar = document.createElement('div');
-  avatar.className = 'profile-avatar';
+  avatar.className = 'profile-avatar fx-display';
   avatar.textContent = username.charAt(0).toUpperCase();
 
   const info = document.createElement('div');
   info.className = 'profile-info';
 
   const displayName = document.createElement('div');
-  displayName.className = 'profile-display-name';
+  displayName.className = 'profile-display-name fx-display';
   displayName.textContent = t('profile.loading');
 
   const usernameElement = document.createElement('div');
@@ -145,8 +116,6 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
 
   const joinedDate = document.createElement('div');
   joinedDate.className = 'profile-joined-date';
-  joinedDate.style.cssText =
-    "color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 0.875rem; margin: 0.5rem 0;";
   joinedDate.textContent = t('profile.joined', { date: t('common.loading') });
 
   info.appendChild(displayName);
@@ -175,8 +144,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
   postsStat.appendChild(document.createTextNode(' ' + t('profile.posts_label')));
 
   const followersStat = document.createElement('div');
-  followersStat.className = 'profile-stat';
-  followersStat.style.cssText = 'cursor: pointer; transition: background-color 0.2s;';
+  followersStat.className = 'profile-stat profile-stat--link';
   const followersCountSpan = document.createElement('span');
   followersCountSpan.className = 'stat-number';
   followersCountSpan.textContent = '0';
@@ -184,19 +152,17 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
   followersStat.appendChild(document.createTextNode(' ' + t('profile.followers_label')));
 
   const followingStat = document.createElement('div');
-  followingStat.className = 'profile-stat';
-  followingStat.style.cssText = 'cursor: pointer; transition: background-color 0.2s;';
+  followingStat.className = 'profile-stat profile-stat--link';
   const followingCountSpan = document.createElement('span');
   followingCountSpan.className = 'stat-number';
   followingCountSpan.textContent = '0';
   followingStat.appendChild(followingCountSpan);
   followingStat.appendChild(document.createTextNode(' ' + t('profile.following_label')));
 
-  // Blocked-users stat (own profile only), shown to the right of "Following"
+  // Blocked-users count: rendered as a quiet chip only when the count is above zero.
   const blockedStat = document.createElement('div');
-  blockedStat.className = 'profile-stat';
-  blockedStat.style.cssText = 'cursor: pointer; transition: background-color 0.2s;';
-  blockedStat.style.display = own ? 'flex' : 'none';
+  blockedStat.className = 'profile-stat profile-stat--link profile-stat--quiet';
+  blockedStat.style.display = 'none';
   const blockedCountSpan = document.createElement('span');
   blockedCountSpan.className = 'stat-number';
   blockedCountSpan.textContent = '0';
@@ -535,8 +501,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
 
               // Render math elements and linkify
               renderMathElements(bio);
-              linkifyHashtags(bio);
               linkifyUrls(bio);
+              linkifyHashtags(bio);
             })
             .catch((error) => {
               console.error('Failed to process bio:', error);
@@ -598,8 +564,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
   const updateFollowButton = () => {
     followButton.textContent = isFollowing ? t('profile.following') : t('profile.follow');
     followButton.className = isFollowing
-      ? 'profile-button profile-button--primary'
-      : 'profile-button profile-button--secondary';
+      ? 'profile-button profile-button--secondary'
+      : 'profile-button profile-button--follow';
   };
 
   // Update block button text and state
@@ -616,7 +582,9 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
       const res = await fetch('/api/users/me/blocked', { credentials: 'include' });
       if (!res.ok) return;
       const data = (await res.json()) as { users: unknown[] };
-      blockedCountSpan.textContent = formatCount(data.users.length || 0);
+      const count = data.users.length || 0;
+      blockedCountSpan.textContent = formatCount(count);
+      blockedStat.style.display = count > 0 ? '' : 'none';
     } catch {
       /* ignore */
     }
@@ -898,13 +866,6 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
     document.body.appendChild(modal.getElement());
   });
 
-  followersStat.addEventListener('mouseenter', () => {
-    followersStat.style.backgroundColor = 'var(--bg-secondary)';
-  });
-  followersStat.addEventListener('mouseleave', () => {
-    followersStat.style.backgroundColor = 'transparent';
-  });
-
   followingStat.addEventListener('click', () => {
     const modal = createFollowerListModal({
       username: username,
@@ -917,20 +878,16 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
     document.body.appendChild(modal.getElement());
   });
 
-  followingStat.addEventListener('mouseenter', () => {
-    followingStat.style.backgroundColor = 'var(--bg-secondary)';
-  });
-  followingStat.addEventListener('mouseleave', () => {
-    followingStat.style.backgroundColor = 'transparent';
-  });
-
   // Blocked-users stat (own profile): open the block management modal
   blockedStat.addEventListener('click', () => {
     const modal = createBlockedUsersModal({
       onUnblock: () => {
         const current = Number.parseInt(blockedCountSpan.textContent || '0', 10);
-        if (!Number.isNaN(current) && current > 0) {
+        if (!Number.isNaN(current) && current > 1) {
           blockedCountSpan.textContent = formatCount(current - 1);
+        } else if (current === 1) {
+          blockedCountSpan.textContent = '0';
+          blockedStat.style.display = 'none';
         } else {
           loadBlockedCount();
         }
@@ -938,13 +895,6 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
     });
     document.body.appendChild(modal);
   });
-  blockedStat.addEventListener('mouseenter', () => {
-    blockedStat.style.backgroundColor = 'var(--bg-secondary)';
-  });
-  blockedStat.addEventListener('mouseleave', () => {
-    blockedStat.style.backgroundColor = 'transparent';
-  });
-
   // Load initial data
   loadUserData();
 

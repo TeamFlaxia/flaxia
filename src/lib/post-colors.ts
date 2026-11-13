@@ -7,6 +7,7 @@
  * (rather than in the renderer) lets the API, SSR, ActivityPub and the SPA all
  * agree on what counts as a valid marker.
  */
+import { stripMediaCues } from './post-cues.ts';
 
 export const POST_COLOR_PALETTE = [
   'red',
@@ -338,10 +339,13 @@ export function parsePostColors(text: string): PostColorParseResult {
 
 /** True when the text contains at least one well-formed color span. */
 export function hasPostColors(text: string): boolean {
-  return parsePostColors(text).spans.length > 0;
+  return parsePostColors(stripMediaCues(text)).spans.length > 0;
 }
 
-/** Marker-free text for metadata, notifications, ActivityPub, embeddings, etc. */
+/**
+ * Text for metadata, notifications, ActivityPub, embeddings, etc.
+ * Strips cue lines too so timed comments never leak into plain-text outputs.
+ */
 export function stripPostColors(text: string): string {
-  return parsePostColors(text).plain.replace(/\\\{/g, '{');
+  return parsePostColors(stripMediaCues(text)).plain.replace(/\\\{/g, '{');
 }

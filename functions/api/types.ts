@@ -13,12 +13,15 @@ export type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
-  /** Optional dedicated secret for signing orchestrator callbacks and scan-file tickets. */
+  /** Secret for signed Crowd scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
+  /** Crowd's WEBHOOK_SIGNING_SECRET, used to verify X-Flaxia-* headers. */
+  CROWD_WEBHOOK_SIGNING_SECRET?: string;
   /** Comma-separated page origins permitted to fetch signed Crowd scan-file responses. */
   CROWD_NODE_ORIGINS: string;
   /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
   CROWD_SCAN_FILE_SOURCES: string;
+  MAPS_STYLE_URL?: string;
   /** HTTPS URL of the ClamAV WASM image used by the browser container. */
   FILE_SCAN_CLAMAV_IMAGE?: string;
   /** Optional HTTPS URL of the video keyframe pHash WASM image. */
@@ -30,6 +33,11 @@ export type Bindings = {
   CROWD_ORCHESTRATOR?: Fetcher;
   AUTH_SERVICE?: Fetcher;
   AUTH_AUTHORITY_MODE?: string;
+  MAIL_SERVICE?: Fetcher;
+  MAIL_INTERNAL_SECRET?: string;
+  MAIL_DOMAIN?: string;
+  /** Login UI origin. Override for local development. */
+  AUTH_UI_ORIGIN?: string;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;

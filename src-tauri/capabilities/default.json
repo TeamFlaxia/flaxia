@@ -10,7 +10,9 @@
     "notification:allow-request-permission",
     {
       "identifier": "http:default",
-      "allow": [{ "url": "https://flaxia.app/api/*" }]
-    }
+      "allow": [{ "url": "https://flaxia.app/api/*" }, { "url": "https://auth.flaxia.app/api/*" }]
+    },
+    "deep-link:default",
+    "opener:default"
   ]
 }

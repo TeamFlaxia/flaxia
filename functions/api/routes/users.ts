@@ -14,6 +14,7 @@ import {
 import {
   authCredentialOperation,
   authEmailAction,
+  authIsAuthoritative,
   cancelAuthDeletion,
   credentialStampFor,
   deleteAuthAccount,
@@ -21,7 +22,8 @@ import {
   sessionGrant,
 } from '../../lib/flaxia-auth';
 import { cancelAuthCredentialChange, resumeAuthCredentialChange } from '../../lib/flaxia-auth-credentials';
-import { deletionOperationHash, resumeAuthDeletion } from '../../lib/flaxia-auth-deletion';
+import { deletionOperationHash, resumeAuthDeletion, settleDeletionTransitions } from '../../lib/flaxia-auth-deletion';
+import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
 import { resumeDirectCredentialChange } from '../../lib/flaxia-direct-credentials';
 import { resumeDirectDeletion } from '../../lib/flaxia-direct-deletion';
 import { resumeDirectEmailChange } from '../../lib/flaxia-direct-email';
@@ -31,6 +33,7 @@ import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isCreatableSrpKdf } from '../../lib/srp';
+import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { batchGetFreshAndBookmarkStatus, detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
@@ -140,13 +143,14 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE id != ? AND frozen_at IS NULL
-      AND id NOT IN (
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.id != ? AND u.frozen_at IS NULL
+      AND u.id NOT IN (
         SELECT followee_id FROM follows WHERE follower_id = ?
       )
-      ORDER BY id
+      ORDER BY u.id
       LIMIT 100
     `)
       .bind(currentUserId, currentUserId)
@@ -431,12 +435,13 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.frozen_at IS NULL AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)
       ORDER BY
-        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
-        created_at DESC
+        CASE WHEN LOWER(u.username) LIKE ? THEN 0 ELSE 1 END,
+        u.created_at DESC
       LIMIT ?
     `)
       .bind(prefix + '%', prefix + '%', prefix + '%', limit)
@@ -449,6 +454,12 @@ users.get('/users/suggest', async (c) => {
       avatar_key: u.avatar_key || '',
       badge_type: (u.badge_type as string | null) ?? null,
       name_color: (u.name_color as string | null) ?? null,
+      equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+      title_name: (u.title_name as string | null) ?? null,
+      title_name_ja: (u.title_name_ja as string | null) ?? null,
+      title_description: (u.title_description as string | null) ?? null,
+      title_description_ja: (u.title_description_ja as string | null) ?? null,
+      title_icon: (u.title_icon as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -700,9 +711,10 @@ users.get('/users/:username/followers', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.follower_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.followee_id = ?
     `;
 
@@ -814,9 +826,10 @@ users.get('/users/:username/following', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.followee_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.follower_id = ?
     `;
 
@@ -1457,11 +1470,24 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     // A vault exists ⇒ VK is wrapped under a KEK derived from the OLD password.
     // The client holds that password right now, so it must re-wrap VK in the
     // same request; otherwise the vault is orphaned the moment this lands.
-    const vaultRow = (await c.env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
-      .bind(userId)
-      .first()) as { vk_version: number } | null;
+    //
+    // In authority mode Auth owns the envelope for every session, including a
+    // local session id still mapped to an Auth grant. The transitional Flaxia
+    // rows (if any) are copied to Auth first, and the rewrap travels in the
+    // credential operation so Auth can apply verifier and envelope together.
+    const authOwnsVault = Boolean(grant && authIsAuthoritative(c.env));
+    const vaultState = authOwnsVault
+      ? await ensureAuthVault(c.env, grant as string, userId)
+      : await (async () => {
+          const row = (await c.env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
+            .bind(userId)
+            .first()) as { vk_version: number } | null;
+          return row ? { enabled: true, vk_version: row.vk_version } : { enabled: false, vk_version: 0 };
+        })();
+    if (authOwnsVault && !vaultState) return c.json({ error: 'Vault temporarily unavailable' }, 503);
+
     const vaultUpdate = await (async () => {
-      if (!vaultRow) {
+      if (!vaultState?.enabled) {
         if (vault_kek !== undefined) return { error: 'No vault is enabled' } as const;
         return null;
       }
@@ -1475,9 +1501,11 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       if (!Number.isSafeInteger(rewrap.vk_version) || (rewrap.vk_version as number) < 1) {
         return { error: 'Invalid vault key version' } as const;
       }
-      if (rewrap.vk_version !== vaultRow.vk_version) return { error: 'vault_key_version_conflict' } as const;
+      if (rewrap.vk_version !== vaultState.vk_version) return { error: 'vault_key_version_conflict' } as const;
       return {
-        sql: `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
+        sql: authOwnsVault
+          ? null
+          : `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
               WHERE user_id = ? AND vk_version = ?`,
         binds: [
@@ -1495,6 +1523,15 @@ users.patch('/users/me/password', requireAuth, async (c) => {
         vaultUpdate.error === 'vault_rewrap_required' || vaultUpdate.error === 'vault_key_version_conflict' ? 409 : 400;
       return c.json({ error: vaultUpdate.error }, status);
     }
+    const vaultKek =
+      vaultUpdate && !('error' in vaultUpdate)
+        ? {
+            salt: vaultUpdate.binds[0],
+            kdf_params: JSON.parse(vaultUpdate.binds[1]),
+            wrapped_vk: vaultUpdate.binds[2],
+            vk_version: vaultUpdate.version,
+          }
+        : undefined;
 
     if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
       if (typeof operation !== 'string') return c.json({ error: 'Credential operation required' }, 400);
@@ -1511,14 +1548,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
         return c.json({ error: 'Invalid credential operation' }, 400);
       const target = await credentialStampFor({ password_hash: '', srp_salt, srp_verifier, srp_group, srp_kdf });
       if (!target) return c.json({ error: 'Invalid credential operation' }, 400);
-      const vaultJson = vaultUpdate
-        ? JSON.stringify({
-            salt: vaultUpdate.binds[0],
-            kdf_params: JSON.parse(vaultUpdate.binds[1]),
-            wrapped_vk: vaultUpdate.binds[2],
-            vk_version: vaultUpdate.version,
-          })
-        : null;
+      const vaultJson = vaultKek ? JSON.stringify(vaultKek) : null;
       await c.env.DB.prepare(
         "INSERT OR IGNORE INTO flaxia_direct_vault_changes (operation_hash, user_id, target_stamp, vault_json, state, created_at) SELECT ?, id, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM users WHERE id = ? AND frozen_at IS NULL",
       )
@@ -1546,6 +1576,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
             srp_kdf,
             recoverable: true,
             recovery: recovery === true,
+            ...(vaultKek ? { vault_kek: vaultKek } : {}),
           },
           target.stamp,
         );
@@ -1580,14 +1611,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
         return c.json({ error: 'Invalid credential operation' }, 400);
       const target = await credentialStampFor({ password_hash: '', srp_salt, srp_verifier, srp_group, srp_kdf });
       if (!target) return c.json({ error: 'Invalid credential operation' }, 400);
-      const vaultJson = vaultUpdate
-        ? JSON.stringify({
-            salt: vaultUpdate.binds[0],
-            kdf_params: JSON.parse(vaultUpdate.binds[1]),
-            wrapped_vk: vaultUpdate.binds[2],
-            vk_version: vaultUpdate.version,
-          })
-        : null;
+      const vaultJson = vaultKek ? JSON.stringify(vaultKek) : null;
       await c.env.DB.prepare(`INSERT OR IGNORE INTO flaxia_auth_credential_jobs
         (operation_hash, operation_token, user_id, session_id, grant_token, proof_json, old_password_hash, old_salt, old_verifier, old_group, old_kdf, new_salt, new_verifier, new_group, new_kdf, target_stamp, vault_json, state)
         SELECT ?, ?, u.id, s.id, a.grant_token, ?, u.password_hash, u.srp_salt, u.srp_verifier, u.srp_group, u.srp_kdf, ?, ?, ?, ?, ?, ?, 'pending'
@@ -1647,7 +1671,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
 
     // password_hash is blanked unconditionally: the account must stop carrying
     // a value a dump could dictionary-attack outside the SRP protocol.
-    const expectedVaultVersion = vaultUpdate?.version ?? null;
+    const expectedVaultVersion = vaultUpdate && vaultUpdate.sql ? vaultUpdate.version : null;
     const statements = [
       c.env.DB.prepare(
         `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
@@ -1667,7 +1691,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
         expectedVaultVersion,
       ),
     ];
-    if (vaultUpdate) {
+    if (vaultUpdate?.sql) {
       statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
     }
     // Revoke other sessions in the same transaction. changes() refers to the
@@ -1742,6 +1766,17 @@ users.delete('/users/me', requireAuth, async (c) => {
       return c.json({ error: 'Current password proof is required' }, 400);
     }
     const userId = user.id;
+
+    // An unfinished email or credential/vault change would trip a local guard
+    // before the deletion job can be written. Settle them first; a valid
+    // deletion proof means Auth still has the identity and nothing was deleted.
+    const deletionGrant = sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken) ? sessionToken : grant;
+    if (deletionGrant) {
+      if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
+      if ((await settleDeletionTransitions(c.env, deletionGrant, userId)) !== 'ok')
+        return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+    }
+
     if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
       if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
       const hash = await deletionOperationHash(operation);
@@ -2147,9 +2182,10 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
+       ${USER_TITLE_JOIN}
        WHERE b.blocker_id = ?
        ORDER BY b.created_at DESC`,
     )

@@ -100,6 +100,45 @@ test('Tauri uses its scoped native transport without exposing session cookies to
   assert.equal(response.clone().headers.has('Set-Cookie'), false);
   assert.deepEqual(await response.json(), { ok: true });
 });
+test('Tauri routes Flaxia service APIs through the native transport', async () => {
+  platform('tauri');
+  let actual: Request | undefined;
+  const native = createNativeFetch(
+    async () => assert.fail('Flaxia service APIs must not use browser fetch'),
+    async () => async (input, init) => {
+      actual = input as Request;
+      assert.equal(init?.maxRedirections, 0);
+      return Response.json({ ok: true });
+    },
+  );
+  const response = await native('https://auth.flaxia.app/api/auth/login/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.ok(actual);
+  assert.equal(actual.url, 'https://auth.flaxia.app/api/auth/login/start');
+  assert.equal(actual.method, 'POST');
+  assert.equal(await actual.text(), '{}');
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
+test('Tauri keeps non-allowlisted Flaxia subdomains on the browser transport', async () => {
+  platform('tauri');
+  const received: Array<RequestInfo | URL> = [];
+  const native = createNativeFetch(
+    async (input) => {
+      received.push(input);
+      return new Response('sandbox');
+    },
+    async () => {
+      throw new Error('sandbox APIs must not use the native transport');
+    },
+  );
+  await native('https://sandbox.flaxia.app/api/wvfs-zip/game-1');
+  assert.equal(received.length, 1);
+});
+
 test('static assets and third-party APIs keep the browser transport', async () => {
   platform('tauri');
   const received: Array<RequestInfo | URL> = [];

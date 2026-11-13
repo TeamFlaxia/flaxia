@@ -1,6 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createFabButton } from '../lib/fab-button.js';
-import { formatCount } from '../lib/format.js';
+import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
@@ -151,31 +151,18 @@ export class ExplorePage {
   private createSearchSection(): HTMLElement {
     const section = document.createElement('div');
     section.className = 'explore-search-section';
-    section.style.cssText = `
-      padding: 1rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-    `;
 
     const searchBox = document.createElement('div');
     searchBox.className = 'search-box';
-    searchBox.style.cssText = 'position: relative; margin-bottom: 1rem;';
 
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'search-input';
     input.placeholder = t('explore.search_placeholder');
-    input.style.cssText =
-      'width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: inherit; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease; box-sizing: border-box;';
 
     const icon = document.createElement('span');
     icon.className = 'search-icon';
-    icon.style.cssText =
-      'position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.875rem; pointer-events: none;';
-    icon.textContent = '🔍';
+    icon.setAttribute('aria-hidden', 'true');
 
     searchBox.appendChild(input);
     searchBox.appendChild(icon);
@@ -204,11 +191,6 @@ export class ExplorePage {
     // Filter bar
     const filterBar = document.createElement('div');
     filterBar.className = 'explore-filter-bar';
-    filterBar.style.cssText = `
-      display: flex;
-      gap: 0.5rem;
-      overflow-x: auto;
-    `;
 
     const filters: { key: 'posts' | 'arcade' | 'users'; label: string }[] = [
       { key: 'posts', label: t('explore.filter_posts') },
@@ -222,18 +204,7 @@ export class ExplorePage {
       btn.dataset.filter = f.key;
       btn.textContent = f.label;
       const isActive = f.key === 'posts';
-      btn.style.cssText = `
-        padding: 0.4rem 1rem;
-        border-radius: 999px;
-        border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
-        background: ${isActive ? 'var(--accent)' : 'transparent'};
-        color: ${isActive ? 'white' : 'var(--text-muted)'};
-        cursor: pointer;
-        font-family: inherit;
-        font-size: 0.8rem;
-        white-space: nowrap;
-        transition: all 0.2s ease;
-      `;
+      if (isActive) btn.classList.add('is-active');
       btn.onclick = () => this.switchFilter(f.key);
       filterBar.appendChild(btn);
     }
@@ -407,7 +378,7 @@ export class ExplorePage {
       if (it.type === 'tag') {
         const tagName = document.createElement('span');
         tagName.textContent = `# ${it.label}`;
-        tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;';
+        tagName.style.cssText = 'font-weight: 600; color: var(--accent-text); font-size: 0.875rem;';
 
         const count = document.createElement('span');
         count.textContent = formatCount(it.count || 0);
@@ -425,7 +396,7 @@ export class ExplorePage {
         const avatar = document.createElement('div');
         avatar.style.cssText = `
           width: 28px; height: 28px; border-radius: 50%;
-          background: var(--accent); color: var(--bg-primary);
+          background: var(--accent); color: var(--on-accent);
           display: flex; align-items: center; justify-content: center;
           font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
         `;
@@ -582,7 +553,9 @@ export class ExplorePage {
     const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
-      const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; percentage: string }> };
+      const tagsData = (await tagsRes.json()) as {
+        tags: Array<{ tag: string; count: number; percentage?: number }>;
+      };
       this.renderTrendingTags(tagsData.tags || []);
     }
 
@@ -652,10 +625,7 @@ export class ExplorePage {
     // Update filter UI
     const filterBtns = this.element.querySelectorAll('.explore-filter-btn') as NodeListOf<HTMLElement>;
     filterBtns.forEach((btn) => {
-      const isActive = btn.dataset.filter === filter;
-      btn.style.border = `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`;
-      btn.style.background = isActive ? 'var(--accent)' : 'transparent';
-      btn.style.color = isActive ? 'white' : 'var(--text-muted)';
+      btn.classList.toggle('is-active', btn.dataset.filter === filter);
     });
 
     // Show/hide trending tags container
@@ -794,32 +764,52 @@ export class ExplorePage {
     postsContainer.appendChild(fragment);
   }
 
-  private renderTrendingTags(tags: Array<{ tag: string; percentage: string }>): void {
+  private renderTrendingTags(tags: Array<{ tag: string; count: number; percentage?: number }>): void {
     const container = this.element.querySelector('.explore-trending-tags') as HTMLElement;
     if (!container) return;
 
-    container.innerHTML = `<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">${t('explore.trending_tags')}</h2>`;
+    container.innerHTML = `<h2 class="explore-trending-heading">${t('explore.trending_tags')}</h2>`;
     container.style.display = 'block';
-    container.style.background = 'var(--bg-secondary)';
-    container.style.marginBottom = '1rem';
 
-    tags.forEach(({ tag, percentage }) => {
-      const item = document.createElement('div');
+    const maxCount = Math.max(...tags.map(({ count }) => count), 1);
+
+    tags.forEach(({ tag, count, percentage }) => {
+      const item = document.createElement('a');
       item.className = 'trending-item';
-      item.style.cssText = `
-        padding: 0.75rem 1rem;
-        cursor: pointer;
-        transition: background-color 0.2s ease;
-        border-bottom: 1px solid var(--border);
-      `;
-      item.innerHTML = `
-        <div style="color: var(--accent); font-weight: 600;"># ${tag}</div>
-        <div style="font-size: 0.8rem; color: var(--text-muted);">${t('explore.trending_percent', { percentage })}</div>
-      `;
-      item.onclick = () => {
+      item.href = `/explore?tag=${encodeURIComponent(tag)}`;
+      item.dataset.count = String(count);
+
+      const name = document.createElement('div');
+      name.className = 'trending-tag-name';
+      name.textContent = `# ${tag}`;
+
+      // Bars compare tags with each other; the text keeps the true share of
+      // the recent-post sample so the graph cannot overstate a tag.
+      const bar = document.createElement('div');
+      bar.className = 'trending-bar';
+      bar.setAttribute('aria-hidden', 'true');
+      const fill = document.createElement('span');
+      fill.className = 'trending-bar-fill';
+      fill.style.width = `${relativeBarPercent(count, maxCount)}%`;
+      bar.appendChild(fill);
+
+      const pct = typeof percentage === 'number' && Number.isFinite(percentage) ? percentage : null;
+      const meta = document.createElement('div');
+      meta.className = 'trending-tag-meta';
+      meta.textContent =
+        pct === null
+          ? t('right_panel.trending_count', { count })
+          : `${t('explore.trending_percent', { percentage: formatPercentage(pct) })} · ${t('right_panel.trending_count', { count })}`;
+
+      item.appendChild(name);
+      item.appendChild(bar);
+      item.appendChild(meta);
+
+      item.addEventListener('click', (ev) => {
+        ev.preventDefault();
         window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
-        window.location.reload();
-      };
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
+      });
       container.appendChild(item);
     });
   }
@@ -843,36 +833,14 @@ export class ExplorePage {
 
     this.arcadePosts.slice(startIndex).forEach((game) => {
       const row = document.createElement('div');
-      row.style.cssText = `
-        display: flex;
-        gap: 1rem;
-        padding: 0.75rem;
-        border-radius: 0.5rem;
-        cursor: pointer;
-        transition: background 0.2s;
-        margin-bottom: 0.25rem;
-      `;
-      row.addEventListener('mouseenter', () => {
-        row.style.background = 'var(--bg-secondary)';
-      });
-      row.addEventListener('mouseleave', () => {
-        row.style.background = 'transparent';
-      });
+      row.className = 'explore-arcade-row';
       row.onclick = () => {
         pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
       };
 
       const thumb = document.createElement('div');
-      thumb.style.cssText = `
-        width: 180px;
-        flex-shrink: 0;
-        aspect-ratio: 16 / 9;
-        border-radius: 0.5rem;
-        overflow: hidden;
-        position: relative;
-        background: var(--bg-secondary);
-      `;
+      thumb.className = 'explore-arcade-thumb';
 
       if (game.thumbnailKey) {
         const img = document.createElement('img');
@@ -881,7 +849,6 @@ export class ExplorePage {
         img.loading = 'lazy';
         img.width = 180;
         img.height = 101;
-        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
         thumb.appendChild(img);
       } else {
         const fallback = document.createElement('div');
@@ -892,16 +859,14 @@ export class ExplorePage {
       }
 
       const info = document.createElement('div');
-      info.style.cssText = 'flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;';
+      info.className = 'explore-arcade-info';
 
       const title = document.createElement('div');
-      title.style.cssText =
-        'font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+      title.className = 'explore-arcade-title';
       title.textContent = game.title;
 
       const meta = document.createElement('div');
-      meta.style.cssText =
-        'font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 0.5rem; align-items: center;';
+      meta.className = 'explore-arcade-meta';
 
       const author = document.createElement('span');
       author.textContent = `@${game.username}`;
@@ -930,60 +895,43 @@ export class ExplorePage {
 
     if (this.userSuggestions.length === 0) {
       const msg = document.createElement('div');
-      msg.style.cssText =
-        "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
-      msg.textContent = t('explore.no_users');
+      msg.className = 'page-empty';
+      const icon = document.createElement('span');
+      icon.className = 'page-empty-icon';
+      const title = document.createElement('p');
+      title.className = 'page-empty-title fx-display';
+      title.textContent = t('explore.no_users');
+      msg.appendChild(icon);
+      msg.appendChild(title);
       postsContainer.appendChild(msg);
       return;
     }
 
     this.userSuggestions.forEach((user) => {
       const item = document.createElement('div');
-      item.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.75rem;
-        border-radius: 0.25rem;
-        cursor: pointer;
-        transition: background-color 0.2s ease;
-      `;
-      item.addEventListener('mouseenter', () => {
-        item.style.background = 'var(--bg-secondary)';
-      });
-      item.addEventListener('mouseleave', () => {
-        item.style.background = 'transparent';
-      });
+      item.className = 'explore-user-row';
       item.onclick = () => {
         window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
       };
 
       const avatar = document.createElement('div');
-      avatar.style.cssText = `
-        width: 40px; height: 40px; border-radius: 50%;
-        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
-        background-size: cover;
-        background-position: center;
-        color: var(--bg-primary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 0.875rem;
-        flex-shrink: 0;
-      `;
+      avatar.className = 'explore-avatar';
+      if (user.avatar_key) {
+        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
+      }
       if (!user.avatar_key) {
         avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
       }
       attachPlusBadge(avatar, user.badge_type);
 
       const userInfo = document.createElement('div');
+      userInfo.className = 'explore-user-info';
       const usernameEl = document.createElement('div');
-      usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);';
+      usernameEl.className = 'explore-user-name';
       usernameEl.textContent = `@${user.username}`;
       const displayNameEl = document.createElement('div');
-      displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+      displayNameEl.className = 'explore-user-display';
       displayNameEl.textContent = user.display_name || '';
       applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
@@ -1012,18 +960,17 @@ export class ExplorePage {
       loadingElement.style.display = 'block';
       loadingElement.innerHTML = '';
       const wrapper = document.createElement('div');
-      wrapper.style.cssText =
-        "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+      wrapper.className = 'explore-end';
 
       const icon = document.createElement('div');
-      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;';
+      icon.className = 'explore-end-icon';
       icon.textContent = t('explore.end_icon');
 
       const title = document.createElement('div');
       title.textContent = t('explore.end_message');
 
       const subtitle = document.createElement('div');
-      subtitle.style.cssText = 'font-size: 0.875rem; margin-top: 0.5rem;';
+      subtitle.className = 'explore-end-subtitle';
       subtitle.textContent = t('explore.end_subtitle', { tag: this.props.tag ?? '' });
 
       wrapper.appendChild(icon);
@@ -1040,20 +987,18 @@ export class ExplorePage {
       loadingElement.innerHTML = '';
 
       const wrapper = document.createElement('div');
-      wrapper.style.cssText =
-        "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+      wrapper.className = 'explore-load-error';
 
       const icon = document.createElement('div');
-      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;';
+      icon.className = 'explore-end-icon';
       icon.textContent = '⚠️';
 
       const title = document.createElement('div');
       title.textContent = t('explore.load_error');
 
       const retryBtn = document.createElement('button');
+      retryBtn.className = 'explore-retry';
       retryBtn.textContent = t('common.retry');
-      retryBtn.style.cssText =
-        'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;';
       retryBtn.addEventListener('click', () => {
         loadingElement.style.display = 'none';
         void this.loadMorePosts();

@@ -112,13 +112,13 @@ describe('POST /api/auth/register', () => {
     assert.equal(res.status, 400);
   });
 
-  it('rejects missing email → 400', async () => {
-    const res = await fetch(`${BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'password123', username: 'usera', display_name: 'User A' }),
+  it('registers without email → 201', async () => {
+    const res = await registerUser({
+      password: 'password123',
+      username: 'usera',
+      display_name: 'User A',
     });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 201);
   });
 
   it('rejects missing SRP verifier → 400', async () => {
@@ -314,6 +314,12 @@ describe('POST /api/auth/login', () => {
 
   it('logs in successfully and returns session cookie', async () => {
     const { res, cookie } = await loginUser('a@test.com', 'password123');
+    assert.equal(res.status, 200);
+    assert.ok(cookie.length > 0);
+  });
+
+  it('logs in with a username instead of an email', async () => {
+    const { res, cookie } = await loginUser('usera', 'password123');
     assert.equal(res.status, 200);
     assert.ok(cookie.length > 0);
   });

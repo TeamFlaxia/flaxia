@@ -5,7 +5,14 @@
 import { decryptVaultItem, encodeB64, encryptVaultItem, type VaultItemCiphertext } from './primitives.ts';
 import { getVaultKey, getVaultKeyVersion } from './session.ts';
 
-export type VaultItemKind = 'post_autosave' | 'post_draft' | 'private_note' | 'personal_setting';
+export type VaultItemKind =
+  | 'post_autosave'
+  | 'post_draft'
+  | 'private_note'
+  | 'personal_setting'
+  | 'recommendation_profile'
+  | 'mail_identity'
+  | 'oauth_connection';
 
 interface StoredVaultItem {
   id: string;

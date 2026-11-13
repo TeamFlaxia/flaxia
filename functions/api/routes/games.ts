@@ -1,7 +1,11 @@
 import { Hono } from 'hono';
 import { stripPostColors } from '../../../src/lib/post-colors.ts';
+import {
+  type EncodedVector,
+  encodeVector,
+  RECOMMENDATION_VECTOR_DIM,
+} from '../../../src/lib/recommendation/vector-codec.ts';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
-import { computeScore as banditComputeScore, project as banditProject, projConfigKey } from '../../lib/linucb';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
 import {
@@ -11,15 +15,7 @@ import {
   runBatched,
 } from '../helpers';
 import type { Bindings, Variables } from '../types';
-import {
-  applyBanditRewards,
-  cosineSimilarity,
-  getProjection,
-  loadBanditConfig,
-  loadBanditState,
-  loadDwellStats,
-  loadOrComputeInterestVector,
-} from './recommender';
+import { loadDwellStats } from './recommender';
 
 const games = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -253,10 +249,8 @@ games.get('/games', async (c) => {
     const recommended = c.req.query('recommended') === 'true';
     if (recommended && currentUserId) {
       const initialId = c.req.query('initialId');
-
-      // Load materialized interest vector (Fresh history + significant dwell plays)
-      const profile = await loadOrComputeInterestVector(c.env.DB, currentUserId);
-      const interestVector = profile?.vector ?? null;
+      const clientRank = c.req.query('client_rank') === '1' || c.req.query('include_vectors') === '1';
+      const resultLimit = clientRank ? clampLimit(c.req.query('limit'), 120, 200) : limit;
 
       // Get dwell stats for all games (shared across users, cached in KV)
       const { dwellStats, maxAvgDwell } = await loadDwellStats(c.env.DB, c.env.CACHE);
@@ -307,128 +301,69 @@ games.get('/games', async (c) => {
         if (initialRow) candidateRows.push(initialRow);
       }
 
-      // Get embeddings for candidates (plus precomputed bandit projections)
-      const candEmbeds = new Map<string, { vec: number[]; banditVec: number[] | null; banditCfg: string | null }>();
+      // Public candidate embeddings. The personal interest vector stays in the
+      // browser Vault, so the server only ships opaque post features.
+      const candEmbeds = new Map<string, number[]>();
       if (candidateRows.length > 0) {
-        const cIds = candidateRows.map((r) => r.postId);
+        const cIds = candidateRows.map((row) => row.postId);
         const eRows = await c.env.DB.prepare(
-          `SELECT post_id, embedding, bandit_vec, bandit_cfg FROM post_embeddings WHERE post_id IN (${cIds.map(() => '?').join(',')})`,
+          'SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (SELECT value FROM json_each(?))',
         )
-          .bind(...cIds)
-          .all<{ post_id: string; embedding: string; bandit_vec: string | null; bandit_cfg: string | null }>();
+          .bind(JSON.stringify(cIds))
+          .all<{ post_id: string; embedding: string }>();
         for (const row of eRows.results || []) {
           try {
-            const v = JSON.parse(row.embedding);
-            if (!Array.isArray(v)) continue;
-            let banditVec: number[] | null = null;
-            if (row.bandit_vec) {
-              try {
-                const bv = JSON.parse(row.bandit_vec);
-                if (Array.isArray(bv)) banditVec = bv;
-              } catch {
-                /* ignore malformed projection */
-              }
+            const vector: unknown = JSON.parse(row.embedding);
+            if (Array.isArray(vector) && vector.length === RECOMMENDATION_VECTOR_DIM) {
+              candEmbeds.set(row.post_id, vector.map(Number));
             }
-            candEmbeds.set(row.post_id, { vec: v, banditVec, banditCfg: row.bandit_cfg ?? null });
           } catch {
-            /* skip */
+            /* skip malformed embedding */
           }
         }
       }
 
-      // Score candidates
       const now = Date.now();
       const dayMs = 86400000;
 
-      // Users without a materialized interest profile (no freshs / long dwells)
-      // fall back to a popularity signal so the feed doesn't degenerate to
-      // plain recency. Normalized across the candidate set.
-      const hasProfile = !!(profile && profile.sourceCount > 0);
+      // Popularity fallback, normalized across the candidate set.
+      let popMin = Number.POSITIVE_INFINITY;
+      let popMax = Number.NEGATIVE_INFINITY;
+      const popRaw = candidateRows.map((row) => {
+        const pop =
+          0.5 * Math.log1p(row.fresh_count || 0) +
+          0.3 * Math.log1p(row.reply_count || 0) +
+          0.2 * Math.log1p(row.bookmark_count || 0) +
+          0.4 * Math.log1p(row.impressions || 0);
+        if (pop < popMin) popMin = pop;
+        if (pop > popMax) popMax = pop;
+        return pop;
+      });
       const popularityById = new Map<string, number>();
-      if (!hasProfile) {
-        let popMin = Number.POSITIVE_INFINITY;
-        let popMax = Number.NEGATIVE_INFINITY;
-        const popRaw = candidateRows.map((row) => {
-          const pop =
-            0.5 * Math.log1p(row.fresh_count || 0) +
-            0.3 * Math.log1p(row.reply_count || 0) +
-            0.2 * Math.log1p(row.bookmark_count || 0) +
-            0.4 * Math.log1p(row.impressions || 0);
-          if (pop < popMin) popMin = pop;
-          if (pop > popMax) popMax = pop;
-          return pop;
-        });
-        candidateRows.forEach((row, i) => {
-          const pop = popRaw[i];
-          popularityById.set(row.postId, popMax > popMin ? (pop - popMin) / (popMax - popMin) : 0);
-        });
-      }
-
-      // Contextual bandit (LinUCB) layer, gated by KV config (default off).
-      const banditConfig = await loadBanditConfig(c.env.CACHE);
-      const banditProj = banditConfig.enabled ? getProjection(banditConfig) : null;
-      const banditCfgKey = banditProj ? projConfigKey(banditConfig) : null;
-      const banditState = banditConfig.enabled
-        ? await loadBanditState(c.env.DB, currentUserId, banditConfig, c.env.CACHE)
-        : null;
-
-      const scored = candidateRows.map((row) => {
-        const cand = candEmbeds.get(row.postId);
-        const emb = cand?.vec;
-        let vecSim = 0;
-        if (interestVector && emb) {
-          vecSim = cosineSimilarity(interestVector, emb);
-        }
-
-        const dwellInfo = dwellStats.get(row.postId);
-        const expectedDwellNorm = dwellInfo ? dwellInfo.avgDwell / maxAvgDwell : 0;
-
-        const hasPlayed = playedSet.has(row.postId);
-        const explorationBonus = hasPlayed ? 0 : 0.2;
-
-        const age = now - new Date(row.created_at).getTime();
-        const freshnessBonus = age < dayMs ? 0.1 : 0;
-
-        // Personalization: interest-vector similarity when a profile exists,
-        // otherwise the normalized popularity fallback.
-        const personalization = hasProfile ? vecSim : popularityById.get(row.postId) || 0;
-
-        const score = 0.35 * personalization + 0.35 * expectedDwellNorm + 0.2 * explorationBonus + 0.1 * freshnessBonus;
-
-        let banditScore = Number.NaN;
-        if (banditState && banditProj && cand && emb) {
-          // Use the precomputed projection when its config matches the current
-          // one; otherwise fall back to projecting on the fly.
-          const x = cand.banditVec && cand.banditCfg === banditCfgKey ? cand.banditVec : banditProject(emb, banditProj);
-          banditScore = banditComputeScore(banditState, x, banditConfig.alpha);
-        }
-
-        return { row, score, banditScore };
+      candidateRows.forEach((row, i) => {
+        const pop = popRaw[i];
+        popularityById.set(row.postId, popMax > popMin ? (pop - popMin) / (popMax - popMin) : 0);
       });
 
-      // Normalize bandit scores across candidates and blend with the heuristic.
-      if (banditConfig.enabled) {
-        const finiteBandit = scored.map((s) => s.banditScore).filter((v) => Number.isFinite(v));
-        if (finiteBandit.length > 0) {
-          let bMin = Number.POSITIVE_INFINITY;
-          let bMax = Number.NEGATIVE_INFINITY;
-          for (const v of finiteBandit) {
-            if (v < bMin) bMin = v;
-            if (v > bMax) bMax = v;
-          }
-          for (const item of scored) {
-            if (!Number.isFinite(item.banditScore)) continue;
-            const norm = bMax > bMin ? (item.banditScore - bMin) / (bMax - bMin) : 0.5;
-            item.score = banditConfig.lambda * item.score + (1 - banditConfig.lambda) * norm;
-          }
-        }
-      }
+      const scored = candidateRows.map((row) => {
+        const dwellInfo = dwellStats.get(row.postId);
+        const expectedDwellNorm = dwellInfo ? dwellInfo.avgDwell / maxAvgDwell : 0;
+        const explorationBonus = playedSet.has(row.postId) ? 0 : 0.2;
+        const age = now - new Date(row.created_at).getTime();
+        const freshnessBonus = age < dayMs ? 0.1 : 0;
+        const score =
+          0.45 * expectedDwellNorm +
+          0.3 * (popularityById.get(row.postId) || 0) +
+          0.15 * explorationBonus +
+          0.1 * freshnessBonus;
+        return { row, score };
+      });
 
-      // Sort by score descending
       scored.sort((a, b) => b.score - a.score);
 
-      // If initialGameId, promote it to front
-      if (initialId) {
+      // Old clients keep server-side ordering; the new client applies cosine
+      // locally and handles initialId prominence itself.
+      if (initialId && !clientRank) {
         const idx = scored.findIndex((s) => s.row.postId === initialId);
         if (idx !== -1) {
           const item = scored.splice(idx, 1)[0];
@@ -436,12 +371,10 @@ games.get('/games', async (c) => {
         }
       }
 
-      // Paginate
       const offset = Math.max(0, Number(c.req.query('offset') || '0'));
-      const page = scored.slice(offset, offset + limit);
-      const hasMore = offset + limit < scored.length;
+      const page = scored.slice(offset, offset + resultLimit);
+      const hasMore = offset + resultLimit < scored.length;
 
-      // Check fresh / bookmark status
       let freshedPostIds: Set<string> = new Set();
       let bookmarkedPostIds: Set<string> = new Set();
       if (page.length > 0) {
@@ -451,8 +384,16 @@ games.get('/games', async (c) => {
         bookmarkedPostIds = result.bookmarked;
       }
 
-      const games = page.map(({ row }) => {
+      const vectors: Record<string, EncodedVector> = {};
+      const baseScores: Record<string, number> = {};
+      const games = page.map(({ row, score }) => {
         const type = 'zip';
+        baseScores[row.postId] = score;
+        const embedding = candEmbeds.get(row.postId);
+        if (embedding) {
+          const encoded = encodeVector(embedding);
+          if (encoded) vectors[row.postId] = encoded;
+        }
         return {
           id: row.postId,
           postId: row.postId,
@@ -474,7 +415,19 @@ games.get('/games', async (c) => {
         };
       });
 
-      return c.json({ games, hasMore, offset: offset + limit });
+      return c.json({
+        games,
+        hasMore,
+        offset: offset + resultLimit,
+        ...(clientRank
+          ? {
+              vectors,
+              vector_meta: { dim: RECOMMENDATION_VECTOR_DIM, encoding: 'int8' },
+              base_scores: baseScores,
+              initial_id: initialId || null,
+            }
+          : {}),
+      });
     }
 
     let sql = `
@@ -675,7 +628,6 @@ games.post('/games/events', async (c) => {
        VALUES (?, ?, ?, ?, ?, ?, 'arcade')`,
     );
 
-    const banditEvents: Array<{ postId: string; eventType: string; dwellMs: number }> = [];
     const statements: D1PreparedStatement[] = [];
     const eventList = events.slice(0, MAX_ARCADE_EVENTS_PER_REQUEST);
 
@@ -720,14 +672,9 @@ games.post('/games/events', async (c) => {
           dwellStmt.bind(crypto.randomUUID(), currentUserId, event.postId, dwellMs, isFullscreen, gameType),
         );
       }
-
-      banditEvents.push({ postId: event.postId, eventType: event.eventType, dwellMs });
     }
 
     await runBatched(c.env.DB, statements);
-
-    // Feed the dwell-maximizing bandit with rewards (no-op while disabled).
-    await applyBanditRewards(c.env.DB, c.env.CACHE, currentUserId, banditEvents);
 
     return c.json({ ok: true });
   } catch (error: unknown) {

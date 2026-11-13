@@ -1,0 +1,450 @@
+/* ============================================================
+   Flaxia v6 — motion (@scope flaxia-motion)
+   ------------------------------------------------------------
+   Motion thesis: "press and answer".
+
+   The controls in this product are the smallest thing on screen and the
+   most touched thing on the page, so they carry the choreography: a control
+   answers a press with colour, not with movement. Nothing scales under the
+   finger and nothing is drawn around it. The one authored moment is the
+   feed's own arrival, and a post the reader writes.
+
+   Budget: transforms and opacity only. One element is promoted per press.
+   Every rule has a reduced-motion path that keeps the colour change and
+   drops the movement.
+   ============================================================ */
+
+/* --- 2. Tactile micro-press feedback --------------------------------- */
+.nav-post-button,
+.composer-submit,
+.timeline-promo-arcade-btn,
+.action-button,
+.arcade-nav,
+.nav-signin-button,
+.timeline-fab,
+.nav-item,
+.bottom-nav-item {
+  transition:
+    transform 100ms var(--ease-out),
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.nav-post-button:active,
+.composer-submit:active:not(:disabled),
+.timeline-promo-arcade-btn:active,
+.action-button:active:not(:disabled),
+.arcade-nav:active,
+.nav-signin-button:active,
+.timeline-fab:active {
+  transform: scale(0.965);
+}
+
+/* --- 3. Micro-animations for action states (Like, Reload, Bookmark) --- */
+@keyframes like-burst {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.32);
+  }
+  65% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.action-button--fresh.action-button--active .action-icon {
+  animation: like-burst 280ms cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+@keyframes reload-spin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.22);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+.action-button--reload.action-button--active .action-icon {
+  animation: reload-spin 360ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes bookmark-hop {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-3px) scale(1.2);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+.action-button--bookmark.action-button--active .action-icon {
+  animation: bookmark-hop 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* --- 3.5. Subtle indicator & entrance animations -------------------- */
+@keyframes bar-expand {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.nav-item--active::before {
+  animation: bar-expand 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: center;
+}
+
+@keyframes tab-indicator-in {
+  from {
+    transform: scaleX(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.feed-toggle-btn.active::after {
+  animation: tab-indicator-in 160ms var(--ease-out) both;
+  transform-origin: center;
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.nav-user-popup--open,
+.post-menu-dropdown {
+  animation: menu-pop 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  transform-origin: top;
+}
+
+/* Arcade navigation micro-float on hover */
+@media (hover: hover) {
+  .arcade-nav.arcade-nav-up:hover {
+    transform: translateX(-50%) translateY(-2px) scale(1.06);
+  }
+  .arcade-nav.arcade-nav-down:hover {
+    transform: translateX(-50%) translateY(2px) scale(1.06);
+  }
+  .nav-tag:hover .nav-tag-hash {
+    transform: translateX(1px);
+    transition: transform 120ms var(--ease-out);
+  }
+}
+
+/* --- 4. Icons answer with a small lift, not a bounce ----------------- */
+@keyframes icon-lift {
+  0% {
+    transform: translateY(0);
+  }
+  38% {
+    transform: translateY(-1.5px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.nav-item .nav-item-icon,
+.timeline .post-list > .post-card .action-icon,
+.composer-icon-btn svg,
+.bottom-nav-item .bottom-nav-icon {
+  transition: transform var(--duration-base) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .nav-item:hover .nav-item-icon,
+  .bottom-nav-item:hover .bottom-nav-icon {
+    transform: translateX(1px);
+  }
+
+  .timeline .post-list > .post-card .action-button:hover .action-icon {
+    transform: translateY(-1px);
+  }
+
+  .composer-icon-btn:hover svg {
+    transform: translateY(-1px);
+  }
+}
+
+/* --- 4. Controls that report a state toggle -------------------------- */
+/* The reaction chips and bookmark use .is-popping already; give them the
+   same language as the like press instead of a silent swap. */
+.timeline .post-list > .post-card .post-reaction-chip.is-popping .post-reaction-count,
+.timeline .post-list > .post-card .action-button--bookmark.is-popping .action-icon {
+  animation: icon-lift 260ms var(--ease-out) both;
+}
+
+/* --- 5. Feed arrivals: one authored entrance, not per-item effects --- */
+@keyframes post-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.timeline .post-list > .post-card:not(.post-card--static) {
+  animation: post-arrive 300ms var(--ease-out) backwards;
+}
+
+/* Only the first screenful staggers; later cards use the boundary. */
+.timeline .post-list > .post-card:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.timeline .post-list > .post-card:nth-child(2) {
+  animation-delay: 28ms;
+}
+
+.timeline .post-list > .post-card:nth-child(3) {
+  animation-delay: 56ms;
+}
+
+.timeline .post-list > .post-card:nth-child(4) {
+  animation-delay: 74ms;
+}
+
+.timeline .post-list > .post-card:nth-child(n + 5) {
+  animation-delay: 88ms;
+}
+
+/* A post the user just wrote lands with a single warm edge, then settles. */
+@keyframes post-land {
+  0% {
+    background-color: var(--accent-soft);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.timeline .post-list > .post-card.is-newly-created {
+  animation: post-land 900ms var(--ease-out) both;
+}
+
+/* --- 6. Loading, transitions, and the palette ------------------------ */
+.timeline .load-more-container svg,
+.loading-spinner svg {
+  animation: ring-spin 900ms linear infinite;
+}
+
+@keyframes ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Dialog and menu entries lean in from where they came from. */
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+.modal-dialog,
+.post-modal-dialog {
+  animation: overlay-in 180ms var(--ease-out) backwards;
+}
+
+/* Skeleton shimmer */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-card,
+.skeleton-box,
+.skeleton-line,
+.skeleton-avatar {
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary) 25%,
+    var(--bg-tertiary) 50%,
+    var(--bg-secondary) 75%
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: skeleton-shimmer 1.8s infinite ease-in-out !important;
+}
+
+/* The theme swap is a cross-fade of the surface, not a flash. */
+html.is-theme-switching *,
+html.is-theme-switching *::before,
+html.is-theme-switching *::after {
+  transition:
+    background-color 180ms var(--ease-standard),
+    border-color 180ms var(--ease-standard),
+    color 180ms var(--ease-standard);
+}
+
+/* --- 7. Reduced motion: keep the meaning, drop the movement ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .timeline .post-list > .post-card,
+  .timeline .post-list > .post-card.is-newly-created,
+  .modal-dialog,
+  .post-modal-dialog,
+  .action-button--fresh.action-button--active .action-icon,
+  .action-button--reload.action-button--active .action-icon,
+  .action-button--bookmark.action-button--active .action-icon,
+  .nav-item--active::before,
+  .feed-toggle-btn.active::after,
+  .nav-user-popup--open,
+  .post-menu-dropdown,
+  .skeleton-card,
+  .skeleton-box,
+  .skeleton-line,
+  .skeleton-avatar,
+  .mail-page,
+  .mail-thread-page,
+  .mail-compose-page,
+  .mail-settings-page,
+  .mail-thread-row,
+  .mail-thread-intro,
+  .mail-message,
+  .mail-message-html,
+  .mail-empty,
+  .mail-compose-card,
+  .mail-settings-card,
+  .mail-cc-fields,
+  .mail-count--visible,
+  .mail-folder-tab.active::after,
+  .mail-star.is-popping svg,
+  .mail-quota-bar span {
+    animation: none !important;
+  }
+
+  .timeline .post-list > .post-card .action-icon,
+  .nav-item .nav-item-icon,
+  .composer-icon-btn svg,
+  .arcade-nav {
+    transform: none !important;
+  }
+
+  .timeline .load-more-container svg {
+    animation-duration: 2s;
+  }
+}
+
+/* --- 8. Dark surfaces: nothing is left at a light-mode default ------ */
+
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select {
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] ::selection {
+  background: rgba(74, 222, 128, 0.28);
+  color: var(--text-primary);
+}
+
+/* The caret is part of the theme, not the OS. */
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] textarea {
+  caret-color: var(--accent-text);
+}
+
+:root[data-theme="dark"] {
+  scrollbar-color: #3f3f46 transparent;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 999px;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+:root[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Panels that assumed a white page get the elevated surface on night. */
+:root[data-theme="dark"] .right-card,
+:root[data-theme="dark"] .composer-shell,
+:root[data-theme="dark"] .modal-dialog,
+:root[data-theme="dark"] .post-modal-dialog,
+:root[data-theme="dark"] .cmd-dialog,
+:root[data-theme="dark"] .settings-panel {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
+/* Hover on night can't be a darkening; it reads as a lift. */
+@media (hover: hover) {
+  :root[data-theme="dark"] .nav-item:hover,
+  :root[data-theme="dark"] .timeline .post-list > .post-card .action-button:hover,
+  :root[data-theme="dark"] .right-panel .trending-item:hover {
+    background: rgba(250, 250, 250, 0.06);
+  }
+}
+
+/* Inputs: harmonize with the canvas, using subtle input background. */
+:root[data-theme="dark"] .search-box,
+:root[data-theme="dark"] .nav-command {
+  background: var(--bg-input);
+  border-color: var(--border);
+}
+
+:root[data-theme="dark"] .cmd-search {
+  background: transparent;
+  border-bottom-color: var(--border);
+}
+
+/* Focus ring for interactive buttons/links (inputs manage their own ring). */
+:root[data-theme="dark"] :is(a, button, [tabindex]):not(input):not(textarea):focus-visible {
+  outline: 2px solid rgba(250, 250, 250, 0.55);
+  outline-offset: 2px;
+}
+
+/* Placeholder-bearing surfaces that are not inputs. */
+:root[data-theme="dark"] .post-media,
+:root[data-theme="dark"] .post-stage,
+:root[data-theme="dark"] .profile-avatar {
+  background-color: var(--bg-secondary);
+}

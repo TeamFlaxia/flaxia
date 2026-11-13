@@ -25,7 +25,7 @@ registerHooks({
 });
 const { default: games } = await import('../functions/api/routes/games.ts');
 const { default: posts } = await import('../functions/api/routes/posts.ts');
-const { loadOrComputeInterestVector } = await import('../functions/api/routes/recommender.ts');
+const { default: recommendations } = await import('../functions/api/routes/recommendations.ts');
 
 // Execute route SQL in SQLite, with D1's 100-bound-parameter limit enforced.
 // No live server or external services are needed for these regressions.
@@ -64,7 +64,6 @@ function fixture(authenticated = true) {
       id TEXT PRIMARY KEY, user_id TEXT, post_id TEXT, dwell_ms INTEGER,
       is_fullscreen INTEGER, game_type TEXT, source TEXT, created_at TEXT
     );
-    CREATE TABLE user_profiles (user_id TEXT PRIMARY KEY, interest_vec TEXT, source_count INTEGER, updated_at TEXT);
     CREATE TABLE post_embeddings (post_id TEXT PRIMARY KEY, embedding TEXT, created_at TEXT);
     CREATE TABLE follows (follower_id TEXT, followee_id TEXT);
     CREATE TABLE blocks (blocker_id TEXT, blocked_id TEXT);
@@ -109,6 +108,7 @@ function fixture(authenticated = true) {
   });
   app.route('/', posts);
   app.route('/', games);
+  app.route('/', recommendations);
   const deletedKeys: string[] = [];
   const env = {
     DB: db,
@@ -241,8 +241,40 @@ describe('recommended feed D1 bind-limit regressions', () => {
     }
   });
 
-  it('computes an interest profile from more than 100 distinct history posts', async () => {
-    const { sqlite, db } = fixture();
+  it('returns public candidate vectors and base scores for client-side ranking', async () => {
+    const { sqlite, request } = fixture();
+    try {
+      const insert = sqlite.prepare(
+        'INSERT INTO posts (id, user_id, text, engagement_hotness, created_at) VALUES (?, ?, ?, ?, ?)',
+      );
+      const insertEmbedding = sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)');
+      const vector = JSON.stringify(Array.from({ length: 1024 }, (_, index) => (index === 0 ? 1 : 0)));
+      const now = new Date().toISOString();
+      for (let i = 0; i < 3; i++) {
+        insert.run(`candidate-${i}`, `author-${i}`, `Candidate ${i}`, 10 - i, now);
+        insertEmbedding.run(`candidate-${i}`, vector);
+      }
+
+      const response = await request('/posts/recommended?client_rank=1&include_vectors=1&limit=5', undefined, 'GET');
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = (await response.json()) as {
+        posts: Array<{ id: string }>;
+        vectors?: Record<string, { scale?: number; data?: string }>;
+        vector_meta?: { dim?: number; encoding?: string };
+        base_scores?: Record<string, number>;
+      };
+      assert.equal(body.posts.length, 3);
+      assert.equal(body.vector_meta?.dim, 1024);
+      assert.equal(body.vector_meta?.encoding, 'int8');
+      assert.equal(Object.keys(body.vectors || {}).length, 3);
+      assert.ok(body.posts.every((post) => typeof body.base_scores?.[post.id] === 'number'));
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('returns more than 100 profile sources without a plaintext preference vector', async () => {
+    const { sqlite, request } = fixture();
     try {
       const insertPost = sqlite.prepare('INSERT INTO posts (id, user_id, parent_id) VALUES (?, ?, ?)');
       const insertEmbedding = sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)');
@@ -256,9 +288,20 @@ describe('recommended feed D1 bind-limit regressions', () => {
         else if (i < 100) insertPost.run(`reply-${i}`, 'owner', id);
         else sqlite.prepare('INSERT INTO shares (user_id, post_id) VALUES (?, ?)').run('owner', id);
       }
-      const profile = await loadOrComputeInterestVector(db, 'owner');
-      assert.equal(profile?.sourceCount, 120);
-      assert.equal(profile?.vector[0], 1);
+
+      const response = await request('/recommendations/profile-sources', undefined, 'GET');
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = (await response.json()) as {
+        sources?: Array<{ post_id: string; vector?: { scale?: number; data?: string } }>;
+        vector?: unknown;
+      };
+      assert.equal(body.sources?.length, 120);
+      assert.equal(body.vector, undefined);
+      assert.ok(
+        body.sources?.every(
+          (source) => typeof source.vector?.scale === 'number' && typeof source.vector?.data === 'string',
+        ),
+      );
     } finally {
       sqlite.close();
     }

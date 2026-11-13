@@ -53,6 +53,54 @@ describe('security guards', () => {
     assert.deepEqual(offenders, [], `allow-same-origin is banned: ${offenders.join(', ')}`);
   });
 
+  it('renders mail HTML in a sandbox with no scripts and no same-origin', () => {
+    const renderer = readFileSync(join(ROOT, 'src/lib/mail/render.ts'), 'utf8');
+    assert.ok(renderer.includes("setAttribute('sandbox', '')"), 'mail iframe must use an opaque sandbox');
+    assert.ok(
+      !/setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-scripts/.test(renderer),
+      'mail renderer must not allow scripts',
+    );
+    assert.ok(
+      !/setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-same-origin/.test(renderer),
+      'mail renderer must not allow same-origin',
+    );
+    assert.ok(renderer.includes('DOMPurify'), 'mail renderer must sanitize with DOMPurify');
+
+    const workerToml = readFileSync(join(ROOT, 'mail-worker/wrangler.toml'), 'utf8');
+    // The Wrangler default enables workers.dev, so an absent/commented line is
+    // not enough: the config must explicitly disable it.
+    assert.match(workerToml, /^\s*workers_dev\s*=\s*false\s*$/m, 'mail worker must explicitly set workers_dev = false');
+    assert.ok(!/^\s*workers_dev\s*=\s*true\s*$/m.test(workerToml), 'mail worker must not expose workers.dev');
+    // Apex cutover (D6) has executed: inbound mail is our canonical receive
+    // path and must be explicitly enabled, not silently defaulted by deploy.
+    assert.match(
+      workerToml,
+      /^\s*MAIL_INBOUND_ENABLED\s*=\s*"1"\s*$/m,
+      'cutover complete: inbound mail must be enabled',
+    );
+
+    const pagesToml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
+    assert.ok(pagesToml.includes('MAIL_SERVICE'), 'Pages must bind MAIL_SERVICE');
+    assert.ok(pagesToml.includes('MAIL_DOMAIN = "flaxia.app"'), 'mail domain must be apex flaxia.app');
+  });
+
+  it('keeps the Auth vault proxy scoped to vault routes', () => {
+    const vault = readFileSync(join(ROOT, 'functions/api/routes/vault.ts'), 'utf8');
+    // A bare '*' sub-app middleware also matches sibling routes mounted later
+    // (for example /api/mail/*), so the Auth proxy must stay under /vault/*.
+    assert.match(vault, /vault\.use\('\/vault\/\*'/, 'vault proxy must be scoped to /vault/*');
+    assert.ok(!/vault\.use\('\*'/.test(vault), 'vault proxy must not use a bare wildcard');
+  });
+
+  it('never decrypts vault key material server-side (mail included)', () => {
+    const offenders = walk(join(ROOT, 'mail-worker'))
+      .filter((file) =>
+        /deriveVaultKe|unlockVaultWith|unwrapSecret|decryptVaultItem|wrapVaultKey/.test(readFileSync(file, 'utf8')),
+      )
+      .map((file) => relative(ROOT, file));
+    assert.deepEqual(offenders, [], `vault cryptography must stay client-side: ${offenders.join(', ')}`);
+  });
+
   it('serves the sandbox from a dedicated origin', () => {
     const toml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
     const get = (key: string) => toml.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm'))?.[1];
@@ -205,21 +253,29 @@ describe('security guards', () => {
     // no session, no CSRF. An unsigned callback could post an `infected`
     // verdict for any public media key and blocklist it permanently.
     const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
-    assert.ok(crowd.includes('verifyCallbackSignature'), 'the webhook must verify the callback signature');
+    assert.ok(crowd.includes('verifyCrowdWebhook'), 'header-signed callbacks must use the shared SDK verifier');
+    assert.ok(
+      !crowd.includes('verifyCallbackSignature'),
+      'the body-independent ?sig= callback contract must stay retired',
+    );
+    assert.ok(!crowd.includes("searchParams.get('sig')"), 'callback auth must never read ?sig');
     assert.match(
       crowd,
-      /if \(!\(await verifyCallbackSignature\(url, crowdConfig\(env\)\)\)\)/,
-      'the signature must be checked before the payload is parsed',
+      /verifyCrowdWebhook\(\{[\s\S]*?replayGuard: createCrowdWebhookReplayGuard\(db\)/,
+      'header callbacks must verify the HMAC and a replay guard before dispatch',
     );
+    const verifyHeader = crowd.indexOf('verifyCrowdWebhook({');
+    const dispatch = crowd.indexOf("if (event.status === 'done')");
+    assert.ok(verifyHeader > 0 && dispatch > verifyHeader, 'the signature must run before any verdict is applied');
 
-    // Every URL handed to the orchestrator must go through the signer.
+    // Callback URLs must not carry a body-independent query signature.
     for (const file of ['functions/lib/crowd.ts', 'functions/lib/scan/clamav.ts']) {
       const src = readFileSync(join(ROOT, file), 'utf8');
       assert.ok(
-        !/callbackUrl:\s*buildCallbackUrl\(/.test(src),
-        `${file} hands the orchestrator an unsigned callback URL`,
+        !src.includes('signedCallbackUrl'),
+        `${file} must not sign callback URLs with the retired ?sig= contract`,
       );
-      assert.ok(src.includes('signedCallbackUrl'), `${file} must sign its callback URLs`);
+      assert.ok(src.includes('buildCallbackUrl'), `${file} must build callback URLs through the SDK`);
     }
   });
 });
@@ -384,10 +440,12 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   it('fails crowd callbacks closed outside local dev', () => {
     const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
     assert.ok(crowd.includes('allowUnsignedCallbacks'), 'unsigned callbacks must be gated');
-    assert.ok(
-      !/if \(!config\.webhookSecret\) return true;/.test(crowd),
-      'an unconfigured production webhook must reject unsigned callbacks',
+    assert.match(
+      crowd,
+      /else if \(config\.allowUnsignedCallbacks\)/,
+      'unsigned callbacks must be accepted only on an unconfigured local dev server',
     );
+    assert.ok(crowd.includes('Forbidden'), 'a configured deployment without a signing secret must fail closed');
   });
 
   it('validates recovery phrases with the BIP-39 checksum', () => {

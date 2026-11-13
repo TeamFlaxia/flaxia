@@ -1,30 +1,36 @@
-import { t } from './i18n.js';
-
 let offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+
+/**
+ * Expose the state for styling and native smoke tests without pinning a banner
+ * to the viewport.
+ */
+function publishOfflineState(): void {
+  if (typeof document !== 'undefined' && document.documentElement) {
+    document.documentElement.dataset.offline = offline ? 'true' : 'false';
+  }
+}
+
+publishOfflineState();
+
+/** Broadcast connectivity changes without pinning any UI to the viewport. */
 export function setOffline(offlineNow: boolean): void {
   if (offline === offlineNow) return;
   offline = offlineNow;
+  publishOfflineState();
   window.dispatchEvent(new CustomEvent('flaxiaConnectivityChange', { detail: { offline } }));
 }
-export function initOfflineStatus(): void {
-  const banner = document.createElement('div');
-  banner.className = 'offline-banner';
-  banner.setAttribute('role', 'status');
-  banner.setAttribute('aria-live', 'polite');
-  const text = document.createElement('span');
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.addEventListener('click', () => window.dispatchEvent(new Event('flaxiaReconnect')));
-  banner.appendChild(text);
-  banner.appendChild(retry);
-  const render = () => {
-    banner.hidden = !offline;
-    text.textContent = t('offline.browsing');
-    retry.textContent = t('offline.retry');
-  };
+
+/**
+ * Whether the client currently has authoritative evidence that it is offline.
+ * The native offline layer corrects a stale `navigator.onLine` value, so callers
+ * should prefer this over reading `navigator.onLine` directly.
+ */
+export function isOffline(): boolean {
+  return offline;
+}
+
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  window.addEventListener('DOMContentLoaded', publishOfflineState);
   window.addEventListener('offline', () => setOffline(true));
-  window.addEventListener('flaxiaConnectivityChange', render);
-  window.addEventListener('localechange', render);
-  document.body.insertBefore(banner, document.body.firstChild);
-  render();
+  window.addEventListener('online', () => setOffline(false));
 }

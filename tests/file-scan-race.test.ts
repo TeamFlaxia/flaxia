@@ -95,42 +95,44 @@ function crowdEnv(cache: unknown) {
     CACHE: cache,
     CROWD_ORCHESTRATOR_URL: 'https://crowd.example',
     CROWD_API_KEY: 'test-api-key',
-    CROWD_WEBHOOK_SECRET: CROWD_SECRET,
+    CROWD_WEBHOOK_SIGNING_SECRET: CROWD_SECRET,
     BASE_URL: 'https://flaxia.app',
   };
 }
 
-function cleanCallback(key: string, sha: string): Request {
-  // The webhook rejects unconfigured/unsigned callers: sign like the
-  // orchestrator would (HMAC-SHA256 over path + sorted query).
-  const params = new URLSearchParams({ key, kind: 'clamav', sha, type: 'file-scan' });
-  params.sort();
-  const sig = createHmac('sha256', CROWD_SECRET).update(`/api/crowd/webhook?${params}`).digest('hex');
-  params.set('sig', sig);
+/** Sign like Coordinator.deliverCallback: `<timestamp>.<nonce>.<raw body>`. */
+function signedRequest(params: URLSearchParams, body: Record<string, unknown>): Request {
+  const raw = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = crypto.randomUUID();
+  const mac = createHmac('sha256', CROWD_SECRET).update(`${timestamp}.${nonce}.${raw}`).digest('base64url');
   return new Request(`https://flaxia.app/api/crowd/webhook?${params}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      taskId: 'task-clean',
-      status: 'done',
-      result: { output: { exitCode: 0, stdout: '', stderr: '' } },
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Flaxia-Signature': `sha256=${mac}`,
+      'X-Flaxia-Timestamp': timestamp,
+      'X-Flaxia-Nonce': nonce,
+    },
+    body: raw,
+  });
+}
+
+function cleanCallback(key: string, sha: string): Request {
+  const params = new URLSearchParams({ key, kind: 'clamav', sha, type: 'file-scan' });
+  return signedRequest(params, {
+    taskId: 'task-clean',
+    status: 'done',
+    result: { output: { exitCode: 0, stdout: '', stderr: '' } },
   });
 }
 
 function infectedCallback(key: string, sha: string): Request {
   const params = new URLSearchParams({ key, kind: 'clamav', sha, type: 'file-scan' });
-  params.sort();
-  const sig = createHmac('sha256', CROWD_SECRET).update(`/api/crowd/webhook?${params}`).digest('hex');
-  params.set('sig', sig);
-  return new Request(`https://flaxia.app/api/crowd/webhook?${params}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      taskId: 'task-infected',
-      status: 'done',
-      result: { output: { exitCode: 1, stdout: 'input.bin: Eicar-Test-Signature FOUND', stderr: '' } },
-    }),
+  return signedRequest(params, {
+    taskId: 'task-infected',
+    status: 'done',
+    result: { output: { exitCode: 1, stdout: 'input.bin: Eicar-Test-Signature FOUND', stderr: '' } },
   });
 }
 

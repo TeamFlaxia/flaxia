@@ -1,6 +1,6 @@
 const CSP_SCRIPT_HASHES = [
   // index.html theme, locale, and initial-loader bootstraps
-  "'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA='",
+  "'sha256-CPQesfKVZdL8AM+gUY3i39cUnxYHGn9w+rE2/MvMhZc=' 'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA='",
   "'sha256-8UZ1xbdoEGBJfbCFW7UdTEkjFZkH/d+8yO/eZ/JEOM0='",
   "'sha256-lf+0nM1TqVv41CHz3DTo1q7DzxErxegCLlYtVBZlTWg='",
   // Trusted SWF/Ruffle bootstrap, AdSense iframe bootstrap, and legacy sandbox wrapper.
@@ -12,7 +12,7 @@ const CSP_SCRIPT_HASHES = [
 const CONTENT_SECURITY_POLICY =
   "default-src 'self'; object-src 'none'; base-uri 'self'; worker-src 'self' blob: https://flaxia.app; connect-src 'self' https: wss: blob:; img-src * blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com blob:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com blob:; script-src 'self' " +
   CSP_SCRIPT_HASHES +
-  " 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://www.google.com; script-src-attr 'none'; media-src 'self' https: blob:; frame-src 'self' blob: https://*.flaxia.app https://googleads.g.doubleclick.net https://www.youtube.com https://ep2.adtrafficquality.google https://www.google.com; frame-ancestors 'self'";
+  " 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://static.cloudflareinsights.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://www.google.com; script-src-attr 'none'; media-src 'self' https: blob:; frame-src 'self' blob: https://*.flaxia.app https://googleads.g.doubleclick.net https://www.youtube.com https://ep2.adtrafficquality.google https://www.google.com; frame-ancestors 'self'";
 
 export const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ['X-Frame-Options', 'DENY'],
