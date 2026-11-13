@@ -3,6 +3,20 @@ import type { D1Database } from '@cloudflare/workers-types';
 /** Awarded to every account on registration and on later logins. */
 export const NEWCOMER_TITLE_ID = 'flaxian_newcomer';
 
+/**
+ * SQL fragments that attach the equipped title (achievement) to any query that
+ * already selects from `users u`. Keep the alias `u` so the join stays valid in
+ * follows/blocks/search queries.
+ */
+export const USER_TITLE_JOIN = `LEFT JOIN titles t ON t.id = u.equipped_title_id
+  AND (t.game_post_id IS NULL OR EXISTS (
+    SELECT 1 FROM posts gt WHERE gt.id = t.game_post_id AND gt.hidden = 0 AND gt.status = 'published'
+  ))`;
+export const USER_TITLE_COLUMNS = `u.equipped_title_id,
+  t.name AS title_name, t.name_ja AS title_name_ja,
+  t.description AS title_description, t.description_ja AS title_description_ja,
+  t.icon AS title_icon`;
+
 export interface TitleRow {
   id: string;
   icon: string;
@@ -174,6 +188,53 @@ export async function deleteGameTitlesForPosts(db: D1Database, postIds: string[]
       db.prepare(`DELETE FROM titles WHERE game_post_id IN (${placeholders})`).bind(...ids),
     ]);
   }
+}
+
+/** Flattened display fields of an equipped title, or nulls when unequipped. */
+export interface EquippedTitleFields {
+  title_name: string | null;
+  title_name_ja: string | null;
+  title_description: string | null;
+  title_description_ja: string | null;
+  title_icon: string | null;
+}
+
+export const NULL_EQUIPPED_TITLE: EquippedTitleFields = {
+  title_name: null,
+  title_name_ja: null,
+  title_description: null,
+  title_description_ja: null,
+  title_icon: null,
+};
+
+/**
+ * Resolves the equipped title's display fields for API responses that only
+ * carry `equipped_title_id` (for example `/api/me`). Returns all-null fields
+ * when no title is equipped or the catalog row is missing.
+ */
+export async function equippedTitleFields(
+  db: D1Database,
+  titleId: string | null | undefined,
+): Promise<EquippedTitleFields> {
+  if (!titleId) return NULL_EQUIPPED_TITLE;
+  const row = await db
+    .prepare(
+      `SELECT t.name, t.name_ja, t.description, t.description_ja, t.icon
+       FROM titles t
+       WHERE t.id = ? AND (t.game_post_id IS NULL OR EXISTS (
+         SELECT 1 FROM posts gp WHERE gp.id = t.game_post_id AND gp.hidden = 0 AND gp.status = 'published'
+       ))`,
+    )
+    .bind(titleId)
+    .first<{ name: string; name_ja: string; description: string; description_ja: string; icon: string }>();
+  if (!row) return NULL_EQUIPPED_TITLE;
+  return {
+    title_name: row.name,
+    title_name_ja: row.name_ja,
+    title_description: row.description,
+    title_description_ja: row.description_ja,
+    title_icon: row.icon,
+  };
 }
 
 /**

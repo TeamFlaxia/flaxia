@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flaxia-v2';
+const CACHE_NAME = 'flaxia-v3';
 const OFFLINE_FALLBACK = '/offline';
 
 self.addEventListener('install', (event) => {
@@ -15,7 +15,10 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
-      return Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)));
+      // Only purge old app-shell caches. Tile caches (`flaxia-tiles-*`) and
+      // downloaded map packs must survive a shell upgrade or offline maps
+      // would be wiped on every deploy.
+      return Promise.all(keys.filter((k) => k.startsWith('flaxia-v') && k !== CACHE_NAME).map((k) => caches.delete(k)));
     }),
   );
   self.clients.claim();
@@ -35,11 +38,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets with hash in filename: cache-first
-  if (
-    url.pathname.startsWith('/assets/') &&
-    (url.pathname.match(/-[a-zA-Z0-9]{8}\./) || url.pathname.endsWith('.css'))
-  ) {
+  // Static assets with a content hash in the filename: cache-first.
+  // Un-hashed assets (including plain .css) are NOT pinned: a cache-first
+  // copy of a file whose URL never changes is served stale forever.
+  if (url.pathname.startsWith('/assets/') && url.pathname.match(/-[a-zA-Z0-9]{8}\./)) {
     event.respondWith(cacheFirst(request));
     return;
   }

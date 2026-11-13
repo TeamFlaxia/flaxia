@@ -39,7 +39,7 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
-import { deleteGameTitlesForPosts } from '../../lib/titles';
+import { deleteGameTitlesForPosts, USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
 import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
@@ -3642,6 +3642,24 @@ async function addReloadStatus(
   return rows.map((row) => ({ ...row, is_reloaded: reloaded.has(String(row.id)) }));
 }
 
+/** Map a user search row to the public shape, including badge + equipped title. */
+function mapSearchUserRow(u: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(u.id !== undefined ? { id: u.id } : {}),
+    username: u.username,
+    display_name: u.display_name || '',
+    avatar_key: u.avatar_key || '',
+    badge_type: (u.badge_type as string | null) ?? null,
+    name_color: (u.name_color as string | null) ?? null,
+    equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+    title_name: (u.title_name as string | null) ?? null,
+    title_name_ja: (u.title_name_ja as string | null) ?? null,
+    title_description: (u.title_description as string | null) ?? null,
+    title_description_ja: (u.title_description_ja as string | null) ?? null,
+    title_icon: (u.title_icon as string | null) ?? null,
+  };
+}
+
 posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
@@ -3674,10 +3692,11 @@ posts.get('/search', async (c) => {
       const cleanQuery = query.trim().replace(/^@/, '');
       const searchTerm = `%${cleanQuery}%`;
       const users = await c.env.DB.prepare(`
-        SELECT id, username, display_name, bio, avatar_key, badge_type, name_color, created_at
-        FROM users
-        WHERE username LIKE ? OR display_name LIKE ?
-        ORDER BY created_at DESC
+        SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.created_at, ${USER_TITLE_COLUMNS}
+        FROM users u
+        ${USER_TITLE_JOIN}
+        WHERE u.username LIKE ? OR u.display_name LIKE ?
+        ORDER BY u.created_at DESC
         LIMIT ?
       `)
         .bind(searchTerm, searchTerm, limit)
@@ -3720,20 +3739,15 @@ posts.get('/search', async (c) => {
       // No specific tokens, but still search users by the raw query
       if (type === 'posts') {
         const users = await c.env.DB.prepare(`
-          SELECT username, display_name, avatar_key, badge_type, name_color
-          FROM users
-          WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
-          ORDER BY created_at DESC LIMIT ?
+          SELECT u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+          FROM users u
+          ${USER_TITLE_JOIN}
+          WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+          ORDER BY u.created_at DESC LIMIT ?
         `)
           .bind(searchTerm, searchTerm, limit)
           .all();
-        usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
-          username: u.username,
-          display_name: u.display_name || '',
-          avatar_key: u.avatar_key || '',
-          badge_type: (u.badge_type as string | null) ?? null,
-          name_color: (u.name_color as string | null) ?? null,
-        }));
+        usersResult = (users.results || []).map(mapSearchUserRow);
       }
       return c.json({ type, query, results: [], users: usersResult });
     }
@@ -3758,20 +3772,15 @@ posts.get('/search', async (c) => {
     // Also fetch matching users for posts search (type=posts)
     if (type === 'posts') {
       const users = await c.env.DB.prepare(`
-        SELECT username, display_name, avatar_key, badge_type, name_color
-        FROM users
-        WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
-        ORDER BY created_at DESC LIMIT ?
+        SELECT u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+        FROM users u
+        ${USER_TITLE_JOIN}
+        WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+        ORDER BY u.created_at DESC LIMIT ?
       `)
         .bind(searchTerm, searchTerm, limit)
         .all();
-      usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
-        username: u.username,
-        display_name: u.display_name || '',
-        avatar_key: u.avatar_key || '',
-        badge_type: (u.badge_type as string | null) ?? null,
-        name_color: (u.name_color as string | null) ?? null,
-      }));
+      usersResult = (users.results || []).map(mapSearchUserRow);
     }
 
     const responseData = {
