@@ -41,6 +41,8 @@ jobs:
       - run: npm run cap:sync
         env:
           CAPACITOR_PLATFORM: android
+      - name: Verify the flaxia:// deep link is registered
+        run: grep -q 'android:scheme="flaxia"' android/app/src/main/AndroidManifest.xml
       - name: Build debug APK
         run: |
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' > /dev/null

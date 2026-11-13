@@ -41,9 +41,10 @@ grant（43文字）をセッション Cookie にした後は、`functions/lib/au
 `https://flaxia.app/api/auth/callback` へ戻すとアプリのシェルから外れてしまう。
 そのため次の経路を使う。
 
-1. アプリが PKCE verifier と `state` を端末内（`sessionStorage`）に保存し、
+1. アプリが PKCE verifier と `state` を端末内（`localStorage`）に保存し、
    `return_uri=flaxia://auth/callback` を付けて Auth のログイン画面を
-   **システムブラウザ**で開く。
+   **システムブラウザ**で開く（Capacitor は AppLauncher 経由、カスタム
+   タブでは `flaxia://` の復帰が拒否される場合があるため）。
 2. ログイン後、Auth が `flaxia://auth/callback?code=...&state=...` へ 302。
 3. OS がアプリを起動し、アプリが URL を受け取る。
 4. アプリが native fetch で `POST /api/auth/flaxia/exchange` に `code` と
