@@ -111,7 +111,9 @@ test('bundles stay within budget (initial entry + total JS)', async () => {
   }
   assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
   assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
-  assert.ok(total <= 2 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
+  // The budget counts lazy chunks too. MapLibre (engine + worker) is only
+  // fetched when /maps opens, but it is still part of the shipped client JS.
+  assert.ok(total <= 4 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
 });
 
 test('every env binding used in code exists in wrangler.toml (prod parity)', async () => {
