@@ -173,3 +173,10 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Verify the generated MapLibre worker
+        run: |
+          set -euo pipefail
+          test -s public/maplibre-worker.js
+          # Contains MapLibre's worker plus Flaxia's addProtocol registration.
+          test "$(wc -c < public/maplibre-worker.js)" -gt 100000
+          grep -q 'addProtocol' public/maplibre-worker.js
