@@ -1,3 +1,5 @@
+import type { MediaCue } from '../lib/post-cues.js';
+
 export type ReportCategory =
   | 'spam'
   | 'harassment'
@@ -186,6 +188,8 @@ export interface GifPreviewProps {
   galleryIndex?: number;
   /** Set by the data-saver tap-to-load placeholder once the user tapped. */
   dataSaverConfirmed?: boolean;
+  /** Timed comments parsed from the post body (media cues), for the player overlay. */
+  cues?: MediaCue[];
 }
 
 export interface SandboxFrameProps {
