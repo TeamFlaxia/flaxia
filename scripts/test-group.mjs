@@ -53,6 +53,8 @@ const groups = {
     'activitypub-dlq-provision',
     'activitypub-inbox-integrity',
     'ai-index',
+    'ai-tags',
+    'ai-tags-e2e',
     'duplicate-posts',
     'link-preview',
     'link-preview-integration',
