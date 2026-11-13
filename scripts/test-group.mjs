@@ -131,6 +131,7 @@ const groups = {
     'activitypub-inbox-integrity',
     'activitypub-note',
     'activitypub-signature',
+    'remote-author-decoration',
     'signature',
   ],
   'platform-ui': [
