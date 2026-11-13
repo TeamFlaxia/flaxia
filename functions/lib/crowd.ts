@@ -20,15 +20,7 @@ import {
   verifyCrowdWebhook,
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
-import {
-  buildPlamoPrompt,
-  isPlamoSupported,
-  M2M100_MODEL_ID,
-  M2M100_TASK,
-  PLAMO_MODEL_ID,
-  PLAMO_TASK,
-  translateModelFor,
-} from '../../src/lib/translate-languages.ts';
+import { buildPlamoPrompt, PLAMO_MODEL_ID, PLAMO_TASK, translateModelFor } from '../../src/lib/translate-languages.ts';
 import { postTextSha } from './ai-index.ts';
 import { hmacHex, signatureEquals } from './hmac.ts';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
@@ -1388,7 +1380,7 @@ export async function applyNsfwTags(db: D1Database, postId: string, tags: string
 
 export const TRANSLATE_MODEL_ID = PLAMO_MODEL_ID;
 export const TRANSLATE_TASK = PLAMO_TASK;
-export { M2M100_MODEL_ID, M2M100_TASK, PLAMO_MODEL_ID, PLAMO_TASK };
+export { PLAMO_MODEL_ID, PLAMO_TASK };
 
 const TRANSLATE_JOBS_SCHEMA = `task_id TEXT PRIMARY KEY, crowd_task_id TEXT, source_text TEXT NOT NULL, source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, translated_text TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
 
@@ -1440,23 +1432,14 @@ export async function submitTranslate(
       params: { taskId: jobId },
     });
     const { model, task } = translateModelFor(input.sourceLang, input.targetLang);
-    const plamo = isPlamoSupported(input.sourceLang, input.targetLang);
     // PLaMO is a decoder-only text-generation model: it takes a PFML3 prompt
-    // string as `input` and ignores src_lang/tgt_lang options. M2M100 keeps
-    // the original translation payload shape.
-    const payload = plamo
-      ? {
-          task,
-          model,
-          input: buildPlamoPrompt(input.text, input.sourceLang, input.targetLang),
-          options: { max_new_tokens: 512, do_sample: false },
-        }
-      : {
-          task,
-          model,
-          input: input.text,
-          options: { src_lang: input.sourceLang, tgt_lang: input.targetLang },
-        };
+    // string as `input` and ignores src_lang/tgt_lang options.
+    const payload = {
+      task,
+      model,
+      input: buildPlamoPrompt(input.text, input.sourceLang, input.targetLang),
+      options: { max_new_tokens: 512, do_sample: false },
+    };
     const res = await client.submit({
       workload: 'ai-inference',
       payload: payload as unknown as Parameters<typeof client.submit>[0]['payload'],
@@ -1487,7 +1470,7 @@ function extractTranslateText(event: CrowdWebhookEvent): string | null {
     if (typeof first === 'string') return first;
     if (first && typeof first === 'object') {
       const rec = first as Record<string, unknown>;
-      // M2M100: translation_text; PLaMO text-generation: generated_text
+      // PLaMO text-generation: generated_text
       const text = rec.translation_text ?? rec.generated_text;
       if (typeof text === 'string' && text) return text;
     }

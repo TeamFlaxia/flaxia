@@ -1,6 +1,6 @@
 /**
- * Supported languages for translation. Short codes are used for both models;
- * `translateModelFor` selects PLaMO (default) or M2M100 (fallback) per pair.
+ * Supported languages for translation. Only PLaMO-supported pairs are routed;
+ * unsupported pairs are rejected instead of loading a second model.
  */
 export interface TranslateLanguage {
   code: string;
@@ -8,7 +8,7 @@ export interface TranslateLanguage {
   enName: string;
 }
 
-/** M2M100 uses full English names for some codes; we keep short codes here. */
+/** Short codes used by the PLaMO prompt. */
 export const TRANSLATE_LANGUAGES: TranslateLanguage[] = [
   { code: 'en', jaName: '英語', enName: 'English' },
   { code: 'ja', jaName: '日本語', enName: 'Japanese' },
@@ -18,18 +18,14 @@ export const TRANSLATE_LANGUAGES: TranslateLanguage[] = [
   { code: 'de', jaName: 'ドイツ語', enName: 'German' },
   { code: 'es', jaName: 'スペイン語', enName: 'Spanish' },
   { code: 'it', jaName: 'イタリア語', enName: 'Italian' },
-  { code: 'pt', jaName: 'ポルトガル語', enName: 'Portuguese' },
   { code: 'ru', jaName: 'ロシア語', enName: 'Russian' },
   { code: 'ar', jaName: 'アラビア語', enName: 'Arabic' },
   { code: 'hi', jaName: 'ヒンディー語', enName: 'Hindi' },
   { code: 'nl', jaName: 'オランダ語', enName: 'Dutch' },
   { code: 'pl', jaName: 'ポーランド語', enName: 'Polish' },
-  { code: 'sv', jaName: 'スウェーデン語', enName: 'Swedish' },
-  { code: 'tr', jaName: 'トルコ語', enName: 'Turkish' },
   { code: 'vi', jaName: 'ベトナム語', enName: 'Vietnamese' },
   { code: 'th', jaName: 'タイ語', enName: 'Thai' },
   { code: 'id', jaName: 'インドネシア語', enName: 'Indonesian' },
-  { code: 'uk', jaName: 'ウクライナ語', enName: 'Ukrainian' },
 ];
 
 const CODES = new Set(TRANSLATE_LANGUAGES.map((l) => l.code));
@@ -44,13 +40,10 @@ export function languageName(code: string, isJa: boolean): string {
   return isJa ? found.jaName : found.enName;
 }
 
-/** PLaMo 3 Translate 0.8B (ONNX, Transformers.js). Default for most pairs. */
+/** PLaMo 3 Translate 0.8B (ONNX, Transformers.js). The only translate model. */
 export const PLAMO_MODEL_ID = 'TeamFlaxia/plamo-3-translate-0.8b-onnx';
 export const PLAMO_MODEL_REVISION = '1c8417ee1a72442440ad515b02f99186c81fd08a';
 export const PLAMO_TASK = 'text-generation';
-/** M2M100 fallback for pairs where PLaMO is not usable (see below). */
-export const M2M100_MODEL_ID = 'Xenova/m2m100_418M';
-export const M2M100_TASK = 'translation';
 
 /** Default model/task (kept for compatibility; prefer translateModelFor). */
 export const TRANSLATE_MODEL_ID = PLAMO_MODEL_ID;
@@ -119,8 +112,7 @@ const PLAMO_SUPPORTED = new Set([
  * and the model hallucinates (verified locally: ko→en/ja). Korean as a
  * *target* is fine since the model repo's rev 1c8417ee fixed the
  * tokenizer decoder to ByteFallback, so ja→ko now decodes correctly.
- * Portuguese, Swedish, Turkish and Ukrainian are not in PLaMO's
- * supported list, so they also fall back to M2M100.
+ * Languages outside PLaMO's list are not offered for translation.
  */
 export function isPlamoSupported(sourceLang: string, targetLang: string): boolean {
   if (sourceLang === 'ko') return false;
@@ -128,9 +120,10 @@ export function isPlamoSupported(sourceLang: string, targetLang: string): boolea
 }
 
 export function translateModelFor(sourceLang: string, targetLang: string): { model: string; task: string } {
-  return isPlamoSupported(sourceLang, targetLang)
-    ? { model: PLAMO_MODEL_ID, task: PLAMO_TASK }
-    : { model: M2M100_MODEL_ID, task: M2M100_TASK };
+  if (!isPlamoSupported(sourceLang, targetLang)) {
+    throw new Error('unsupported_language_pair');
+  }
+  return { model: PLAMO_MODEL_ID, task: PLAMO_TASK };
 }
 
 /**

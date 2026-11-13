@@ -1,31 +1,10 @@
 import { Hono } from 'hono';
-import { hasReservedPlamoTokens } from '../../../src/lib/translate-languages.ts';
+import { hasReservedPlamoTokens, isPlamoSupported, TRANSLATE_LANGUAGES } from '../../../src/lib/translate-languages.ts';
 import { ensureTranslateJobsTable, submitTranslate } from '../../lib/crowd';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import type { Bindings, Variables } from '../types';
 
-const SUPPORTED = new Set([
-  'en',
-  'ja',
-  'ko',
-  'zh',
-  'fr',
-  'de',
-  'es',
-  'it',
-  'pt',
-  'ru',
-  'ar',
-  'hi',
-  'nl',
-  'pl',
-  'sv',
-  'tr',
-  'vi',
-  'th',
-  'id',
-  'uk',
-]);
+const SUPPORTED = new Set(TRANSLATE_LANGUAGES.map((language) => language.code));
 
 const LANGUAGES = [...SUPPORTED].map((code) => ({ code }));
 
@@ -69,6 +48,9 @@ translate.post('/translate', async (c) => {
   }
   if (!SUPPORTED.has(sourceLang) || !SUPPORTED.has(targetLang)) {
     return c.json({ error: 'Unsupported language' }, 400);
+  }
+  if (!isPlamoSupported(sourceLang, targetLang)) {
+    return c.json({ error: 'Unsupported language pair', code: 'unsupported_language_pair' }, 400);
   }
   if (sourceLang === targetLang) {
     return c.json({ translatedText: text, status: 'done' });

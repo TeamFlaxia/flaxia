@@ -4,7 +4,6 @@ import {
   buildPlamoPrompt,
   hasReservedPlamoTokens,
   isPlamoSupported,
-  M2M100_MODEL_ID,
   PLAMO_MODEL_ID,
   translateModelFor,
 } from '../src/lib/translate-languages.ts';
@@ -19,21 +18,13 @@ describe('translate model routing', () => {
     assert.equal(translateModelFor('ja', 'en').task, 'text-generation');
   });
 
-  it('falls back to M2M100 for Korean source, allows Korean target', () => {
+  it('rejects Korean source instead of loading a second model', () => {
     assert.equal(isPlamoSupported('ko', 'en'), false);
     assert.equal(isPlamoSupported('ko', 'ja'), false);
-    assert.equal(translateModelFor('ko', 'en').model, M2M100_MODEL_ID);
-    assert.equal(translateModelFor('ko', 'en').task, 'translation');
+    assert.throws(() => translateModelFor('ko', 'en'), /unsupported_language_pair/);
     // Decoder was fixed in rev 1c8417ee (ByteFallback), so ja->ko works.
     assert.equal(isPlamoSupported('ja', 'ko'), true);
     assert.equal(translateModelFor('ja', 'ko').model, PLAMO_MODEL_ID);
-  });
-
-  it('falls back to M2M100 for languages PLaMO does not list', () => {
-    for (const code of ['pt', 'sv', 'tr', 'uk']) {
-      assert.equal(isPlamoSupported(code, 'en'), false, code);
-      assert.equal(translateModelFor(code, 'en').model, M2M100_MODEL_ID, code);
-    }
   });
 
   it('builds a PFML3 prompt without the leading bos token', () => {
@@ -69,6 +60,16 @@ describe('POST /api/translate (public)', () => {
       body: JSON.stringify({ text: 'hello', sourceLang: 'xx', targetLang: 'ja' }),
     });
     assert.equal(res.status, 400);
+  });
+
+  it('rejects a pair that needs the retired Xenova model', async () => {
+    const res = await fetch(`${BASE_URL}/api/translate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '안녕하세요', sourceLang: 'ko', targetLang: 'en' }),
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { code?: string }).code, 'unsupported_language_pair');
   });
 
   it('returns echo when source equals target without Crowd', async () => {

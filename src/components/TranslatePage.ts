@@ -52,19 +52,11 @@ function normalizeTranslateOutput(output: unknown): string {
 /** Build the local ai-inference payload for the routed model. */
 function localPayload(text: string, sourceLang: string, targetLang: string): LocalAiInferencePayload {
   const { model, task } = translateModelFor(sourceLang, targetLang);
-  if (isPlamoSupported(sourceLang, targetLang)) {
-    return {
-      task,
-      model,
-      input: buildPlamoPrompt(text, sourceLang, targetLang),
-      options: { max_new_tokens: 512, do_sample: false, ondeviceOnly: true },
-    };
-  }
   return {
     task,
     model,
-    input: text,
-    options: { src_lang: sourceLang, tgt_lang: targetLang, ondeviceOnly: true },
+    input: buildPlamoPrompt(text, sourceLang, targetLang),
+    options: { max_new_tokens: 512, do_sample: false, ondeviceOnly: true },
   };
 }
 
@@ -301,7 +293,7 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
 
   const detectSourceLang = (text: string): string => {
     // Very small heuristic for auto: hiragana/katakana/kanji → ja, korean syllables → ko,
-    // cyrillic → ru, otherwise en. M2M100 itself accepts 'en' but auto keeps UX simple.
+    // cyrillic → ru, otherwise en.
     if (/[\u3040-\u30ff\u4e00-\u9faf]/.test(text)) return 'ja';
     if (/[\uac00-\ud7a3]/.test(text)) return 'ko';
     if (/[\u0400-\u04ff]/.test(text)) return 'ru';
@@ -327,6 +319,12 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
       return;
     }
 
+    if (!isPlamoSupported(detected, target)) {
+      status = 'error';
+      resultInput.value = t('translate.unsupported_pair');
+      updateStatus();
+      return;
+    }
     const routedModel = translateModelFor(detected, target).model;
     if (mode === 'ondevice-only') {
       const payload: LocalAiInferencePayload = localPayload(text, detected, target);
