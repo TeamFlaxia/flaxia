@@ -14,17 +14,21 @@ After an online visit, native clients can read the saved timeline, previously
 opened threads and replies, game listings, and saved image previews/avatars.
 Reads try the network first; on a network failure or an eight-second read
 deadline they fall back to IndexedDB. HTTP denials and deletions are
-authoritative, not reasons to restore old content. The offline banner makes
-staleness explicit and provides a reconnect action. Returning online refreshes
-the session and timeline without recreating the composer.
+authoritative, not reasons to restore old content. Connectivity is surfaced
+through the existing offline/online toasts rather than a persistent banner; the
+toasts also reflect a probe that corrects a false `navigator.onLine` value. That
+probe retries with bounded backoff. Returning online refreshes the session and
+timeline without recreating the composer.
 
 ## Storage and authentication
 
 - Separate database: flaxia-offline-v1; vault keys and encrypted Studio data
   are untouched.
 - Account-scoped keys include the complete feed query/cursor. Login/logout,
-  account changes, deletion, and an authoritative /api/me 401 clear snapshots.
-  Password reauthentication and SRP upgrades preserve the saved identity and reads.
+  account changes, deletion, and an authoritative /api/me 401 for the active
+  account clear snapshots. A guest's always-401 /api/me does not discard the
+  public feed. Password reauthentication and SRP upgrades preserve the saved
+  identity and reads.
 - Only the display identity (id, username, display name, avatar, badge) is
   retained from /api/me. It is UI metadata, never an authentication credential.
 - No vault payloads/keys, notifications, account settings, email, billing,
@@ -35,9 +39,15 @@ the session and timeline without recreating the composer.
 
 CapacitorHttp and the Tauri HTTP plugin retain HttpOnly sessions in native
 cookie jars. No session token is copied to application storage. Tauri HTTP is
-scoped to https://flaxia.app/api/*, disables redirects, and exposes no remote
-WebView capability. The API trusts only the exact native origins through the
-existing CSRF allowlist; the sandbox remains excluded. SameSite=Strict remains.
+scoped to the first-party origin (https://flaxia.app/api/*) plus an explicit
+service allowlist (`src/lib/native-api.ts` and
+`src-tauri/capabilities/default.json` must agree; currently
+https://auth.flaxia.app/api/*), disables redirects, and exposes no remote
+WebView capability. Flaxia service APIs use the same native jar so desktop
+sign-in does not depend on browser CORS. The allowlist deliberately excludes
+the sandbox and arbitrary `*.flaxia.app` subdomains. The API trusts only the
+exact native origins through the existing CSRF allowlist; the sandbox remains
+excluded. SameSite=Strict remains.
 
 Tauri's browser WebSocket cannot share the native HTTP cookie jar. Native
 clients poll notification badges every 60 seconds while connected; Tauri also
@@ -47,11 +57,24 @@ HTTP before opening a browser WebSocket. Tickets expire after 60 seconds; the
 server checks the session and room membership again on every socket upgrade.
 Session cookies are never returned to JavaScript.
 
-A successful image or notification request does not dismiss the offline banner
-while another read still uses saved content; refreshing that read clears its
-stale state. A fresh first page also clears saved pagination warnings for the
-same feed and filters. Uncached failures do not retain a stale-content warning
-after connectivity recovers.
+Any response that reaches the network restores normal online reads even if
+saved content is still being shown. Individual saved responses remain marked
+with `X-Flaxia-Offline` so stale data is still discoverable. While the client
+believes it is offline it probes connectivity in the background (1s to 30s
+backoff, 15s probe deadline) up to 20 consecutive failures; after that cap the
+loop stops until the browser fires `online` or the user taps reload, so a
+long outage cannot runaway-probe forever. One successful probe restores
+online behavior, and a failed probe invalidates the previous proof of
+reachability — but a single failed read never does: the next read retries the
+network and only falls back to saved content when the attempt itself fails.
+The probe itself uses the same 15s deadline as reads, so it cannot report
+offline while reads would still succeed. The timeline reload button requests
+an immediate probe and lets the next read try the network, and only one probe
+runs at a time. A successful probe also refreshes the session and timeline.
+`/api/auth/*` requests always attempt the network so a false offline hint can
+never disable sign-in. Other native paths that used to read `navigator.onLine`
+directly (images, game launch/sync, and notification polling) use the same
+reachability state.
 
 ## Bookmarked game downloads
 
@@ -97,6 +120,17 @@ and multiplayer require a connection. Mutations are never queued or replayed.
 Unbookmarked game payloads, external game services, standalone audio/video and
 documents are not downloaded for offline playback.
 The browser/PWA service-worker policy is unchanged.
+
+## Diagnostics
+
+The offline layer records connectivity transitions (read gating, cache
+fallbacks, probe failures/recovery) in a bounded in-memory ring
+(`src/lib/diagnostics.ts`, max 200 events). Nothing leaves the device; the
+buffer is exposed for inspection as `window.__flaxiaDiagnostics` (WebView
+CDP or `getDiagnostics()` in the page console). When a field report says
+"online but offline", compare the event timestamps against the reported
+`document.documentElement.dataset.offline` state and the probe outcomes to
+tell a stale `navigator.onLine` apart from a genuine outage.
 
 ## Verification
 

@@ -4,13 +4,43 @@ import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { injectAds } from '../lib/inject-ads.js';
 import { createLoadingSpinner, createSkeletonCards } from '../lib/loading-ui.js';
+import { isModalOpen } from '../lib/modal-state.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { rankCandidates } from '../lib/recommendation/rank.js';
+import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
+import {
+  DATA_SAVER_AD_SPACING_MULTIPLIER,
+  getForYouBatchSize,
+  getTimelinePageSize,
+  isDataSaverEnabled,
+} from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
+import { getRecommendationProfile, type RecommendationProfile } from '../lib/vault/recommendation-profile.js';
 import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';
+
+interface ClientRankedPostsResponse {
+  posts?: Post[];
+  next_cursor?: string;
+  vectors?: Record<string, EncodedVector>;
+  vector_meta?: { dim?: number };
+  base_scores?: Record<string, number>;
+}
+
+/**
+ * Headers for timeline API fetches. In data-saver mode we forward the
+ * browser's `Save-Data: on` hint so the edge/server can serve reduced
+ * payloads where supported.
+ */
+function saveDataFetchInit(): RequestInit {
+  return {
+    credentials: 'include',
+    ...(isDataSaverEnabled() ? { headers: { 'Save-Data': 'on' } } : {}),
+  };
+}
 
 export class Timeline {
   private element: HTMLElement;
@@ -19,6 +49,8 @@ export class Timeline {
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private seenPostIds: Set<string> = new Set();
   private duplicatePageStreak = 0;
+  private forYouQueue: Post[] = [];
+  private forYouProfile: RecommendationProfile | null = null;
   private loadGeneration = 0;
   private destroyed = false;
   private composer!: PostComposer;
@@ -28,6 +60,7 @@ export class Timeline {
   private headObserver: IntersectionObserver | null = null;
   private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private postUpdatedHandler?: (e: Event) => void;
+  private composeRequestHandler?: (e: Event) => void;
 
   // How far above the viewport a rendered card must sit before infinite
   // scrolling removes it from the DOM, measured in viewport heights.
@@ -41,6 +74,7 @@ export class Timeline {
 
   // Store bound event handlers for proper cleanup
   private boundHandleProfileUpdate: () => void;
+  private boundHandleModeShortcut: (event: KeyboardEvent) => void;
 
   constructor(props: TimelineProps) {
     this.props = props;
@@ -60,10 +94,14 @@ export class Timeline {
 
     // Initialize bound event handlers for proper cleanup
     this.boundHandleProfileUpdate = this.handleProfileUpdate.bind(this);
+    this.boundHandleModeShortcut = this.handleModeShortcut.bind(this);
 
     this.infiniteScroll = createInfiniteScroll({
       onLoadMore: () => this.loadMorePosts(),
-      canLoadMore: () => !this.state.loading && this.state.hasMore && !!this.state.cursor,
+      canLoadMore: () =>
+        !this.state.loading &&
+        this.state.hasMore &&
+        (!!this.state.cursor || (this.state.mode === 'foryou' && this.forYouQueue.length > 0)),
     });
 
     this.element = this.createElement();
@@ -140,6 +178,7 @@ export class Timeline {
       const followingBtn = document.createElement('button');
       followingBtn.className = 'feed-toggle-btn';
       followingBtn.textContent = t('timeline.following');
+      followingBtn.title = t('timeline.following_title');
       followingBtn.dataset.mode = 'following';
       if (this.state.mode === 'following') {
         followingBtn.classList.add('active');
@@ -150,6 +189,7 @@ export class Timeline {
     const forYouBtn = document.createElement('button');
     forYouBtn.className = 'feed-toggle-btn';
     forYouBtn.textContent = t('timeline.for_you');
+    forYouBtn.title = t('timeline.for_you_title');
     forYouBtn.dataset.mode = 'foryou';
     if (this.state.mode === 'foryou') {
       forYouBtn.classList.add('active');
@@ -159,6 +199,7 @@ export class Timeline {
     const globalBtn = document.createElement('button');
     globalBtn.className = 'feed-toggle-btn';
     globalBtn.textContent = t('timeline.global');
+    globalBtn.title = t('timeline.global_title');
     globalBtn.dataset.mode = 'global';
     if (this.state.mode === 'global') {
       globalBtn.classList.add('active');
@@ -324,9 +365,53 @@ export class Timeline {
     // Listen for post updates (e.g. fresh/like toggles from other views)
     this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
     window.addEventListener('postUpdated', this.postUpdatedHandler);
+
+    // A post created from the shell (left-nav post button) bubbles up here so
+    // the visible feed can prepend it without a full reload.
+    this.composeRequestHandler = ((e: Event) => {
+      const post = (e as CustomEvent<Post>).detail;
+      if (post && post.id) this.handleNewPost(post);
+    }) as EventListener;
+    window.addEventListener('postCreated', this.composeRequestHandler);
+
+    // Alt+1/2/3 feed switching, active only while this timeline is mounted.
+    window.addEventListener('keydown', this.boundHandleModeShortcut);
+  }
+
+  private handleModeShortcut(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (!event.altKey || event.metaKey || event.ctrlKey) return;
+    if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+    }
+
+    const codeMap: Record<string, 'following' | 'foryou' | 'global'> = {
+      Digit1: 'following',
+      Digit2: 'foryou',
+      Digit3: 'global',
+    };
+    const keyMap: Record<string, 'following' | 'foryou' | 'global'> = {
+      '1': 'following',
+      '2': 'foryou',
+      '3': 'global',
+    };
+    const mode = codeMap[event.code] ?? keyMap[event.key];
+    if (!mode) return;
+    if (mode === 'following' && !this.props.currentUser) return;
+
+    event.preventDefault();
+    this.switchMode(mode);
   }
 
   private handleNewPost(post: Post): void {
+    // For You never contains the viewer's own posts (the API excludes them).
+    // Don't bypass that rule by prepending a just-created post; it will appear
+    // in Global/Following when the user switches there.
+    if (this.state.mode === 'foryou') return;
     if (this.seenPostIds.has(post.id)) return;
     this.seenPostIds.add(post.id);
     this.state.posts = [post, ...this.state.posts];
@@ -387,6 +472,8 @@ export class Timeline {
   }
 
   private reloadPosts(): void {
+    // Let the native offline client probe connectivity again in the background.
+    window.dispatchEvent(new Event('flaxiaRetryConnectivity'));
     this.resetAndLoadPosts();
   }
 
@@ -403,6 +490,8 @@ export class Timeline {
     this.state.hasMore = true;
     this.seenPostIds.clear();
     this.duplicatePageStreak = 0;
+    this.forYouQueue = [];
+    this.forYouProfile = null;
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
     this.renderPostList();
@@ -560,6 +649,80 @@ export class Timeline {
     });
   }
 
+  private takeForYouPage(limit: number): Post[] {
+    const page: Post[] = [];
+    while (page.length < limit && this.forYouQueue.length > 0) {
+      const post = this.forYouQueue.shift();
+      if (!post || this.seenPostIds.has(post.id)) continue;
+      this.seenPostIds.add(post.id);
+      page.push(post);
+    }
+    return page;
+  }
+
+  private async fetchForYouBatch(
+    profile: RecommendationProfile,
+    cursor?: string,
+  ): Promise<{ queue: Post[]; nextCursor?: string } | null> {
+    const params = new URLSearchParams({
+      limit: String(getForYouBatchSize()),
+      client_rank: '1',
+      include_vectors: '1',
+    });
+    if (cursor) params.set('cursor', cursor);
+
+    const response = await fetch(`/api/posts/recommended?${params.toString()}`, saveDataFetchInit());
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as ClientRankedPostsResponse;
+    const posts = (Array.isArray(data.posts) ? data.posts : []).filter((post) => !this.seenPostIds.has(post.id));
+    if (posts.length === 0) return { queue: [], nextCursor: data.next_cursor || undefined };
+
+    const dim = data.vector_meta?.dim ?? 1024;
+    const vectors = new Map<string, number[]>();
+    for (const [postId, encoded] of Object.entries(data.vectors || {})) {
+      const vector = decodeVector(encoded, dim);
+      if (vector) vectors.set(postId, vector);
+    }
+
+    const queue = rankCandidates({
+      items: posts,
+      profile: profile.vector,
+      getVector: (post) => vectors.get(post.id) ?? null,
+      getBaseScore: (post) => data.base_scores?.[post.id] ?? 0,
+      getAuthor: (post) => post.user_id,
+      limit: posts.length,
+    });
+    return { queue, nextCursor: data.next_cursor || undefined };
+  }
+
+  private async appendNextForYouPage(generation: number): Promise<boolean> {
+    if (!this.forYouProfile) return false;
+
+    const pageSize = getTimelinePageSize();
+    let page = this.takeForYouPage(pageSize);
+    while (page.length === 0 && this.state.cursor) {
+      const previousCursor = this.state.cursor;
+      const batch = await this.fetchForYouBatch(this.forYouProfile, previousCursor);
+      if (this.destroyed || generation !== this.loadGeneration) return true;
+      if (!batch) return false;
+      this.forYouQueue = batch.queue;
+      this.state.cursor = batch.nextCursor;
+      page = this.takeForYouPage(pageSize);
+      if (batch.queue.length === 0 && (!batch.nextCursor || batch.nextCursor === previousCursor)) {
+        this.state.cursor = undefined;
+        break;
+      }
+    }
+
+    const postsWithAds = injectAds(page, this.state.ads, this.state.everyN);
+    this.state.posts = [...this.state.posts, ...postsWithAds];
+    this.state.hasMore = this.forYouQueue.length > 0 || Boolean(this.state.cursor);
+    this.appendPosts(postsWithAds);
+    this.duplicatePageStreak = 0;
+    return true;
+  }
+
   private async loadInitialPosts(): Promise<void> {
     if (this.destroyed || this.state.loading) return;
 
@@ -568,10 +731,30 @@ export class Timeline {
     this.updateLoadMoreButton();
 
     try {
+      if (this.state.mode === 'foryou' && this.props.currentUser) {
+        const profile = await getRecommendationProfile();
+        if (this.destroyed || generation !== this.loadGeneration) return;
+        if (profile) {
+          const batch = await this.fetchForYouBatch(profile);
+          if (this.destroyed || generation !== this.loadGeneration) return;
+          if (batch && (batch.queue.length > 0 || batch.nextCursor)) {
+            this.forYouProfile = profile;
+            this.forYouQueue = batch.queue;
+            const firstPage = this.takeForYouPage(getTimelinePageSize());
+            const postsWithAds = injectAds(firstPage, this.state.ads, this.state.everyN);
+            this.state.posts = postsWithAds;
+            this.state.cursor = batch.nextCursor;
+            this.state.hasMore = this.forYouQueue.length > 0 || Boolean(batch.nextCursor);
+            this.element.querySelector('.offline-empty')?.remove();
+            this.renderPostList();
+            this.element.dispatchEvent(new CustomEvent('timelineReady'));
+            return;
+          }
+        }
+      }
+
       const url = this.buildApiUrl();
-      const response = await fetch(url, {
-        credentials: 'include',
-      });
+      const response = await fetch(url, saveDataFetchInit());
 
       if (!response.ok) {
         throw new Error('Failed to fetch posts');
@@ -597,7 +780,8 @@ export class Timeline {
 
       this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore =
+        this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === getTimelinePageSize();
       this.element.querySelector('.offline-empty')?.remove();
       this.renderPostList();
 
@@ -637,10 +821,15 @@ export class Timeline {
       const configData = (await configRes.json()) as { every_n: number };
       this.state.everyN = configData.every_n;
     }
+    // Data-saver: deprioritize ads by spacing them further apart.
+    if (isDataSaverEnabled()) {
+      this.state.everyN = Math.max(1, this.state.everyN) * DATA_SAVER_AD_SPACING_MULTIPLIER;
+    }
   }
 
   private async loadMorePosts(): Promise<void> {
-    if (this.destroyed || this.state.loading || !this.state.hasMore || !this.state.cursor) return;
+    const hasQueuedForYou = this.state.mode === 'foryou' && this.forYouQueue.length > 0;
+    if (this.destroyed || this.state.loading || !this.state.hasMore || (!this.state.cursor && !hasQueuedForYou)) return;
 
     const generation = this.loadGeneration;
     this.state.loading = true;
@@ -648,10 +837,13 @@ export class Timeline {
     let continueLoading = false;
 
     try {
+      if (this.state.mode === 'foryou' && this.forYouProfile) {
+        const loaded = await this.appendNextForYouPage(generation);
+        if (loaded) return;
+      }
+
       const url = this.buildApiUrl(this.state.cursor);
-      const response = await fetch(url, {
-        credentials: 'include',
-      });
+      const response = await fetch(url, saveDataFetchInit());
 
       if (!response.ok) {
         throw new Error('Failed to fetch more posts');
@@ -677,7 +869,8 @@ export class Timeline {
 
       this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore =
+        this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === getTimelinePageSize();
       this.appendPosts(postsWithAds);
 
       if (newPosts.length === 0 && this.state.mode === 'foryou' && this.state.hasMore && data.next_cursor) {
@@ -724,7 +917,7 @@ export class Timeline {
 
   private buildApiUrl(cursor?: string): string {
     const params = new URLSearchParams();
-    params.set('limit', '20');
+    params.set('limit', String(getTimelinePageSize()));
 
     if (cursor) {
       params.set('cursor', cursor);
@@ -885,9 +1078,13 @@ export class Timeline {
     }
 
     // Clean up window event listeners
+    window.removeEventListener('keydown', this.boundHandleModeShortcut);
     window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate);
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
+    }
+    if (this.composeRequestHandler) {
+      window.removeEventListener('postCreated', this.composeRequestHandler);
     }
 
     if (this.composer) {

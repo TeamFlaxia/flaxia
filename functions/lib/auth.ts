@@ -360,11 +360,14 @@ export async function registerUser(
 // Returns null if the user has no SRP verifier (client should fall back to legacy).
 export async function startSrpLogin(
   env: Env,
-  email: string,
+  identifier: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
-  const normalizedEmail = email.trim().toLowerCase();
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
-    .bind(normalizedEmail)
+  const trimmed = identifier.trim();
+  const normalized = trimmed.toLowerCase();
+  const user = (await env.DB.prepare(
+    'SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ? OR username = ? COLLATE NOCASE',
+  )
+    .bind(normalized, trimmed)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
@@ -544,14 +547,15 @@ export async function verifySrpPassword(
 }
 
 // Login user
-export async function loginUser(env: Env, email: string, password: string): Promise<LoginResult> {
-  const normalizedEmail = email.trim().toLowerCase();
+export async function loginUser(env: Env, identifier: string, password: string): Promise<LoginResult> {
+  const trimmed = identifier.trim();
+  const normalized = trimmed.toLowerCase();
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
     SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at
-    FROM users WHERE lower(email) = ?
+    FROM users WHERE lower(email) = ? OR username = ? COLLATE NOCASE
   `)
-    .bind(normalizedEmail)
+    .bind(normalized, trimmed)
     .first()) as {
     id: string;
     email: string;

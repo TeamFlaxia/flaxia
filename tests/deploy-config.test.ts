@@ -87,7 +87,7 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
   assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
   const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
   assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
-  for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
+  for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com', 'https://static.cloudflareinsights.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
 });
@@ -111,7 +111,9 @@ test('bundles stay within budget (initial entry + total JS)', async () => {
   }
   assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
   assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
-  assert.ok(total <= 2 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
+  // The budget counts lazy chunks too. MapLibre (engine + worker) is only
+  // fetched when /maps opens, but it is still part of the shipped client JS.
+  assert.ok(total <= 4 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
 });
 
 test('every env binding used in code exists in wrangler.toml (prod parity)', async () => {
@@ -133,6 +135,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
     ['VECTORIZE_WEB', 'web embeddings stay disabled until a dedicated index is created'],
     ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
+    ['AUTH_UI_ORIGIN', 'login UI origin defaults to https://auth.flaxia.app'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

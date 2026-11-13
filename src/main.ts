@@ -1,6 +1,18 @@
 import './styles/main.css';
+import './styles/redesign/foundation.css';
+import './styles/redesign/shell.css';
+import './styles/redesign/timeline.css';
+import './styles/redesign/composer.css';
+import './styles/redesign/overlays.css';
+import './styles/redesign/pages.css';
+import './styles/redesign/maps.css';
+import './styles/redesign/mail.css';
+import './styles/redesign/command.css';
+import './styles/redesign/rail.css';
+import './styles/redesign/motion.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
+import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
 import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -12,15 +24,17 @@ import { clearMeCache, getMe } from './lib/auth-cache.js';
 import { retryPendingCredentialChange } from './lib/auth-credential-operation.js';
 import { retryPendingDeletion } from './lib/auth-deletion.js';
 import { resolveAuthRedirect } from './lib/auth-guard.js';
+import { beginNativeAuthRedirect, initNativeAuthCallback } from './lib/auth-redirect.js';
 import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
-import { initI18n, t } from './lib/i18n.js';
+import { getLocale, initI18n, t } from './lib/i18n.js';
 import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { isModalOpen } from './lib/modal-state.js';
 import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
 import { createNativeFetch } from './lib/native-fetch.js';
 import {
@@ -33,15 +47,16 @@ import {
 import { initOfflineGames } from './lib/native-offline-games.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
-import { initOfflineStatus, setOffline } from './lib/offline-status.js';
+import { isOffline, setOffline } from './lib/offline-status.js';
 import { createOfflineStore } from './lib/offline-store.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
-import { initTheme } from './lib/theme.js';
+import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
+import { autoUnlockVault, lockVaultSession } from './lib/vault/auto-unlock.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
 import { initializeWebPush } from './lib/web-push.js';
 
@@ -56,6 +71,27 @@ initPerformanceMonitoring();
 // Capture Capacitor's patched fetch; local assets stay in the bundle.
 const nativeClient = isNativeApp();
 const nativeFetch = createNativeFetch(window.fetch.bind(window));
+// A real network request that bypasses the offline cache, so a stale
+// navigator.onLine value cannot latch the app offline.
+const probeConnectivity = async (): Promise<boolean> => {
+  try {
+    const response = await nativeFetch('/api/me', {
+      cache: 'no-store',
+      credentials: 'include',
+      // Match the offline layer's 15s probe deadline: a probe stricter than
+      // a real read would report "offline" while reads still succeed.
+      signal: AbortSignal.timeout(15000),
+    });
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The response already proved connectivity.
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
 window.fetch = nativeClient
   ? createOfflineFetch(nativeFetch, {
       store: createOfflineStore(),
@@ -63,6 +99,7 @@ window.fetch = nativeClient
       apiOrigin: API_ORIGIN,
       isOnline: () => navigator.onLine !== false,
       setOffline,
+      probe: probeConnectivity,
     })
   : nativeFetch;
 if (nativeClient) window.fetch = initOfflineGames(nativeFetch).wrap(window.fetch);
@@ -78,6 +115,7 @@ initI18n();
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
+  initNativeAuthCallback();
   if (await retryPendingDeletion()) clearMeCache();
   if ((await retryPendingCredentialChange()) === 'committed') clearMeCache();
   const app = document.getElementById('app');
@@ -85,7 +123,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     history.scrollRestoration = 'manual';
 
     await initI18n();
-    if (nativeClient) initOfflineStatus();
 
     // Routing state
     let currentView:
@@ -106,9 +143,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'admin'
       | 'settings'
       | 'arcade'
+      | 'maps'
       | 'billing-success'
       | 'billing-canceled'
-      | 'download' = 'timeline';
+      | 'download'
+      | 'translate'
+      | 'mail'
+      | 'mail-thread'
+      | 'mail-compose'
+      | 'mail-settings' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -116,8 +159,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
     let savedScrollY = 0;
-    let loginPage: PageComponent | null = null;
-    let registerPage: PageComponent | null = null;
     let profilePage: PageComponent | null = null;
     let explorePage: ExplorePage | null = null;
     let legalPage: PageComponent | null = null;
@@ -125,9 +166,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     let notificationsPage: NotificationsPage | null = null;
     let settingsPage: ReturnType<typeof import('./components/SettingsPage.js').createSettingsPage> | null = null;
     let arcadePage: ArcadePageHandle | null = null;
+    let mapsPage: PageComponent | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
     let downloadPage: PageComponent | null = null;
+    let translatePage: { getElement: () => HTMLElement; destroy: () => void } | null = null;
+    let mailPage: PageComponent | null = null;
+    let mailSettingsPage: PageComponent | null = null;
+    let mailThreadPage: PageComponent | null = null;
+    let mailComposePage: PageComponent | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -153,6 +200,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       name_color?: string | null;
     } | null = null;
     let unreadNotificationCount = 0;
+    let mailUnreadCount = 0;
 
     // Native notification platforms (see src/lib/native-notify.ts)
 
@@ -168,7 +216,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       },
       {
         onOpen: () => {
-          console.log('[push] connected');
           refreshNotificationBadges();
         },
         onMessage: (raw) => {
@@ -211,27 +258,44 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         });
       } catch {
-        console.log('[push] @capacitor/app not available');
+        // Optional Capacitor lifecycle API: no app-state hook on this platform.
       }
     }
 
-    // Offline / online をトーストで統一表示する
-    window.addEventListener('offline', () => showToast(t('common.offline'), true));
-    window.addEventListener('online', () => showToast(t('common.online')));
+    // Offline / online をトーストで統一表示する。ブラウザのイベントだけでなく、
+    // 誤った navigator.onLine を補正するバックグラウンド probe の結果も反映する。
+    window.addEventListener('flaxiaConnectivityChange', (event) => {
+      const { offline } = (event as CustomEvent<{ offline: boolean }>).detail;
+      if (offline) showToast(t('common.offline'), true);
+      else showToast(t('common.online'));
+    });
 
     const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
         }
+        if (typeof leftNav.setMailUnreadCount === 'function') {
+          leftNav.setMailUnreadCount(mailUnreadCount);
+        }
       });
 
       setNativeBadge(unreadNotificationCount);
     };
 
+    const refreshMailUnreadCount = async () => {
+      if (!currentUser) {
+        mailUnreadCount = 0;
+        updateBadgeUI();
+        return;
+      }
+      const { getMailUnreadCount } = await import('./lib/mail/api.js');
+      mailUnreadCount = await getMailUnreadCount().catch(() => 0);
+      updateBadgeUI();
+    };
+
     let previousNotificationIds: Set<string> | null = null;
     const refreshNotificationBadges = async () => {
-      console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
       // Native HTTP owns Tauri's session jar; browser sockets cannot share it.
       if (isTauriNativePlatform()) {
@@ -245,7 +309,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         previousNotificationIds = new Set(data.notifications.map((notification) => notification.id));
       }
       unreadNotificationCount = data.unread_count || 0;
-      console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
     };
 
@@ -291,14 +354,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           refreshNotificationBadges();
+          void refreshMailUnreadCount();
+          // Reopen a remembered vault after reload. The device key is
+          // non-extractable and origin-bound; a device without one stays
+          // locked and gets the inline unlock form where it is needed.
+          autoUnlockVault();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
           if (!nativeClient) pushSocket.connect();
 
           return true;
         }
-      } catch (error) {
-        console.log('Not authenticated:', error);
+      } catch {
+        // Guest or expired session: fall through to the signed-out state.
       }
 
       // Clear user state when not authenticated
@@ -306,6 +374,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const previousUsername = currentUser?.username ?? null;
       currentUser = null;
       previousNotificationIds = null;
+      mailUnreadCount = 0;
+      if (wasLoggedIn) lockVaultSession();
 
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach((leftNav) => {
@@ -335,7 +405,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return false;
         }
 
-        console.log('User session expired - redirecting to login');
         window.history.replaceState({}, '', '/login');
         navigateTo('login');
         return false;
@@ -346,15 +415,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (nativeClient) {
       window.setInterval(() => {
-        if (currentUser && navigator.onLine !== false) void refreshNotificationBadges();
+        if (currentUser && !isOffline()) void refreshNotificationBadges();
       }, 60000);
+      // A probe can recover connectivity without the browser firing `online`,
+      // so both signals refresh the session and timeline. The cooldown keeps a
+      // browser online event and a probe success from refreshing twice.
+      let lastReconnectAt = 0;
       const reconnect = async () => {
+        const now = Date.now();
+        if (now - lastReconnectAt < 1000) return;
+        lastReconnectAt = now;
         clearMeCache();
         await checkAuth();
         timeline?.refresh();
       };
       window.addEventListener('online', () => void reconnect());
-      window.addEventListener('flaxiaReconnect', () => void reconnect());
+      window.addEventListener('flaxiaConnectivityChange', (event) => {
+        if (!(event as CustomEvent<{ offline: boolean }>).detail.offline) void reconnect();
+      });
     }
 
     // Fetch notifications (see src/lib/notifications-api.ts)
@@ -374,6 +452,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       return false;
     };
 
+    // Main landmark: the content column carries role="main" so assistive tech can
+    // skip the shell's nav and aside columns (the page itself stays unchanged).
+    const markMainContent = (content: HTMLElement): HTMLElement => {
+      content.setAttribute('role', 'main');
+      return content;
+    };
+
     // URL routing (see src/lib/router.ts)
 
     // Page loading overlay (see src/lib/page-loader.ts)
@@ -388,7 +473,29 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade' | 'web',
     ) => {
-      console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab);
+      // Authentication UI lives on auth.flaxia.app. A full navigation keeps the
+      // login flow out of this SPA and returns through /api/auth/callback.
+      if (view === 'login' || view === 'register') {
+        const here = `${window.location.pathname}${window.location.search}`;
+        const returnTo = here === '/login' || here === '/register' ? '/home' : here;
+        if (await beginNativeAuthRedirect(returnTo, view)) return;
+        if (nativeClient) {
+          // In the app WebView there is no usable /api/auth/start: the origin
+          // is capacitor://localhost or https://localhost, and navigating
+          // there strands the user outside the app shell. Stay and explain.
+          console.warn('[auth] native sign-in browser could not be opened');
+          showToast(t('auth.external_failed'), true);
+          return;
+        }
+        const query = new URLSearchParams({
+          return_to: returnTo,
+          lang: getLocale(),
+          theme: getResolvedTheme(),
+        });
+        if (view === 'register') query.set('mode', 'register');
+        window.location.assign(`/api/auth/start?${query.toString()}`);
+        return;
+      }
 
       // Close mobile nav if open
       closeLeftNav();
@@ -400,48 +507,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (navId) syncedNav.setActiveItem(navId);
       }
 
-      // For auth routes, proceed directly
-      if (view === 'login' || view === 'register') {
-        // Cleanup current view
-        if (timeline) {
-          console.log('Cleaning up timeline');
-          timeline.destroy();
-          timeline = null;
-        }
-        if (threadPage) {
-          console.log('Cleaning up thread page');
-          threadPage.destroy();
-          threadPage = null;
-        }
-        if (loginPage) {
-          loginPage.destroy();
-          loginPage = null;
-        }
-        if (registerPage) {
-          registerPage.destroy();
-          registerPage = null;
-        }
-        if (profilePage) {
-          profilePage.destroy();
-          profilePage = null;
-        }
-        if (notificationsPage) {
-          notificationsPage.destroy();
-          notificationsPage = null;
-        }
-        if (settingsPage) {
-          settingsPage.destroy();
-          settingsPage = null;
-        }
-        if (bookmarksPage) {
-          bookmarksPage.destroy();
-          bookmarksPage = null;
-        }
-        if (downloadPage) {
-          downloadPage.destroy();
-          downloadPage = null;
-        }
-      } else {
+      {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
         if (!isAuthenticated) {
@@ -450,7 +516,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
         if ((view === 'thread' || view === 'arcade') && currentView !== view) {
-          console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
             timeline = null;
@@ -481,22 +546,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cleanup current view (cached components already nulled above)
         if (timeline) {
-          console.log('Cleaning up timeline');
           timeline.destroy();
           timeline = null;
         }
         if (threadPage) {
-          console.log('Cleaning up thread page');
           threadPage.destroy();
           threadPage = null;
-        }
-        if (loginPage) {
-          loginPage.destroy();
-          loginPage = null;
-        }
-        if (registerPage) {
-          registerPage.destroy();
-          registerPage = null;
         }
         if (profilePage) {
           profilePage.destroy();
@@ -518,6 +573,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           arcadePage.destroy();
           arcadePage = null;
         }
+        if (mapsPage) {
+          mapsPage.destroy();
+          mapsPage = null;
+        }
         if (searchPage) {
           searchPage.destroy();
           searchPage = null;
@@ -526,51 +585,32 @@ document.addEventListener('DOMContentLoaded', async () => {
           downloadPage.destroy();
           downloadPage = null;
         }
+        if (translatePage) {
+          translatePage.destroy();
+          translatePage = null;
+        }
+        if (mailPage) {
+          mailPage.destroy();
+          mailPage = null;
+        }
+        if (mailSettingsPage) {
+          mailSettingsPage.destroy();
+          mailSettingsPage = null;
+        }
+        if (mailThreadPage) {
+          mailThreadPage.destroy();
+          mailThreadPage = null;
+        }
+        if (mailComposePage) {
+          mailComposePage.destroy();
+          mailComposePage = null;
+        }
       }
       showPageLoader();
       app.innerHTML = '';
 
       // Wrap rendering in try-catch so errors don't leave the loader stuck
       try {
-        // Handle auth pages (full screen, no nav)
-        if (view === 'login') {
-          removeLeftNavOverlay();
-          currentView = 'login';
-          currentPostId = null;
-          _currentUsername = null;
-
-          const { createLoginPage } = await import('./components/LoginPage.js');
-          loginPage = createLoginPage({
-            onSuccess: () => {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            },
-          });
-
-          app.appendChild(loginPage.getElement());
-          hidePageLoader();
-          return;
-        }
-
-        if (view === 'register') {
-          removeLeftNavOverlay();
-          currentView = 'register';
-          currentPostId = null;
-          _currentUsername = null;
-
-          const { createRegisterPage } = await import('./components/RegisterPage.js');
-          registerPage = createRegisterPage({
-            onSuccess: () => {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            },
-          });
-
-          app.appendChild(registerPage.getElement());
-          hidePageLoader();
-          return;
-        }
-
         // Handle legal pages (public, no auth required, no layout)
         if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
           removeLeftNavOverlay();
@@ -622,6 +662,64 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        // Handle mail pages (requires auth, within the standard 3-column layout)
+        if (view === 'mail' || view === 'mail-settings' || view === 'mail-thread' || view === 'mail-compose') {
+          currentView = view;
+          currentPostId = postId || null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'mail',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+          leftNavInstances.add(leftNav);
+
+          const rightPanel = await lazyCreateRightPanel();
+          mainContainer.appendChild(leftNav.getElement());
+
+          if (view === 'mail-settings') {
+            const { createMailSettingsPage } = await import('./components/MailSettingsPage.js');
+            mailSettingsPage = createMailSettingsPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+            });
+            mainContainer.appendChild(mailSettingsPage.getElement());
+          } else if (view === 'mail-thread') {
+            const { createMailThreadPage } = await import('./components/MailThreadPage.js');
+            mailThreadPage = createMailThreadPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+              threadId: postId || '',
+            });
+            mainContainer.appendChild(mailThreadPage.getElement());
+          } else if (view === 'mail-compose') {
+            const { createMailComposePage } = await import('./components/MailComposePage.js');
+            const { takePendingDraftId } = await import('./lib/mail/navigation.js');
+            mailComposePage = createMailComposePage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+              draftId: takePendingDraftId() || undefined,
+            });
+            mainContainer.appendChild(mailComposePage.getElement());
+          } else {
+            const { createMailPage } = await import('./components/MailPage.js');
+            mailPage = createMailPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+            });
+            mainContainer.appendChild(mailPage.getElement());
+          }
+
+          mainContainer.appendChild(rightPanel.getElement());
+          app.appendChild(mainContainer);
+          hidePageLoader();
+          setupMobileLeftNav(leftNav.getElement());
+          return;
+        }
+
         // Handle app download page (public, within the standard 3-column layout)
         if (view === 'download') {
           currentView = 'download';
@@ -635,6 +733,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'download',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -655,6 +754,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(downloadPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle translate page (public, within the standard 3-column layout)
+        if (view === 'translate') {
+          currentView = 'translate';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'translate',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createTranslatePage } = await import('./components/TranslatePage.js');
+          translatePage = createTranslatePage();
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(translatePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -800,6 +936,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -809,7 +946,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'explore') {
-            console.log('Restoring cached explore page');
             explorePage = cachedContentComponent.component as ExplorePage;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -829,20 +965,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(explorePage.getElement());
+          mainContainer.appendChild(markMainContent(explorePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -867,6 +994,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -876,7 +1004,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'search') {
-            console.log('Restoring cached search page');
             searchPage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -894,17 +1021,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
           }
 
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(searchPage.getElement());
+          mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -930,6 +1050,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'arcade',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -952,26 +1073,53 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(arcadePage.getElement());
+          mainContainer.appendChild(markMainContent(arcadePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
           hidePageLoader();
 
           // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        if (view === 'maps') {
+          currentView = 'maps';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'maps',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createMapsPage } = await import('./components/MapsPage.js');
+          mapsPage = createMapsPage();
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(mapsPage.getElement()));
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
           setupMobileLeftNav(leftNav.getElement());
 
           return;
@@ -992,6 +1140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'profile',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1001,7 +1150,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'profile') {
-            console.log('Restoring cached profile');
             profilePage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1021,20 +1169,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(profilePage.getElement());
+          mainContainer.appendChild(markMainContent(profilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1065,6 +1204,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'bookmarks',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1093,7 +1233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(bookmarksPage.getElement());
+          mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
           app.appendChild(mainContainer);
           hidePageLoader();
@@ -1120,6 +1260,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'notifications',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1165,18 +1306,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(notificationsPage.getElement());
+          mainContainer.appendChild(markMainContent(notificationsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1203,6 +1337,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'settings',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1235,15 +1370,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                   },
                 });
 
-                const newSettingsPage = settingsPage;
+                const newSettingsElement = markMainContent(settingsPage.getElement());
                 // Wait for the next tick to ensure the element is in the DOM
                 setTimeout(() => {
                   if (oldElement.parentNode) {
-                    oldElement.parentNode.replaceChild(newSettingsPage.getElement(), oldElement);
+                    oldElement.parentNode.replaceChild(newSettingsElement, oldElement);
                   } else {
                     const leftNavElement = mainContainer.children[0];
                     if (leftNavElement && mainContainer.children[1]) {
-                      mainContainer.insertBefore(newSettingsPage.getElement(), mainContainer.children[1]);
+                      mainContainer.insertBefore(newSettingsElement, mainContainer.children[1]);
                     }
                   }
                 }, 0);
@@ -1256,18 +1391,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           loadUserData();
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(settingsPage.getElement());
+          mainContainer.appendChild(markMainContent(settingsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1285,7 +1413,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (view === 'thread' && postId) {
           // Thread page view
-          console.log('Creating thread page for postId:', postId);
           currentView = 'thread';
           currentPostId = postId;
 
@@ -1297,7 +1424,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentUser,
             unreadCount: unreadNotificationCount,
             onBack: () => {
-              console.log('Back button clicked, returning to previous view');
               goBackInSpaOr(() => {
                 window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
@@ -1305,9 +1431,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             },
           });
 
-          console.log('Thread page created, adding to container');
+          // ThreadPage owns the content column inside its own three-column shell.
+          const threadMainContent = threadPage.getElement().querySelector('.thread-main-content');
+          if (threadMainContent instanceof HTMLElement) markMainContent(threadMainContent);
           mainContainer.appendChild(threadPage.getElement());
-          console.log('Thread page added to DOM');
 
           // ThreadPage has its own LeftNav, find it and setup mobile functionality
           const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement;
@@ -1318,14 +1445,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const threadRightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const threadRightPanel = await lazyCreateRightPanel();
           mainContainer.appendChild(threadRightPanel.getElement());
         } else {
           // Timeline view
@@ -1336,6 +1456,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'home',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1345,7 +1466,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'timeline') {
-            console.log('Restoring cached timeline');
             timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1390,20 +1510,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           setupMobileLeftNav(leftNav.getElement());
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(timeline.getElement());
+          mainContainer.appendChild(markMainContent(timeline.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
         }
 
@@ -1497,10 +1608,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Initial navigation
-    console.log('DOM Content Loaded, starting initial routing...');
-
     const initialRoute = parseCurrentRoute();
-    console.log('Initial route:', initialRoute);
     if (initialRoute) {
       await safeNavigate(
         initialRoute.view,
@@ -1521,6 +1629,153 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(fn, 3000);
       }
     };
+
+    // Command palette (⌘K / Ctrl+K) — Obsidian-style quick switcher.
+    initCommandPalette();
+    const openComposerFromShell = () => {
+      const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
+      if (nav?.openComposer) nav.openComposer();
+      else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
+    };
+    registerCommandActions(() => {
+      const navigationGroup = t('command.group_navigation');
+      const actionGroup = t('command.group_actions');
+      const actions: Array<{
+        id: string;
+        label: string;
+        group: string;
+        hint?: string;
+        keywords?: string;
+        run: () => void;
+      }> = [
+        {
+          id: 'home',
+          label: t('nav.home'),
+          group: navigationGroup,
+          keywords: 'home timeline',
+          run: () => {
+            pushSpaHistory('/home');
+            void navigateTo('timeline');
+          },
+        },
+        {
+          id: 'explore',
+          label: t('nav.explore'),
+          group: navigationGroup,
+          keywords: 'explore search',
+          run: () => {
+            pushSpaHistory('/explore');
+            void navigateTo('explore');
+          },
+        },
+        {
+          id: 'arcade',
+          label: t('nav.arcade'),
+          group: navigationGroup,
+          keywords: 'arcade games',
+          run: () => {
+            pushSpaHistory('/arcade');
+            void navigateTo('arcade');
+          },
+        },
+        {
+          id: 'maps',
+          label: t('nav.maps'),
+          group: navigationGroup,
+          keywords: 'maps weather',
+          run: () => {
+            pushSpaHistory('/maps');
+            void navigateTo('maps');
+          },
+        },
+        {
+          id: 'translate',
+          label: t('nav.translate'),
+          group: navigationGroup,
+          keywords: 'translate google translate 翻訳',
+          run: () => {
+            pushSpaHistory('/translate');
+            void navigateTo('translate');
+          },
+        },
+        {
+          id: 'notifications',
+          label: t('nav.notifications'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/notifications');
+            void navigateTo('notifications');
+          },
+        },
+        {
+          id: 'bookmarks',
+          label: t('nav.bookmarks'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/bookmarks');
+            void navigateTo('bookmarks');
+          },
+        },
+        {
+          id: 'settings',
+          label: t('nav.settings'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/settings');
+            void navigateTo('settings');
+          },
+        },
+        {
+          id: 'theme',
+          label: getResolvedTheme() === 'dark' ? t('command.theme_light') : t('command.theme_dark'),
+          group: actionGroup,
+          hint: 'T',
+          run: () => setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark'),
+        },
+        {
+          id: 'focus-composer',
+          label: t('command.new_post'),
+          group: actionGroup,
+          hint: 'N',
+          keywords: 'compose post write',
+          run: openComposerFromShell,
+        },
+      ];
+      if (currentUser) {
+        actions.push({
+          id: 'profile',
+          label: t('nav.profile'),
+          group: navigationGroup,
+          run: () => {
+            if (!currentUser) return;
+            pushSpaHistory(`/profile/${currentUser.username}`);
+            void navigateTo('profile', undefined, currentUser.username);
+          },
+        });
+      }
+      return actions;
+    });
+
+    // N / T quick actions from the shell cheat sheet. Skip while typing,
+    // while a dialog owns the keyboard, or when a modifier is held.
+    window.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === 'n') {
+        event.preventDefault();
+        openComposerFromShell();
+      } else if (key === 't') {
+        event.preventDefault();
+        setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark');
+      }
+    });
 
     // Register Service Worker for Web Push (browser) — non-blocking
     initializeWebPush(isCapacitorNative).catch(() => {});

@@ -95,7 +95,7 @@ function createDraftsPanel(composer: PostComposer): { panel: HTMLElement; refres
   saveBtn.style.cssText = `
     background: none;
     border: none;
-    color: var(--accent);
+    color: var(--accent-text);
     cursor: pointer;
     font-size: 0.75rem;
     font-family: inherit;
@@ -120,7 +120,7 @@ function createDraftsPanel(composer: PostComposer): { panel: HTMLElement; refres
   deleteAllBtn.style.cssText = `
     background: none;
     border: none;
-    color: var(--danger, #ef4444);
+    color: var(--danger-text, #b91c1c);
     cursor: pointer;
     font-size: 0.75rem;
     font-family: inherit;

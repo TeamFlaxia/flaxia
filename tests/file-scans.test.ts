@@ -7,8 +7,8 @@ import { BASE_URL, loginUser, registerUser, resetDb, seedUserAndLogin } from './
 //
 // Flow under test: upload → file_scans row (sync steps 2-4) → async ClamAV
 // verdict via the crowd webhook → serve-time blocking. The dev:test server
-// carries a dummy CROWD_WEBHOOK_SECRET, so the webhook is signed exactly like
-// the orchestrator would sign it (unsigned callbacks are rejected with 401).
+// carries a dummy CROWD_WEBHOOK_SIGNING_SECRET, so the webhook is signed
+// exactly like the orchestrator would sign it (unsigned callbacks get 401).
 
 // 8x8 RGBA PNG (strict-parser clean: chunk lengths and CRCs verified). The
 // older attachments fixture has a malformed IDAT length and would never reach
@@ -139,20 +139,28 @@ function flipLowBits(hash: string, count: number): string {
 
 async function postWebhook(params: Record<string, string>, body: unknown): Promise<number> {
   const query = new URLSearchParams({ type: 'file-scan', ...params });
-  query.sort();
-  const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
-  query.set('sig', sig);
+  const raw = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = crypto.randomUUID();
+  const mac = createHmac('sha256', CROWD_WEBHOOK_SIGNING_SECRET)
+    .update(`${timestamp}.${nonce}.${raw}`)
+    .digest('base64url');
   const res = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Flaxia-Signature': `sha256=${mac}`,
+      'X-Flaxia-Timestamp': timestamp,
+      'X-Flaxia-Nonce': nonce,
+    },
+    body: raw,
   });
   return res.status;
 }
 
 // Dummy secret bound into the dev:test server (see package.json). Never a
 // production value: it only lets the suite speak the webhook protocol.
-const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
+const CROWD_WEBHOOK_SIGNING_SECRET = 'test-webhook-signing-secret';
 
 describe('file scanning pipeline', () => {
   it('records a scan row with features for every upload', async () => {

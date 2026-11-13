@@ -1,0 +1,326 @@
+/* ============================================================
+   Flaxia v6 rail (@scope flaxia-rail)
+   The left rail and the right rail are tool and context; the feed is the
+   page. Sections sit close together, headings are real headings, and the
+   ranking card leads with its top entry instead of a caption.
+   ============================================================ */
+
+@scope (.left-nav) {
+  .nav-section + .nav-section {
+    margin-top: 2px;
+  }
+
+  .nav-section-label {
+    margin: 0;
+    padding: 14px 10px 6px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .nav-items {
+    gap: 1px;
+  }
+
+  .nav-tag {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .nav-footer {
+    margin-top: auto;
+  }
+}
+
+@scope (.right-panel) {
+  .right-card {
+    padding: 8px 12px;
+  }
+
+  .right-card + .right-card {
+    margin-top: 8px;
+  }
+
+  .search-section {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .search-box {
+    position: relative;
+    height: 36px;
+    border: none;
+    background: transparent;
+  }
+
+  .trending-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .trending-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 2px;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 6px;
+  }
+
+  /* The top tag is the headline of the card. */
+  .trending-item:first-child {
+    padding-bottom: 10px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trending-item:first-child .trending-hashtag {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .trending-item:first-child .trending-rank {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-text);
+  }
+
+  .trending-rank {
+    flex: 0 0 14px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+  }
+
+  .trending-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 6px;
+    row-gap: 1px;
+  }
+
+  .trending-hashtag {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* The count is a footnote to the tag, not a column of its own. */
+  .trending-count {
+    flex: 0 0 auto;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .trending-hashtag {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trending-count {
+    color: var(--text-muted);
+  }
+}
+
+@media (hover: hover) {
+  @scope (.right-panel) {
+    .trending-item:hover {
+      background: var(--bg-hover);
+    }
+  }
+}
+
+/* Shared share-of-posts meter (right rail + Explore). */
+.trending-bar {
+  width: 100%;
+  height: 4px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.trending-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+/* ============================================================
+   Resizable rail (desktop)
+   A fixed separator on the nav's right edge; dragging it resizes the rail
+   and snaps to the compact icon layout below the threshold. The width lives
+   in --flaxia-nav-width on <html> so every nav instance shares it.
+   ============================================================ */
+
+.nav-resize-handle {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  width: 6px;
+  height: 100vh;
+  display: none;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+@media (min-width: 1025px) {
+  .nav-resize-handle {
+    display: block;
+  }
+
+  .nav-resize-handle::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 1px;
+    background: transparent;
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+
+  .nav-resize-handle:hover::before,
+  .nav-resize-handle:focus-visible::before {
+    background: var(--border-strong);
+  }
+
+  .nav-resize-handle:focus-visible {
+    outline: none;
+  }
+
+  .left-nav.left-nav--resizing,
+  .left-nav.left-nav--resizing * {
+    transition: none;
+  }
+
+  /* --- Compact icon rail (dragged below the threshold) --- */
+  .left-nav.left-nav--icons {
+    padding: 10px 8px;
+    align-items: center;
+    overflow: visible;
+  }
+
+  .left-nav.left-nav--icons .nav-brand-name,
+  .left-nav.left-nav--icons .nav-command-text,
+  .left-nav.left-nav--icons .nav-kbd,
+  .left-nav.left-nav--icons .nav-item-label,
+  .left-nav.left-nav--icons .nav-section--tags,
+  .left-nav.left-nav--icons .nav-post-label,
+  .left-nav.left-nav--icons .nav-user-info,
+  .left-nav.left-nav--icons .nav-user-kebab,
+  .left-nav.left-nav--icons .nav-legal-links,
+  .left-nav.left-nav--icons .nav-section-label {
+    display: none;
+  }
+
+  .left-nav.left-nav--icons .nav-brand-inner {
+    justify-content: center;
+    padding: 6px;
+  }
+
+  .left-nav.left-nav--icons .nav-command {
+    justify-content: center;
+    width: 44px;
+    min-height: 40px;
+    padding: 8px;
+  }
+
+  .left-nav.left-nav--icons .nav-item {
+    justify-content: center;
+    width: 44px;
+    padding: 10px;
+    border-radius: var(--radius-full, 9999px);
+  }
+
+  .left-nav.left-nav--icons .nav-post-button {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .left-nav.left-nav--icons .nav-post-icon {
+    margin: 0;
+  }
+
+  .left-nav.left-nav--icons .nav-user-area {
+    justify-content: center;
+    width: 44px;
+    padding: 6px;
+  }
+
+  /* The account menu floats to the right of the compact rail. */
+  .left-nav.left-nav--icons .nav-user-popup {
+    left: calc(100% + 12px);
+    right: auto;
+    width: 200px;
+  }
+
+  .left-nav.left-nav--icons .nav-auth-buttons {
+    width: 44px;
+    padding: 0;
+    gap: 8px;
+  }
+
+  .left-nav.left-nav--icons .nav-auth-buttons .nav-signin-button {
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .left-nav.left-nav--icons .nav-auth-label,
+  .left-nav.left-nav--icons .nav-app-promo-text {
+    display: none;
+  }
+
+  .left-nav.left-nav--icons .nav-auth-icon svg,
+  .left-nav.left-nav--icons .nav-app-promo svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .left-nav.left-nav--icons .nav-app-promo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-top: 10px;
+    padding: 0;
+  }
+
+  /* The unread badge becomes a corner dot on the icon. */
+  .left-nav.left-nav--icons .nav-item > span.nav-dm-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+  }
+}
+
+body.left-nav-resizing {
+  cursor: col-resize;
+  user-select: none;
+}

@@ -24,6 +24,6 @@
     "allowImportingTsExtensions": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/**/*", "functions/**/*", "status-worker/src/transition.ts"],
+  "include": ["src/**/*", "functions/**/*", "status-worker/src/transition.ts", "mail-worker/src/**/*"],
   "exclude": ["node_modules", "dist", "sandbox"]
 }

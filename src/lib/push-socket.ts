@@ -46,10 +46,9 @@ export function createPushSocket(buildUrl: () => string, events: PushSocketEvent
           console.error('[push] parse error:', e);
         }
       };
-      socket.onclose = (ev) => {
+      socket.onclose = () => {
         ws = null;
         failures += 1;
-        console.log(`[push] disconnected (code=${ev.code}), backing off`);
         scheduleReconnect();
       };
       socket.onerror = () => {

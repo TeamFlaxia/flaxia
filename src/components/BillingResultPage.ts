@@ -4,69 +4,42 @@ type BillingResultPageProps = {
 
 export function createBillingResultPage({ success }: BillingResultPageProps) {
   const container = document.createElement('div');
-  container.className = 'billing-result-page';
-  container.style.cssText = `
-    max-width: 500px;
-    margin: 4rem auto;
-    padding: 2rem;
-    text-align: center;
-  `;
+  container.className = success
+    ? 'billing-result-page billing-result-page--success'
+    : 'billing-result-page billing-result-page--canceled';
+
+  const card = document.createElement('div');
+  card.className = 'billing-result-card';
 
   const icon = document.createElement('div');
-  icon.style.cssText = `
-    font-size: 4rem;
-    margin-bottom: 1rem;
-  `;
-  icon.textContent = success ? '🎉' : '😔';
+  icon.className = 'billing-result-icon';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = success ? '✓' : '✕';
 
   const title = document.createElement('h1');
-  title.style.cssText = `
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin-bottom: 0.75rem;
-  `;
+  title.className = 'billing-result-title fx-display';
   title.textContent = success ? 'Payment Successful!' : 'Payment Canceled';
 
   const message = document.createElement('p');
-  message.style.cssText = `
-    font-size: 1rem;
-    color: var(--text-secondary);
-    margin-bottom: 2rem;
-    line-height: 1.6;
-  `;
+  message.className = 'billing-result-message';
   message.textContent = success
     ? 'Thank you for your purchase! Your plan has been activated. You can now enjoy your premium features.'
     : 'Your payment was canceled. No charges were made.';
 
   const homeBtn = document.createElement('button');
+  homeBtn.type = 'button';
+  homeBtn.className = 'billing-result-cta';
   homeBtn.textContent = 'Back to Home';
-  homeBtn.style.cssText = `
-    padding: 0.75rem 2rem;
-    border: none;
-    border-radius: 8px;
-    background: var(--accent);
-    color: white;
-    font-weight: 600;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: opacity 0.2s;
-  `;
-  homeBtn.addEventListener('mouseenter', () => {
-    homeBtn.style.opacity = '0.85';
-  });
-  homeBtn.addEventListener('mouseleave', () => {
-    homeBtn.style.opacity = '1';
-  });
   homeBtn.addEventListener('click', () => {
     window.history.pushState({}, '', '/');
     window.location.reload();
   });
 
-  container.appendChild(icon);
-  container.appendChild(title);
-  container.appendChild(message);
-  container.appendChild(homeBtn);
+  card.appendChild(icon);
+  card.appendChild(title);
+  card.appendChild(message);
+  card.appendChild(homeBtn);
+  container.appendChild(card);
 
   return {
     getElement: () => container,

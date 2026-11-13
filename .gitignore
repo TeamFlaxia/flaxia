@@ -5,6 +5,9 @@ node_modules/
 # Build outputs
 dist/
 build/
+# TypeScript declaration artifacts from package builds (emitted to dist/, never src/)
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
 
 # Environment variables
 .env

@@ -179,6 +179,6 @@ export function fadeOutLoading(loadingEl: HTMLElement | null): void {
 
 export function showLoadingTimeoutMessage(loadingEl: HTMLElement | null): void {
   if (loadingEl?.parentNode) {
-    loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">読み込みに時間がかかっています…</div>`;
+    loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">${t('zip.loading_slow')}</div>`;
   }
 }

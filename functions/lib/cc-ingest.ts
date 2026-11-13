@@ -1,6 +1,7 @@
+import { buildCallbackUrl } from '@flaxia/sdk';
 import { createCcRangeUrl, isValidWarcPath, MAX_CC_RECORD_BYTES } from './cc-range.ts';
 import type { CrowdConfig, CrowdEnv } from './crowd.ts';
-import { crowdConfig, getCrowdClient, signedCallbackUrl } from './crowd.ts';
+import { crowdConfig, getCrowdClient } from './crowd.ts';
 import { sha256Hex } from './sha256.ts';
 import { reapWebDocuments } from './web-index.ts';
 
@@ -222,7 +223,7 @@ async function submitExtractTasks(env: CcIngestEnv, config: CrowdConfig, client:
     .all<CcQueueRow>();
   const rows = pending.results || [];
   if (rows.length === 0) return 0;
-  if (!config.webhookSecret) {
+  if (!config.fileScanTicketSecret) {
     console.error('Crowd webhook secret is not configured; skipping CC ingestion');
     return 0;
   }
@@ -238,14 +239,14 @@ async function submitExtractTasks(env: CcIngestEnv, config: CrowdConfig, client:
           warcFilename: row.warc_filename,
           offset: row.offset,
           length: row.length,
-          fetchUrl: await createCcRangeUrl(config.webhookSecret, config.baseUrl, {
+          fetchUrl: await createCcRangeUrl(config.fileScanTicketSecret, config.baseUrl, {
             warcFilename: row.warc_filename,
             offset: row.offset,
             length: row.length,
           }),
         })),
       );
-      const callbackUrl = await signedCallbackUrl(config, {
+      const callbackUrl = buildCallbackUrl({
         baseUrl: config.baseUrl,
         type: 'cc-extract',
       });
@@ -304,7 +305,7 @@ async function submitEmbeddingTasks(env: CcIngestEnv, config: CrowdConfig, clien
     .all<{ doc_id: string; title: string; r2_key: string | null }>();
   const rows = pending.results || [];
   if (rows.length === 0) return 0;
-  if (!config.webhookSecret) return 0;
+  if (!config.fileScanTicketSecret) return 0;
 
   let submitted = 0;
   for (let start = 0; start < rows.length; start += EMBED_DOCS_PER_TASK) {
@@ -343,7 +344,7 @@ async function submitEmbeddingTasks(env: CcIngestEnv, config: CrowdConfig, clien
     }
     if (texts.length === 0) continue;
     try {
-      const callbackUrl = await signedCallbackUrl(config, {
+      const callbackUrl = buildCallbackUrl({
         baseUrl: config.baseUrl,
         type: 'embed-gemma',
         params: { docs: docIds.join(','), dims: EMBED_DIMENSIONS },

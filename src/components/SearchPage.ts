@@ -59,37 +59,10 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   // ── Header with search input ──
   const header = document.createElement('div');
   header.className = 'search-page-header';
-  header.style.cssText = `
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  `;
 
   const backBtn = document.createElement('button');
+  backBtn.className = 'search-page-back';
   backBtn.textContent = '←';
-  backBtn.style.cssText = `
-    background: none;
-    border: none;
-    font-size: 1.25rem;
-    cursor: pointer;
-    color: var(--text-primary);
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    transition: background 0.2s;
-    flex-shrink: 0;
-  `;
-  backBtn.addEventListener('mouseenter', () => {
-    backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-  });
-  backBtn.addEventListener('mouseleave', () => {
-    backBtn.style.background = 'none';
-  });
   backBtn.addEventListener('click', () => {
     window.history.pushState({}, '', '/explore');
     window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
@@ -97,32 +70,16 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   const searchBox = document.createElement('div');
   searchBox.className = 'search-box';
-  searchBox.style.cssText = 'position: relative; flex: 1;';
 
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'search-input';
   input.value = query;
   input.placeholder = t('explore.search_placeholder');
-  input.style.cssText = `
-    width: 100%;
-    padding: 0.6rem 0.75rem 0.6rem 2.3rem;
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 9999px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 0.875rem;
-    outline: none;
-    transition: border-color 0.2s ease;
-    box-sizing: border-box;
-  `;
 
   const icon = document.createElement('span');
   icon.className = 'search-icon';
-  icon.style.cssText =
-    'position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.8rem; pointer-events: none;';
-  icon.textContent = '🔍';
+  icon.setAttribute('aria-hidden', 'true');
 
   searchBox.appendChild(input);
   searchBox.appendChild(icon);
@@ -153,17 +110,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   // ── Filter bar ──
   const filterBar = document.createElement('div');
   filterBar.className = 'search-filter-bar';
-  filterBar.style.cssText = `
-    display: flex;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--border);
-    overflow-x: auto;
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    z-index: 9;
-  `;
   // Calculate filter bar top based on actual header height
   requestAnimationFrame(() => {
     filterBar.style.top = `${header.offsetHeight}px`;
@@ -181,10 +127,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   const updateFilterUI = (activeKey: string) => {
     filterBtns.forEach((btn) => {
-      const isActive = btn.dataset.filter === activeKey;
-      btn.style.border = `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`;
-      btn.style.background = isActive ? 'var(--accent)' : 'transparent';
-      btn.style.color = isActive ? 'white' : 'var(--text-muted)';
+      btn.classList.toggle('is-active', btn.dataset.filter === activeKey);
     });
   };
 
@@ -193,16 +136,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     btn.className = 'filter-btn';
     btn.dataset.filter = f.key;
     btn.textContent = f.label;
-    btn.style.cssText = `
-      padding: 0.4rem 1rem;
-      border-radius: 999px;
-      border: none;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 0.8rem;
-      white-space: nowrap;
-      transition: all 0.2s ease;
-    `;
     btn.onclick = () => {
       if (activeFilter === f.key) return;
       activeFilter = f.key;
@@ -221,10 +154,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   // ── Content area ──
   const content = document.createElement('div');
   content.className = 'search-page-content';
-  content.style.cssText = `
-    padding: 1rem;
-    max-width: 600px;
-  `;
 
   container.appendChild(content);
 
@@ -289,7 +218,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       if (it.type === 'tag') {
         const tagName = document.createElement('span');
         tagName.textContent = `# ${it.label}`;
-        tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;';
+        tagName.style.cssText = 'font-weight: 600; color: var(--accent-text); font-size: 0.875rem;';
         const count = document.createElement('span');
         count.textContent = formatCount(it.count);
         count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;';
@@ -302,7 +231,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         });
       } else {
         const avatar = document.createElement('div');
-        avatar.style.cssText = `width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--bg-primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.7rem; flex-shrink: 0;`;
+        avatar.style.cssText = `width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.7rem; flex-shrink: 0;`;
         avatar.textContent = (it.display || it.label)[0].toUpperCase();
         attachPlusBadge(avatar, it.badge);
         const info = document.createElement('div');
@@ -468,15 +397,14 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       anyVisible = true;
       if (showAll) {
         const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'search-section-label';
         sectionTitle.textContent = t('search.users');
-        sectionTitle.style.cssText =
-          'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
         content.appendChild(sectionTitle);
       }
       renderUsers(allUsers);
       if (showAll && allArcade.length > 0) {
         const divider = document.createElement('div');
-        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;';
+        divider.className = 'search-section-divider';
         content.appendChild(divider);
       }
     }
@@ -486,22 +414,20 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       anyVisible = true;
       if (showAll) {
         const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'search-section-label';
         sectionTitle.textContent = t('explore.filter_arcade');
-        sectionTitle.style.cssText =
-          'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
         content.appendChild(sectionTitle);
         renderArcade(allArcade, false);
       } else {
         const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'search-section-label';
         sectionTitle.textContent = t('explore.filter_arcade');
-        sectionTitle.style.cssText =
-          'font-weight: 600; font-size: 1rem; color: var(--text-primary); margin-bottom: 0.75rem; padding: 0 0.25rem;';
         content.appendChild(sectionTitle);
         renderArcade(allArcade, true);
       }
       if (showAll && allPosts.length > 0) {
         const divider = document.createElement('div');
-        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;';
+        divider.className = 'search-section-divider';
         content.appendChild(divider);
       }
     }
@@ -511,9 +437,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       anyVisible = true;
       if (showAll) {
         const sectionTitle = document.createElement('div');
+        sectionTitle.className = 'search-section-label';
         sectionTitle.textContent = t('search.posts');
-        sectionTitle.style.cssText =
-          'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
         content.appendChild(sectionTitle);
       }
       renderPosts(allPosts);
@@ -537,9 +462,14 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
     if (!anyVisible) {
       const empty = document.createElement('div');
-      empty.style.cssText =
-        "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
-      empty.textContent = t('search.no_results', { query });
+      empty.className = 'page-empty';
+      const emptyIcon = document.createElement('span');
+      emptyIcon.className = 'page-empty-icon';
+      const emptyTitle = document.createElement('p');
+      emptyTitle.className = 'page-empty-title fx-display';
+      emptyTitle.textContent = t('search.no_results', { query });
+      empty.appendChild(emptyIcon);
+      empty.appendChild(emptyTitle);
       content.appendChild(empty);
     }
   };
@@ -618,47 +548,29 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   ) => {
     users.forEach((user) => {
       const userItem = document.createElement('div');
-      userItem.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        padding: 0.75rem;
-        border-radius: 0.25rem;
-        cursor: pointer;
-        transition: background-color 0.2s ease;
-      `;
-      userItem.onmouseover = () => (userItem.style.background = 'var(--bg-secondary)');
-      userItem.onmouseout = () => (userItem.style.background = 'transparent');
+      userItem.className = 'search-user-row';
       userItem.onclick = () => {
         window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
       };
 
       const avatar = document.createElement('div');
-      avatar.style.cssText = `
-        width: 40px; height: 40px; border-radius: 50%;
-        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
-        background-size: cover;
-        background-position: center;
-        color: var(--bg-primary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 0.875rem;
-        flex-shrink: 0;
-      `;
+      avatar.className = 'search-avatar';
+      if (user.avatar_key) {
+        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
+      }
       if (!user.avatar_key) {
         avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
       }
       attachPlusBadge(avatar, user.badge_type);
 
       const userInfo = document.createElement('div');
+      userInfo.className = 'search-user-info';
       const usernameEl = document.createElement('div');
-      usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);';
+      usernameEl.className = 'search-user-name';
       usernameEl.textContent = `@${user.username}`;
       const displayNameEl = document.createElement('div');
-      displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+      displayNameEl.className = 'search-user-display';
       displayNameEl.textContent = user.display_name || '';
       applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
@@ -740,7 +652,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         badge.style.cssText = `
           position: absolute; top: 4px; right: 4px;
           padding: 0.1rem 0.4rem; border-radius: 4px;
-          background: var(--accent); color: white;
+          background: var(--accent); color: var(--on-accent);
           font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
           line-height: 1.2;
         `;
@@ -873,7 +785,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         badge.style.cssText = `
           position: absolute; top: 4px; right: 4px;
           padding: 0.1rem 0.35rem; border-radius: 4px;
-          background: var(--accent); color: white;
+          background: var(--accent); color: var(--on-accent);
           font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
           line-height: 1.2;
         `;

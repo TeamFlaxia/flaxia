@@ -1,3 +1,5 @@
+import { deleteMailAccount } from './mail-service.ts';
+
 interface PostRowWithKeys {
   id: string;
   gif_key: string | null;
@@ -82,11 +84,11 @@ export async function deleteAccount(
   // so the reservation cannot be completed and must be released here.
   statements.push(db.prepare('DELETE FROM flaxia_direct_email_changes WHERE user_id = ?').bind(userId));
 
-  // Admin deletion happens after the Auth account is gone, so every local
-  // transition row is meaningless and its guard must be cleared before the
-  // user or vault rows are touched. Coordinated (self-service) deletion keeps
-  // its receipt protocol and is expected to be free of active transition rows.
-  if (forceLinked) {
+  // Deletion happens after the Auth account is gone (or was never linked), so
+  // every local transition row is meaningless and its guard must be cleared
+  // before the user or vault rows are touched. The receipt was written above,
+  // so removing the job rows cannot break a retry.
+  if (forceLinked || authOperationHash) {
     statements.push(
       db.prepare('DELETE FROM flaxia_auth_purge_in_progress WHERE user_id = ?').bind(userId),
       db.prepare('DELETE FROM flaxia_auth_provisioning WHERE user_id = ?').bind(userId),
@@ -123,13 +125,18 @@ export async function deleteAccount(
   statements.push(db.prepare('DELETE FROM vault_keys WHERE user_id = ?').bind(userId));
 
   // --- User preference / recommender state ---
-  statements.push(db.prepare('DELETE FROM user_profiles WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM bandit_state WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM user_game_plays WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM arcade_events WHERE user_id = ?').bind(userId));
 
   // Messaging and calls were removed by migration 0089; no related rows remain
   // to clean up when deleting a user.
+  //
+  // Flaxia Mail lives in the separate MAIL_DB (docs/mail.md §11.3). Its D1
+  // rows and R2 objects are removed through the MAIL_SERVICE binding after this
+  // batch commits; vault mail_identity items are already deleted above because
+  // they are vault_items rows. The outbox row makes the hook durable when the
+  // Mail worker is temporarily unavailable.
+  statements.push(db.prepare('INSERT OR IGNORE INTO mail_deletion_outbox (user_id) VALUES (?)').bind(userId));
 
   // --- Billing + custom stamps: bare FKs to users (#131) ---
   statements.push(db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(userId));
@@ -191,6 +198,18 @@ export async function deleteAccount(
   }
 
   await db.batch(statements);
+
+  // Flaxia Mail lives in MAIL_DB/R2 behind the MAIL_SERVICE binding. Keep the
+  // outbox row until the Worker confirms the purge; the scheduled backend
+  // worker retries otherwise. A missing Mail deployment never fails the
+  // account deletion itself.
+  try {
+    if (await deleteMailAccount(env, userId)) {
+      await db.prepare('DELETE FROM mail_deletion_outbox WHERE user_id = ?').bind(userId).run();
+    }
+  } catch {
+    console.error('Failed to enqueue Flaxia Mail deletion for a deleted account');
+  }
 
   // The durable outbox is drained by the scheduled worker. A single claimed
   // deletion at a time prevents a late duplicate R2 delete from removing a

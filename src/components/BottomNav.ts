@@ -47,7 +47,9 @@ export class BottomNav {
     const items = [
       { id: 'home', label: t('nav.home'), icon: 'home' as IconName },
       { id: 'explore', label: t('nav.explore'), icon: 'search' as IconName },
+      { id: 'maps', label: t('nav.maps'), icon: 'maps' as IconName },
       { id: 'arcade', label: t('nav.arcade'), icon: 'game' as IconName },
+      { id: 'translate', label: t('nav.translate'), icon: 'translate' as IconName },
       { id: 'notifications', label: t('nav.notifications'), icon: 'notifications' as IconName },
     ];
 
@@ -73,8 +75,10 @@ export class BottomNav {
 
   private createItem(id: string, label: string, iconName: IconName, active: boolean): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
     btn.setAttribute('data-nav-id', id);
+    btn.setAttribute('aria-current', active ? 'page' : 'false');
     btn.appendChild(this.buildIconSpan(iconName));
     const labelSpan = document.createElement('span');
     labelSpan.className = 'bottom-nav-label';
@@ -95,18 +99,20 @@ export class BottomNav {
 
   private createAccountItem(active: boolean): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
     btn.setAttribute('data-nav-id', 'account');
+    btn.setAttribute('aria-current', active ? 'page' : 'false');
 
     const user = this.props.currentUser!;
-    if (user.avatar_key) {
+    const avatarKey = user.avatar_key;
+    if (avatarKey && /^avatar\/[A-Za-z0-9_-]{1,128}$/.test(avatarKey)) {
       const avatar = document.createElement('span');
       avatar.className = 'bottom-nav-avatar';
-      // avatar_key is server-minted (`avatar/<sha256>`), but never trust a
-      // stored value inside a style context: validate the shape first.
-      if (/^avatar\/[0-9a-f]{64}$/.test(user.avatar_key)) {
-        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
-      }
+      // avatar_key is server-minted and may be hex (new uploads) or base64url
+      // (legacy uploads), but never trust a stored value inside a style
+      // context: the allowlist above keeps quotes/parens out of `url()`.
+      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${avatarKey}`)})`;
       btn.appendChild(avatar);
     } else {
       const avatar = document.createElement('span');
@@ -131,6 +137,7 @@ export class BottomNav {
 
   private createLoginItem(): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'bottom-nav-item bottom-nav-login';
     btn.setAttribute('data-nav-id', 'login');
     btn.appendChild(this.buildIconSpan('key'));
@@ -153,7 +160,9 @@ export class BottomNav {
     this.activeItem = item;
     this.element.querySelectorAll('.bottom-nav-item').forEach((el) => {
       const navId = el.getAttribute('data-nav-id');
-      el.classList.toggle('bottom-nav-item--active', navId === item);
+      const isActive = navId === item;
+      el.classList.toggle('bottom-nav-item--active', isActive);
+      el.setAttribute('aria-current', isActive ? 'page' : 'false');
     });
   }
 

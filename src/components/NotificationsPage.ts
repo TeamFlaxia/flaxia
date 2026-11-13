@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { type IconName, icon } from '../lib/icons.js';
 import { createPageHeader } from '../lib/page-header.js';
 
 export interface Notification {
@@ -55,10 +56,6 @@ export class NotificationsPage {
   private createElement(): HTMLElement {
     const container = document.createElement('div');
     container.className = 'notifications-page';
-    container.style.cssText = `
-      max-width: 600px;
-      margin: 0 auto;
-    `;
 
     // Header
     const actions: HTMLElement[] = [];
@@ -68,26 +65,8 @@ export class NotificationsPage {
       const markAllBtn = document.createElement('button');
       markAllBtn.className = 'mark-all-read-btn';
       markAllBtn.textContent = t('notifications.mark_all_read');
-      markAllBtn.style.cssText = `
-        padding: 8px 16px;
-        margin-left: auto;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        color: var(--text-primary);
-        font-size: 14px;
-        cursor: pointer;
-        transition: background 0.2s;
-      `;
-      markAllBtn.addEventListener('mouseenter', () => {
-        markAllBtn.style.background = 'var(--bg-tertiary, #e5e5e5)';
-      });
-      markAllBtn.addEventListener('mouseleave', () => {
-        markAllBtn.style.background = 'var(--bg-secondary)';
-      });
       markAllBtn.addEventListener('click', async () => {
         markAllBtn.disabled = true;
-        markAllBtn.style.opacity = '0.5';
         await this.props.onMarkAllRead();
         this.updateAllAsRead();
       });
@@ -106,24 +85,12 @@ export class NotificationsPage {
     // Notifications list
     if (this.props.notifications.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = `
-        text-align: center;
-        padding: 48px 24px;
-        color: var(--text-muted);
-      `;
+      empty.className = 'notifications-empty fx-display';
       empty.textContent = t('notifications.empty');
       container.appendChild(empty);
     } else {
       const list = document.createElement('div');
       list.className = 'notifications-list';
-      list.style.cssText = `
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        overflow: hidden;
-      `;
 
       this.props.notifications.forEach((notification) => {
         const row = this.createNotificationRow(notification);
@@ -139,22 +106,15 @@ export class NotificationsPage {
   private createNotificationRow(notification: Notification): HTMLElement {
     const row = document.createElement('div');
     row.className = `notification-row ${notification.read ? 'read' : 'unread'}`;
-    row.style.cssText = `
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 16px;
-      background: ${notification.read ? 'var(--bg-primary)' : 'var(--bg-secondary)'};
-      cursor: pointer;
-      transition: background 0.2s;
-    `;
 
-    row.addEventListener('mouseenter', () => {
-      row.style.background = 'var(--bg-tertiary, #f0f0f0)';
-    });
-    row.addEventListener('mouseleave', () => {
-      row.style.background = notification.read ? 'var(--bg-primary)' : 'var(--bg-secondary)';
-    });
+    // Unread indicator: accent dot with a soft ping ring (decorative).
+    if (!notification.read) {
+      const dot = document.createElement('span');
+      dot.className = 'notification-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      row.appendChild(dot);
+    }
+
     row.addEventListener('click', () => {
       if (notification.post_id) {
         this.props.onNavigateToPost(notification.post_id);
@@ -163,69 +123,68 @@ export class NotificationsPage {
     });
 
     // Icon
-    const icon = document.createElement('div');
-    icon.style.cssText = `
-      font-size: 20px;
-      flex-shrink: 0;
-    `;
+    const iconEl = document.createElement('div');
+    iconEl.className = 'notification-icon';
+    // Vermilion is reserved for "live" moments: fresh/reload reactions.
+    if (notification.type === 'fresh' || notification.type === 'ap_like') {
+      iconEl.classList.add('notification-icon--live');
+    }
+    iconEl.setAttribute('aria-hidden', 'true');
+    let iconName: IconName | null = null;
     switch (notification.type) {
       case 'fresh':
       case 'ap_like':
-        icon.textContent = '🌿';
+        iconName = 'fresh';
         break;
       case 'reload':
-        icon.textContent = '🔁';
+        iconName = 'reload';
         break;
       case 'ap_follow':
-        icon.textContent = '👥';
+        iconName = 'users';
         break;
       case 'ap_announce':
-        icon.textContent = '📣';
+        iconName = 'megaphone';
         break;
       case 'reply':
-        icon.textContent = '💬';
+        iconName = 'reply';
         break;
       case 'quote':
-        icon.textContent = '🔁';
+        iconName = 'quote';
         break;
       case 'mention':
-        icon.textContent = '📢';
+        iconName = 'at-sign';
         break;
       case 'reported':
-        icon.textContent = '🚩';
+        iconName = 'flag';
         break;
       case 'warned':
-        icon.textContent = '⚠️';
+        iconName = 'warning';
         break;
       case 'hidden':
-        icon.textContent = '🙈';
+        iconName = 'eye-off';
         break;
       case 'poll_ended':
-        icon.textContent = '📊';
+        iconName = 'poll';
         break;
       default:
-        icon.textContent = '';
+        iconName = null;
     }
-    row.appendChild(icon);
+    if (iconName) {
+      iconEl.appendChild(icon(iconName, { width: '16', height: '16' }));
+    }
+    row.appendChild(iconEl);
 
     // Content
     const content = document.createElement('div');
-    content.style.cssText = `
-      flex: 1;
-      min-width: 0;
-    `;
+    content.className = 'notification-content';
 
     // Main text
     const mainText = document.createElement('div');
-    mainText.style.cssText = `
-      color: var(--text-primary);
-      font-size: 14px;
-      margin-bottom: 4px;
-    `;
+    mainText.className = 'notification-main';
 
     const appendMuted = (text: string) => {
       const span = document.createElement('span');
-      span.style.color = 'var(--text-muted)';
+      span.className = 'notification-muted';
       span.textContent = text;
       mainText.appendChild(span);
     };
@@ -374,24 +333,14 @@ export class NotificationsPage {
     // Post preview (only for notifications with posts)
     if (notification.post_id && notification.post_text_preview) {
       const preview = document.createElement('div');
-      preview.style.cssText = `
-        color: var(--text-muted);
-        font-size: 13px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        margin-bottom: 4px;
-      `;
+      preview.className = 'notification-preview';
       preview.textContent = notification.post_text_preview;
       content.appendChild(preview);
     }
 
     // Time
     const time = document.createElement('div');
-    time.style.cssText = `
-      color: var(--text-muted);
-      font-size: 12px;
-    `;
+    time.className = 'notification-time';
     time.textContent = this.formatTime(notification.created_at);
     content.appendChild(time);
 
@@ -420,7 +369,7 @@ export class NotificationsPage {
     rows.forEach((row) => {
       row.classList.remove('unread');
       row.classList.add('read');
-      (row as HTMLElement).style.background = 'var(--bg-primary)';
+      row.querySelector('.notification-dot')?.remove();
     });
 
     // Remove the "Mark all read" button

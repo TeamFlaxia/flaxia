@@ -89,7 +89,7 @@ function renderHeader(): HTMLElement {
 
   const wordmark = document.createElement('a');
   wordmark.href = '/';
-  wordmark.className = 'legal-wordmark';
+  wordmark.className = 'legal-wordmark fx-display';
   wordmark.textContent = t('legal.brand');
   wordmark.addEventListener('click', (e) => {
     e.preventDefault();
@@ -140,7 +140,7 @@ function renderDocsList(container: HTMLElement, docs: DocEntry[]): void {
     item.setAttribute('data-docs-slug', doc.slug);
 
     const title = document.createElement('div');
-    title.className = 'docs-list-title';
+    title.className = 'docs-list-title fx-display';
     title.textContent = preferredTitle(doc, getLocale());
 
     const arrow = document.createElement('span');
@@ -227,7 +227,7 @@ export function createDocsPage({ slug }: DocsPageProps) {
 
   const loadContent = async () => {
     const titleEl = document.createElement('h1');
-    titleEl.className = 'legal-title docs-title';
+    titleEl.className = 'legal-title docs-title fx-display';
     titleEl.textContent = t('docs.title');
     content.appendChild(titleEl);
 

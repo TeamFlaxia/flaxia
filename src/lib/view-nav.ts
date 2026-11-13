@@ -9,14 +9,23 @@ export function viewToBottomNavId(view: string): string {
     case 'explore':
     case 'search':
       return 'explore';
+    case 'translate':
+      return 'translate';
     case 'arcade':
       return 'arcade';
+    case 'maps':
+      return 'maps';
     case 'profile':
     case 'settings':
     case 'bookmarks':
       return 'account';
     case 'notifications':
       return 'notifications';
+    case 'mail':
+    case 'mail-thread':
+    case 'mail-compose':
+    case 'mail-settings':
+      return 'mail';
     default:
       return '';
   }

@@ -7,6 +7,7 @@
 // payload cap the scan row becomes `skipped` with a reason instead of silently
 // staying pending.
 
+import { buildCallbackUrl } from '@flaxia/sdk';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import {
@@ -15,7 +16,6 @@ import {
   crowdConfig,
   FILE_SCAN_SOURCE_MAX_BYTES,
   getCrowdClient,
-  signedCallbackUrl,
 } from '../crowd.ts';
 import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask, upsertFileScan } from './db.ts';
 import { extractFileFeatures } from './features.ts';
@@ -147,7 +147,7 @@ export async function submitFileScans(
             ? { files: {}, fileSources: { [fileName]: fileSource } }
             : { files: { [fileName]: toBase64(raw) } }),
         },
-        callbackUrl: await signedCallbackUrl(config, {
+        callbackUrl: buildCallbackUrl({
           baseUrl: config.baseUrl,
           type: 'file-scan',
           params: { key: r2Key, kind: 'clamav', sha: submittedSha },
@@ -191,7 +191,7 @@ async function submitVideoPhash(
           ? { files: {}, fileSources: { 'input.mp4': fileSource } }
           : { files: { 'input.mp4': toBase64(raw) } }),
       },
-      callbackUrl: await signedCallbackUrl(config, {
+      callbackUrl: buildCallbackUrl({
         baseUrl: config.baseUrl,
         type: 'file-scan',
         params: { key: r2Key, kind: 'video-phash', sha: submittedSha },

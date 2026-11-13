@@ -10,6 +10,9 @@ interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   CROWD_ORCHESTRATOR?: Fetcher;
+  MAIL_SERVICE?: Fetcher;
+  MAIL_INTERNAL_SECRET?: string;
+  MAIL_DOMAIN?: string;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;

@@ -13,6 +13,11 @@ binding = "AUTH_SERVICE"
 service = "flaxia-auth"
 entrypoint = "FlaxiaBridge"
 
+# Scheduled account deletion removes MAIL_DB/R2 data through this binding.
+[[services]]
+binding = "MAIL_SERVICE"
+service = "flaxia-mail"
+
 [vars]
 BASE_URL = "https://flaxia.app"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"

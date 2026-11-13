@@ -1,6 +1,7 @@
 import type { GameFile } from './offline-game-store.ts';
 import { createOfflineGameStore } from './offline-game-store.ts';
 import { createOfflineGames } from './offline-games.ts';
+import { isOffline } from './offline-status.ts';
 
 export function extractGameArchive(bytes: ArrayBuffer): Promise<GameFile[]> {
   const worker = new Worker(new URL('./game-loader-unzip-worker.ts', import.meta.url), { type: 'module' });
@@ -28,9 +29,14 @@ export function initOfflineGames(network: typeof fetch): NonNullable<typeof offl
     network,
     extract: extractGameArchive,
     baseUrl: window.location.href,
-    online: () => navigator.onLine !== false,
+    online: () => !isOffline(),
     changed: () => window.dispatchEvent(new Event('flaxiaDownloadsChanged')),
   });
   window.addEventListener('online', () => void offlineGames?.sync());
+  // The connectivity event mirrors browser online/offline and also fires when
+  // the background probe recovers a stale offline state. sync() is idempotent.
+  window.addEventListener('flaxiaConnectivityChange', (event) => {
+    if (!(event as CustomEvent<{ offline: boolean }>).detail.offline) void offlineGames?.sync();
+  });
   return offlineGames;
 }

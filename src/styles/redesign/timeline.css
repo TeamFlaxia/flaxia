@@ -1,0 +1,1544 @@
+/* ============================================================
+   Flaxia UI v5 — timeline & post surface
+   "Quiet craft": shadcn/ui density on Obsidian-grade calm.
+   Zinc neutrals, 1px hairlines, 12px cards, soft shadcn shadows,
+   neutral primary actions, one restrained green indicator, red
+   only for likes. No gradients, glass, bounce, particles or glow.
+
+   Loaded AFTER legacy main.css and foundation.css, so same-
+   specificity rules win by source order. Tokens live in
+   src/styles/main.css (:root / [data-theme="dark"]).
+
+   Motion: background/color/shadow transitions (100–200ms) and the
+   120ms like pop; poll fill keeps its width transition. All hover
+   states are gated by @media (hover: hover).
+   ============================================================ */
+
+/* The only keyframe this module needs: a 120ms scale-only like pop. */
+@keyframes like-pop {
+  from {
+    transform: scale(0.9);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Calm skeleton pulse for loading media (shadcn animate-pulse-like). */
+@keyframes quiet-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ------------------------------------------------------------
+   1. Post card — dense shadcn list row as a card
+   ------------------------------------------------------------ */
+.post-card {
+  position: relative;
+  margin: 0 8px 8px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-xs);
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard);
+}
+
+.post-card:last-child {
+  margin-bottom: 0;
+}
+
+.post-card:focus-within {
+  background: var(--bg-primary);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-ring);
+}
+
+@media (hover: hover) {
+  .post-card:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.post-card--static {
+  cursor: default;
+}
+
+.post-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  position: relative;
+  min-width: 0;
+}
+
+.post-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.post-index {
+  flex-shrink: 0;
+  align-self: center;
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------
+   2. Header — small avatar, quiet meta, ghost kebab
+   ------------------------------------------------------------ */
+.post-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.post-avatar,
+.post-display-name,
+.post-username {
+  cursor: pointer;
+}
+
+.post-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  flex-shrink: 0;
+  /* The image is clipped by .post-avatar-inner. Keep the outer disc visible so
+     the Flaxia+ check badge can overhang the avatar instead of being cut off. */
+  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: border-color var(--duration-base) var(--ease-standard);
+}
+
+.post-avatar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  background-position: center;
+  background-size: cover;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+@media (hover: hover) {
+  .post-header:hover .post-avatar {
+    border-color: var(--border-strong);
+  }
+}
+
+.post-display-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+.post-username {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .post-display-name:hover {
+    color: var(--text-secondary);
+  }
+
+  .post-username:hover {
+    color: var(--text-secondary);
+  }
+}
+
+.post-timestamp {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.post-timestamp::before {
+  content: "·";
+  margin-right: 5px;
+  opacity: 0.6;
+}
+
+/* Status chips: flat muted, never colored. */
+.post-edited-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.post-ai-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.post-ai-index[hidden] {
+  display: none;
+}
+
+/* Ghost kebab: invisible until hover. */
+.post-menu-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .post-menu-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.post-menu-button[aria-expanded="true"] {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------
+   3. Body — 14px copy, inline blue hashtags
+   ------------------------------------------------------------ */
+.post-text-wrap {
+  margin-bottom: 10px;
+}
+
+.post-text {
+  margin-bottom: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.62;
+  letter-spacing: -0.005em;
+  overflow-wrap: anywhere;
+  /* Plain-text placeholder only. Markdown output carries its own <br>s; see
+     .post-text--rich below. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Rich markdown already encodes breaks as <br>; preserving the newlines in
+   markdown-it's HTML would double every line break. */
+.post-text--rich {
+  white-space: normal;
+}
+
+.post-text .hashtag-link {
+  color: var(--link);
+  font-weight: 500;
+  text-decoration: none;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .post-text .hashtag-link:hover {
+    color: var(--link-hover);
+    text-decoration: underline;
+  }
+}
+
+.post-link-preview-container {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+/* ------------------------------------------------------------
+   4. Action row — ghost controls, one red accent
+   ------------------------------------------------------------ */
+.post-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px 4px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.post-actions-left,
+.post-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.post-actions-right {
+  margin-left: auto;
+}
+
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.action-icon svg {
+  display: block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.action-count {
+  min-width: 1ch;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .action-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .action-button--reply:hover {
+    color: var(--link);
+    background: rgba(14, 165, 233, 0.1);
+  }
+
+  .action-button--reload:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .action-button--fresh:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .action-button--bookmark:hover {
+    color: var(--warning);
+    background: rgba(245, 158, 11, 0.1);
+  }
+}
+
+.action-button:active:not(:disabled) {
+  background: var(--bg-active);
+}
+
+/* Fresh: leaf glyph + a 120ms scale-only pop */
+.action-button--fresh.action-button--active {
+  color: var(--accent-text);
+}
+
+:root[data-theme="dark"] .action-button--fresh.action-button--active {
+  color: var(--accent-text);
+}
+
+:root[data-theme="dark"] .action-button--fresh.action-button--active .action-icon {
+  color: var(--accent);
+}
+
+.action-button--fresh.action-button--active .action-icon svg {
+  fill: currentColor;
+}
+
+.action-button--fresh.is-popping .action-icon {
+  animation: like-pop 120ms var(--ease-out) both;
+}
+
+/* Bookmark: warm amber glow */
+.action-button--bookmark.action-button--active {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+}
+
+.action-button--bookmark.action-button--active .action-icon svg {
+  fill: currentColor;
+}
+
+/* Reload: vibrant brand emerald */
+.action-button--reload.action-button--active {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.action-button--reload.action-button--active .action-icon svg {
+  fill: currentColor;
+}
+
+/* Impressions is display-only. */
+.action-button--impressions {
+  cursor: default;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.action-button--impressions .action-icon svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0.7;
+}
+
+@media (hover: hover) {
+  .action-button--impressions:hover {
+    background: transparent;
+    color: var(--text-muted);
+  }
+}
+
+/* Dropdown menu opened from the reload action. */
+.post-action-dropdown-menu {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+}
+
+/* ------------------------------------------------------------
+   5. Reactions — outline chips, no color
+   ------------------------------------------------------------ */
+/* The add-reaction control joins the action row while the post has no
+   reaction chips; once chips exist it takes its own row. */
+.post-reactions {
+  flex-basis: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.post-reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.post-reaction-emoji {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.post-reaction-count {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.post-reaction-chip.reacted {
+  border-color: var(--border-strong);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.post-reaction-chip.reacted .post-reaction-count {
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .post-reaction-chip:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .post-reaction-chip.reacted:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+  }
+}
+
+.post-reactions:has(.post-reaction-chip) {
+  flex-basis: 100%;
+  margin-top: 6px;
+}
+
+.post-reaction-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.post-reaction-add-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.post-reaction-add-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+@media (hover: hover) {
+  .post-reaction-add:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+/* ------------------------------------------------------------
+   6. Poll — neutral fill, hairline options
+   ------------------------------------------------------------ */
+.post-poll {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-primary);
+}
+
+.poll-question {
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+}
+
+.poll-ended-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 1px 7px;
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.poll-option {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  isolation: isolate;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.poll-option.is-clickable {
+  cursor: pointer;
+}
+
+.poll-option:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .poll-option.is-clickable:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-hover);
+  }
+}
+
+/* Neutral primary wash at 10–14%, animated width. */
+.poll-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  width: 0;
+  height: 100%;
+  border-radius: var(--radius-md);
+  background: var(--primary);
+  opacity: 0.1;
+  pointer-events: none;
+  transition: width 420ms var(--ease-out);
+}
+
+.poll-option-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.poll-option-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.poll-option-pct {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.poll-voted-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.poll-option.is-voted {
+  border-color: var(--border-strong);
+}
+
+.poll-option.is-voted .poll-bar {
+  opacity: 0.12;
+}
+
+.poll-option.is-leading .poll-bar {
+  opacity: 0.14;
+}
+
+.poll-option.is-leading .poll-option-text {
+  font-weight: 600;
+}
+
+.poll-option.is-leading .poll-option-pct {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.post-poll-footer {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* Ended poll. */
+.post-poll.is-expired {
+  background: var(--bg-secondary);
+}
+
+.post-poll.is-expired .poll-bar {
+  background: var(--border-strong);
+  opacity: 0.35;
+}
+
+.post-poll.is-expired .poll-option.is-leading .poll-option-text {
+  color: var(--text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .poll-bar {
+    transition: none;
+  }
+}
+
+/* ------------------------------------------------------------
+   7. Quoted post — muted inset card
+   ------------------------------------------------------------ */
+.quoted-post-card {
+  position: relative;
+  margin: 4px 0 11px;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .quoted-post-card:hover {
+    border-color: var(--border-strong);
+    background: var(--bg-tertiary);
+  }
+}
+
+.quoted-post-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  min-width: 0;
+}
+
+.quoted-post-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-primary);
+  background-position: center;
+  background-size: cover;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.quoted-post-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quoted-post-username {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quoted-post-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+}
+
+.quoted-post-attachment {
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.quoted-post-attachment .media-carousel-track,
+.quoted-post-attachment .image-preview,
+.quoted-post-attachment .video-player,
+.quoted-post-attachment .audio-player {
+  border-radius: var(--radius-md);
+}
+
+.quoted-post-attachment-badge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 2;
+  transform: translate3d(-50%, -50%, 0);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+  pointer-events: none;
+}
+
+.quoted-post-unavailable {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.quoted-post-attachment-pill {
+  display: block;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------
+   8. Media — subtle frame on a deep neutral stage
+   ------------------------------------------------------------ */
+.post-stage {
+  position: relative;
+  width: 100%;
+  margin: 4px 0 11px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--stage-canvas);
+  isolation: isolate;
+}
+
+.post-stage--carousel {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+.post-stage--image,
+.post-stage--image-thumb,
+.post-stage--video {
+  overflow: hidden;
+  background: var(--stage-canvas);
+}
+
+.post-stage--audio {
+  background: var(--bg-secondary);
+}
+
+.post-stage--flash,
+.post-stage--zip {
+  overflow: hidden;
+  padding-bottom: 75%;
+  border-radius: var(--radius-lg);
+  background: var(--stage-canvas);
+}
+
+.post-stage--zip {
+  padding-bottom: 56.25%;
+}
+
+.media-carousel {
+  width: 100%;
+}
+
+.media-carousel-track {
+  position: relative;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.media-carousel-track::-webkit-scrollbar {
+  display: none;
+}
+
+.media-carousel-slide {
+  position: relative;
+  display: flex;
+  flex: 0 0 100%;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  scroll-snap-align: start;
+}
+
+.media-carousel-slide > * {
+  width: 100%;
+}
+
+.media-carousel-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.media-carousel-dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--border-strong);
+  cursor: pointer;
+  transform-origin: center;
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-standard);
+}
+
+.media-carousel-dot--active {
+  transform: scaleX(2);
+  background: var(--text-primary);
+}
+
+@media (hover: hover) {
+  .media-carousel-dot:hover {
+    background: var(--text-muted);
+  }
+}
+
+.post-stage .image-preview,
+.post-stage .video-player,
+.post-stage .document-viewer {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+.post-stage .image-preview-img,
+.post-stage .media-carousel-slide img,
+.post-stage .video-player-element {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 420ms var(--ease-out);
+}
+
+@media (hover: hover) {
+  .post-stage .image-preview:hover .image-preview-img,
+  .post-stage .media-carousel-slide:hover img,
+  .post-stage .video-player:hover .video-player-element {
+    transform: scale(1.02);
+  }
+}
+
+.post-stage .image-preview,
+.quoted-post-attachment .image-preview {
+  position: relative;
+}
+
+/* Loading placeholders: calm opacity pulse. */
+.image-preview-loading,
+.video-player-loading,
+.audio-player-loading {
+  background: var(--bg-tertiary);
+  animation: quiet-pulse 1.8s var(--ease-in-out) infinite;
+}
+
+/* Thumbnails for ZIP/SWF posts. */
+.thumbnail-overlay-container {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--stage-canvas);
+  cursor: pointer;
+}
+
+.thumbnail-media {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnail-overlay-container img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition:
+    opacity var(--duration-slow) var(--ease-out),
+    transform 420ms var(--ease-out);
+}
+
+.thumbnail-overlay-container img.is-loaded {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .thumbnail-overlay-container:hover img {
+    transform: scale(1.02);
+  }
+}
+
+.stage-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* Play control: quiet pill + neutral primary disc. */
+.stage-play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: var(--shadow-sm);
+  transform: translate3d(-50%, -50%, 0);
+  transition: background-color var(--duration-base) var(--ease-standard);
+}
+
+.stage-play-label {
+  line-height: 1;
+}
+
+.stage-play-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-fg);
+  font-size: 9px;
+  line-height: 1;
+}
+
+@media (hover: hover) {
+  .thumbnail-overlay-container:hover .stage-play-overlay,
+  .zip-execution-button:hover .stage-play-overlay,
+  .execution-button:hover .stage-play-overlay {
+    background: var(--bg-secondary);
+  }
+}
+
+/* Launch surfaces for executable posts (ZIP / SWF without a thumb). */
+.zip-execution-button,
+.execution-button {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: var(--radius-lg);
+  background: var(--stage-canvas);
+  color: var(--stage-fg);
+  cursor: pointer;
+}
+
+.zip-execution-button .stage-launch-icon,
+.execution-button .stage-launch-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-fg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.zip-execution-button .stage-launch-label,
+.execution-button .stage-launch-label {
+  max-width: 70%;
+  color: var(--stage-fg);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: left;
+}
+
+.execution-button {
+  flex-direction: column;
+  gap: 9px;
+  text-align: center;
+}
+
+.execution-button .stage-launch-label {
+  max-width: 100%;
+  text-align: center;
+}
+
+.zip-execution-button:focus-visible,
+.execution-button:focus-visible,
+.thumbnail-overlay-container:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -3px;
+}
+
+.execution-button.is-loading,
+.zip-execution-button.is-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--stage-fg);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.stage-hint {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------
+   9. Thread — hairline connector, quiet rows
+   ------------------------------------------------------------ */
+.thread-view {
+  width: 100%;
+  min-height: 400px;
+  padding: 12px 8px 28px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.thread-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 0 4px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.thread-header :is(h1, h2, h3) {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.thread-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .thread-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.thread-loading {
+  padding: 28px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.thread-loading--error {
+  color: var(--danger-text);
+}
+
+.thread-content {
+  display: block;
+}
+
+/* Root post carries a touch more depth than the replies. */
+.thread-content > .post-card:first-child,
+.thread-root-post-container > .post-card {
+  box-shadow: var(--shadow-sm);
+}
+
+/* Replies sit flat inside the thread transcript. */
+.reply-node {
+  position: relative;
+  margin-bottom: 3px;
+}
+
+.reply-node--nested {
+  margin-left: 8px;
+}
+
+.reply-node .post-card {
+  margin: 0 0 2px;
+  padding: 10px 12px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (hover: hover) {
+  .reply-node .post-card:hover {
+    border-color: transparent;
+    background: var(--bg-hover);
+    box-shadow: none;
+  }
+}
+
+.reply-node .post-card:focus-within {
+  border-color: var(--border);
+  background: var(--bg-primary);
+  box-shadow: var(--shadow-ring);
+}
+
+/* Hairline connector rail. */
+.reply-children {
+  position: relative;
+  margin-top: 2px;
+  padding-left: 14px;
+}
+
+.reply-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 10px;
+  left: 4px;
+  width: 0;
+  border-left: 1px solid var(--border);
+  pointer-events: none;
+}
+
+.reply-expand-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform var(--duration-base) var(--ease-standard),
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .reply-expand-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.reply-expand-button.is-expanded {
+  transform: rotate(90deg);
+  color: var(--text-secondary);
+}
+
+.reply-node-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.reply-node-row > .post-card {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ------------------------------------------------------------
+   10. Responsive
+   ------------------------------------------------------------ */
+@media (max-width: 640px) {
+  .post-card {
+    margin: 0 6px 6px;
+    padding: 12px;
+  }
+
+  .post-header {
+    margin-bottom: 7px;
+  }
+
+  .post-text {
+    font-size: 14px;
+  }
+
+  .post-actions {
+    gap: 0 2px;
+  }
+
+  .action-button {
+    padding: 0 7px;
+  }
+
+  .post-poll {
+    padding: 10px;
+  }
+
+  .quoted-post-card {
+    padding: 9px 10px;
+  }
+
+  .thread-view {
+    padding: 8px 4px 24px;
+  }
+}
+
+/* Very narrow phones: keep the action row on one line. */
+@media (max-width: 380px) {
+  .action-button--impressions {
+    display: none;
+  }
+}
+
+/* --- v5.1 typography (Lead) ---
+   Japanese body text needs a slightly larger size and looser leading than
+   the Latin-first 14px the dense list was using. The <p> inherits the
+   container values so the feed's tighter line-height is not overridden. */
+.post-text {
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+  line-break: strict;
+  text-wrap: pretty;
+}
+
+.post-text p {
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  overflow-wrap: inherit;
+  line-break: inherit;
+  text-wrap: inherit;
+}
+
+.post-display-name {
+  font-size: 14.5px;
+}
+
+.post-username,
+.post-timestamp {
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------
+   Timeline promo card — quiet notice
+   ------------------------------------------------------------ */
+.timeline-promo {
+  margin: 0 8px 12px;
+  padding: 16px 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.timeline-promo-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  letter-spacing: var(--tracking-tight);
+}
+
+.timeline-promo-desc {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.timeline-promo-arcade-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 14px;
+  background: var(--primary);
+  color: var(--primary-fg);
+  border: 1px solid transparent;
+  border-radius: var(--radius-button);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--shadow-xs);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+.timeline-promo-arcade-btn:hover {
+  background: var(--primary-hover);
+}

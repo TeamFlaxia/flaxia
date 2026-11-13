@@ -5,12 +5,13 @@ import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { parsePostColors } from '../lib/post-colors.js';
 import { renderColorizedText } from '../lib/post-colors-dom.js';
+import { parseMediaCues, stripMediaCues } from '../lib/post-cues.js';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createMediaCarousel } from './MediaCarousel.js';
-import { isZipGame } from './PostStage.js';
+import { isZipGame, stripLeadingEmoji } from './PostStage.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 export interface QuotedPostCardProps {
@@ -32,25 +33,22 @@ function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
 
   const wrap = document.createElement('div');
   wrap.className = 'quoted-post-attachment';
-  wrap.style.cssText = `
-    margin-top: 0.5rem;
-    border-radius: 0.5rem;
-    overflow: hidden;
-    position: relative;
-  `;
+
+  const mediaCues = parseMediaCues(quoted.text || '').cues;
+  const cues = mediaCues.length > 0 ? mediaCues : undefined;
 
   if (quoted.attachments && quoted.attachments.length > 0) {
-    wrap.appendChild(createMediaCarousel({ postId: quoted.id, attachments: quoted.attachments }));
+    wrap.appendChild(createMediaCarousel({ postId: quoted.id, attachments: quoted.attachments, cues }));
     return wrap;
   }
 
   const gifKey = quoted.gif_key || '';
   if (gifKey.startsWith('video/')) {
-    wrap.appendChild(createVideoPlayer({ gifKey, postId: quoted.id }));
+    wrap.appendChild(createVideoPlayer({ gifKey, postId: quoted.id, cues }));
     return wrap;
   }
   if (gifKey.startsWith('audio/')) {
-    wrap.appendChild(createAudioPlayer({ gifKey: gifKey, postId: quoted.id }));
+    wrap.appendChild(createAudioPlayer({ gifKey: gifKey, postId: quoted.id, cues }));
     return wrap;
   }
   if (gifKey) {
@@ -72,21 +70,8 @@ function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
     if (isExecutable) {
       const badge = document.createElement('div');
       badge.className = 'quoted-post-attachment-badge';
-      badge.style.cssText = `
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        transform: translate(-50%, -50%);
-        background: rgba(0, 0, 0, 0.7);
-        color: #fff;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        pointer-events: none;
-      `;
-      if (quoted.swf_key?.startsWith('swf/')) badge.textContent = t('post_stage.play_flash');
-      else badge.textContent = t('post_stage.run_zip');
+      if (quoted.swf_key?.startsWith('swf/')) badge.textContent = stripLeadingEmoji(t('post_stage.play_flash'));
+      else badge.textContent = stripLeadingEmoji(t('post_stage.run_zip'));
       wrap.appendChild(badge);
     }
     return wrap;
@@ -94,17 +79,9 @@ function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
 
   if (isExecutable) {
     const pill = document.createElement('div');
-    pill.style.cssText = `
-      padding: 0.75rem;
-      border-radius: 0.5rem;
-      background: var(--bg-secondary);
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      font-weight: 600;
-      text-align: center;
-    `;
-    if (quoted.swf_key?.startsWith('swf/')) pill.textContent = t('post_stage.click_play_flash');
-    else pill.textContent = t('post_stage.click_to_run');
+    pill.className = 'quoted-post-attachment-pill';
+    if (quoted.swf_key?.startsWith('swf/')) pill.textContent = stripLeadingEmoji(t('post_stage.click_play_flash'));
+    else pill.textContent = stripLeadingEmoji(t('post_stage.click_to_run'));
     wrap.appendChild(pill);
     return wrap;
   }
@@ -117,63 +94,43 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
 
   const card = document.createElement('div');
   card.className = 'quoted-post-card';
-  card.style.cssText = `
-    margin: 0 0 1rem 0;
-    border: 1px solid var(--border);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    cursor: ${disableNavigation ? 'default' : 'pointer'};
-    background: var(--bg-secondary, rgba(0,0,0,0.02));
-  `;
+  card.style.cursor = disableNavigation ? 'default' : 'pointer';
 
   if (!quoted) {
     const unavailable = document.createElement('div');
     unavailable.className = 'quoted-post-unavailable';
-    unavailable.style.cssText = `
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      font-style: italic;
-    `;
     unavailable.textContent = t('post.quote_unavailable');
     card.appendChild(unavailable);
     return card;
   }
 
+  const navigate = () => onNavigateToThread(quoted.id);
+
   card.addEventListener('click', (e) => {
     e.stopPropagation();
-    onNavigateToThread(quoted.id);
+    navigate();
   });
+
+  if (!disableNavigation) {
+    card.setAttribute('role', 'link');
+    card.setAttribute('tabindex', '0');
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      e.stopPropagation();
+      navigate();
+    });
+  }
 
   const nameRow = document.createElement('div');
   nameRow.className = 'quoted-post-author';
-  nameRow.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    margin-bottom: 0.25rem;
-  `;
 
   const avatar = document.createElement('span');
   avatar.className = 'quoted-post-avatar';
-  avatar.style.cssText = `
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 50%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #fff;
-    background: var(--accent);
-    flex-shrink: 0;
-    overflow: visible;
-  `;
   if (quoted.avatar_key) {
     avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${quoted.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
-    avatar.textContent = '';
   } else {
     avatar.textContent = (quoted.display_name || quoted.username || '?').charAt(0).toUpperCase();
   }
@@ -181,20 +138,11 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
 
   const name = document.createElement('span');
   name.className = 'quoted-post-name';
-  name.style.cssText = `
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: var(--text-primary);
-  `;
   name.textContent = quoted.display_name || quoted.username || '';
   applyNameColor(name, quoted.name_color, quoted.badge_type);
 
   const username = document.createElement('span');
   username.className = 'quoted-post-username';
-  username.style.cssText = `
-    font-size: 0.8rem;
-    color: var(--text-muted);
-  `;
   username.textContent = quoted.username ? `@${quoted.username}` : '';
 
   nameRow.appendChild(avatar);
@@ -206,18 +154,11 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
 
   const body = document.createElement('div');
   body.className = 'quoted-post-text';
-  body.style.cssText = `
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    word-break: break-word;
-  `;
   if (canUsePostColors({ badge_type: quoted.badge_type })) {
-    const parsed = parsePostColors(quoted.text || '');
+    const parsed = parsePostColors(stripMediaCues(quoted.text || ''));
     body.appendChild(renderColorizedText(parsed.plain, parsed.spans));
   } else {
-    body.textContent = (quoted.text || '').replace(/\\\{/g, '{');
+    body.textContent = stripMediaCues(quoted.text || '').replace(/\\\{/g, '{');
   }
   card.appendChild(body);
 

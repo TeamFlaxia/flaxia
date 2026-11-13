@@ -4,7 +4,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { createOfflineFetch, isOfflineReadable } from '../src/lib/offline-fetch.ts';
 import { createOfflineStore, type OfflineStore } from '../src/lib/offline-store.ts';
 
-function client(network: typeof fetch, store = createOfflineStore(new IDBFactory())) {
+function client(network: typeof fetch, store = createOfflineStore(new IDBFactory()), probe?: () => Promise<boolean>) {
   let online = true;
   let offline = false;
   let time = Date.now();
@@ -16,11 +16,18 @@ function client(network: typeof fetch, store = createOfflineStore(new IDBFactory
     setOffline: (value: boolean) => {
       offline = value;
     },
+    probe,
     now: () => time,
   };
+  // Match real offline behavior: a disconnected client rejects instead of
+  // returning the online fixture.
+  const transport: typeof fetch = async (input, init) => {
+    if (!online) throw new TypeError('offline');
+    return network(input, init);
+  };
   return {
-    fetch: createOfflineFetch(network, options),
-    restart: () => createOfflineFetch(network, options),
+    fetch: createOfflineFetch(transport, options),
+    restart: () => createOfflineFetch(transport, options),
     store,
     setOnline: (value: boolean) => {
       online = value;
@@ -288,64 +295,414 @@ test('reauthentication and SRP upgrades preserve the saved identity and feed, in
   assert.deepEqual(await (await c.restart()('/api/posts')).json(), { posts: ['saved'] });
 });
 
-test('unrelated successes cannot hide a saved-feed warning; refreshing that feed clears it', async () => {
-  let fail = false;
-  const c = client(async (input) => {
-    if (new URL((input as Request).url).pathname === '/api/posts' && fail) throw new TypeError('offline');
-    return json({ posts: ['saved'] });
-  });
+test('any successful network response restores online reads', async () => {
+  const c = client(async () => json({ posts: ['saved'] }));
   await c.fetch('/api/posts');
-  fail = true;
+  c.setOnline(false);
   assert.equal((await c.fetch('/api/posts')).headers.get('X-Flaxia-Offline'), '1');
-  await c.fetch('/api/notifications');
-  await c.fetch('/api/images/avatar.png');
+  assert.equal((await c.fetch('/api/notifications')).status, 503);
   assert.equal(c.offline(), true);
-  fail = false;
-  await c.fetch('/api/posts');
+  c.setOnline(true);
+  await c.fetch('/api/notifications');
   assert.equal(c.offline(), false);
 });
 
-for (const savedPage of [false, true]) {
-  test(`refreshing a feed clears its offline pagination warning (saved page: ${savedPage})`, async () => {
-    const c = client(async (input) =>
-      new URL((input as Request).url).pathname === '/api/me' ? me('alice') : json({ posts: ['fresh'] }),
-    );
-    await c.fetch('/api/me');
-    await c.fetch('/api/posts?limit=20');
-    if (savedPage) await c.fetch('/api/posts?cursor=old&limit=20');
-    c.setOnline(false);
-    await c.fetch('/api/posts?limit=20');
-    assert.equal((await c.fetch('/api/posts?cursor=old&limit=20')).status, savedPage ? 200 : 503);
-    c.setOnline(true);
-    await c.fetch('/api/me');
-    await c.fetch('/api/posts?limit=20');
-    assert.equal(c.offline(), false);
-  });
-}
+test('a saved feed page is restored offline and one later response restores online reads', async () => {
+  const c = client(async (input) =>
+    new URL((input as Request).url).pathname === '/api/me' ? me('alice') : json({ posts: ['fresh'] }),
+  );
+  await c.fetch('/api/me');
+  await c.fetch('/api/posts?limit=20');
+  await c.fetch('/api/posts?cursor=old&limit=20');
+  c.setOnline(false);
+  assert.equal((await c.fetch('/api/posts?cursor=old&limit=20')).headers.get('X-Flaxia-Offline'), '1');
+  assert.equal(c.offline(), true);
+  assert.equal((await c.fetch('/api/posts?cursor=missing')).status, 503);
+  assert.equal(c.offline(), true);
+  c.setOnline(true);
+  await c.fetch('/api/me');
+  assert.equal(c.offline(), false);
+});
 
-test('refreshing another feed or receiving an HTTP error does not clear saved pages', async () => {
+test('an HTTP error still proves connectivity', async () => {
   let status = 200;
   const c = client(async () => json({ posts: [] }, status));
-  await c.fetch('/api/posts?following=true&limit=20&cursor=old');
+  await c.fetch('/api/posts');
   c.setOnline(false);
-  await c.fetch('/api/posts?following=true&limit=20&cursor=old');
-  c.setOnline(true);
-  await c.fetch('/api/posts?limit=20');
-  await c.fetch('/api/posts/recommended?following=true&limit=20');
+  await c.fetch('/api/posts');
   assert.equal(c.offline(), true);
   status = 500;
-  await c.fetch('/api/posts?limit=20&following=true');
-  assert.equal(c.offline(), true);
-  status = 200;
-  await c.fetch('/api/posts?limit=20&following=true');
+  c.setOnline(true);
+  assert.equal((await c.fetch('/api/posts')).status, 500);
   assert.equal(c.offline(), false);
 });
 
-test('an uncached failed read does not keep the banner after connectivity recovers', async () => {
+test('an uncached failed read does not keep the client offline after connectivity recovers', async () => {
   const c = client(async () => json({ posts: [] }));
   c.setOnline(false);
   assert.equal((await c.fetch('/api/posts?cursor=missing')).status, 503);
   c.setOnline(true);
   await c.fetch('/api/posts');
   assert.equal(c.offline(), false);
+});
+
+test('a background probe clears a false navigator offline state without a request', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let navigatorOnline = false;
+  let offline = false;
+  let probes = 0;
+  const options = {
+    store: createOfflineStore(new IDBFactory()),
+    baseUrl: 'https://localhost/',
+    apiOrigin: 'https://flaxia.app',
+    isOnline: () => navigatorOnline,
+    setOffline: (value: boolean) => {
+      offline = value;
+    },
+    probe: async () => {
+      probes++;
+      navigatorOnline = true;
+      return true;
+    },
+  };
+  const fetch = createOfflineFetch(async () => json({ posts: ['fresh'] }), options);
+
+  assert.equal((await fetch('/api/posts')).status, 503);
+  assert.equal(offline, true);
+
+  t.mock.timers.tick(1000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(probes, 1);
+  assert.equal(offline, false);
+  assert.deepEqual(await (await fetch('/api/posts')).json(), { posts: ['fresh'] });
+});
+
+test('the reload action starts one background probe even when fired repeatedly', async () => {
+  const listeners = new Map<string, EventListener>();
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      addEventListener: (type: string, listener: EventListener) => {
+        listeners.set(type, listener);
+      },
+    },
+  });
+  try {
+    let probes = 0;
+    let resolveProbe: ((reconnected: boolean) => void) | undefined;
+    const fetch = createOfflineFetch(async () => json({ posts: [] }), {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      isOnline: () => true,
+      setOffline: () => {},
+      probe: () => {
+        probes++;
+        return new Promise<boolean>((resolve) => {
+          resolveProbe = resolve;
+        });
+      },
+    });
+    const reload = listeners.get('flaxiaRetryConnectivity');
+    assert.ok(reload);
+    reload(new Event('flaxiaRetryConnectivity'));
+    reload(new Event('flaxiaRetryConnectivity'));
+    assert.equal(probes, 1);
+    assert.ok(resolveProbe);
+    resolveProbe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 1);
+    await fetch('/api/posts');
+  } finally {
+    delete (globalThis as { window?: unknown }).window;
+  }
+});
+
+test('sign-in requests reach the network despite a false offline hint', async () => {
+  const paths: string[] = [];
+  const fetch = createOfflineFetch(
+    async (input) => {
+      paths.push(new URL((input as Request).url).pathname);
+      return json({ authority: 'flaxia-auth' });
+    },
+    {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      isOnline: () => false,
+      setOffline: () => {},
+    },
+  );
+
+  assert.equal((await fetch('/api/auth/mode')).status, 200);
+  assert.equal(
+    (
+      await fetch('/api/auth/flaxia/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+    ).status,
+    200,
+  );
+  assert.deepEqual(paths, ['/api/auth/mode', '/api/auth/flaxia/exchange']);
+});
+
+function installWindowListeners() {
+  const listeners = new Map<string, EventListener>();
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      addEventListener: (type: string, listener: EventListener) => {
+        listeners.set(type, listener);
+      },
+    },
+  });
+  return {
+    fire: (type: string) => listeners.get(type)?.(new Event(type)),
+    restore: () => {
+      delete (globalThis as { window?: unknown }).window;
+    },
+  };
+}
+
+test('a failed probe clears reachable so the next read uses saved content', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const win = installWindowListeners();
+  try {
+    let online = true;
+    let offline = false;
+    let probes = 0;
+    let networkCalls = 0;
+    const fetch = createOfflineFetch(
+      async () => {
+        networkCalls++;
+        return json({ posts: ['fresh'] });
+      },
+      {
+        store: createOfflineStore(new IDBFactory()),
+        baseUrl: 'https://localhost/',
+        apiOrigin: 'https://flaxia.app',
+        isOnline: () => online,
+        setOffline: (value: boolean) => {
+          offline = value;
+        },
+        probe: async () => {
+          probes++;
+          return false;
+        },
+      },
+    );
+    await fetch('/api/posts');
+    online = false;
+    win.fire('flaxiaRetryConnectivity');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 1);
+    assert.equal(offline, true);
+    const response = await fetch('/api/posts');
+    assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+    assert.equal(networkCalls, 1);
+  } finally {
+    win.restore();
+  }
+});
+
+test('an offline event clears reachable so the next read uses saved content', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const win = installWindowListeners();
+  try {
+    let online = true;
+    let offline = false;
+    let networkCalls = 0;
+    const fetch = createOfflineFetch(
+      async () => {
+        networkCalls++;
+        return json({ posts: ['fresh'] });
+      },
+      {
+        store: createOfflineStore(new IDBFactory()),
+        baseUrl: 'https://localhost/',
+        apiOrigin: 'https://flaxia.app',
+        isOnline: () => online,
+        setOffline: (value: boolean) => {
+          offline = value;
+        },
+        probe: async () => false,
+      },
+    );
+    await fetch('/api/posts');
+    online = false;
+    win.fire('offline');
+    const response = await fetch('/api/posts');
+    assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+    assert.equal(networkCalls, 1);
+    assert.equal(offline, true);
+  } finally {
+    win.restore();
+  }
+});
+
+test('the reload signal lets the next read try the network before the probe resolves', async () => {
+  const win = installWindowListeners();
+  try {
+    let resolveProbe: ((value: boolean) => void) | undefined;
+    let networkCalls = 0;
+    const fetch = createOfflineFetch(
+      async () => {
+        networkCalls++;
+        return json({ posts: ['fresh'] });
+      },
+      {
+        store: createOfflineStore(new IDBFactory()),
+        baseUrl: 'https://localhost/',
+        apiOrigin: 'https://flaxia.app',
+        isOnline: () => false,
+        setOffline: () => {},
+        probe: () =>
+          new Promise<boolean>((resolve) => {
+            resolveProbe = resolve;
+          }),
+      },
+    );
+    win.fire('flaxiaRetryConnectivity');
+    const response = await fetch('/api/posts');
+    assert.equal(response.headers.has('X-Flaxia-Offline'), false);
+    assert.equal(networkCalls, 1);
+    resolveProbe?.(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  } finally {
+    win.restore();
+  }
+});
+
+test('a stalled probe times out and retries', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let probes = 0;
+  const fetch = createOfflineFetch(async () => json({ posts: [] }), {
+    store: createOfflineStore(new IDBFactory()),
+    baseUrl: 'https://localhost/',
+    apiOrigin: 'https://flaxia.app',
+    isOnline: () => false,
+    setOffline: () => {},
+    probe: () => {
+      probes++;
+      return new Promise<boolean>(() => {});
+    },
+  });
+  t.mock.timers.tick(1000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(probes, 1);
+  t.mock.timers.tick(15000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(2000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(probes, 2);
+  assert.equal((await fetch('/api/posts')).status, 503);
+});
+
+test('a guest /api/me 401 does not clear the public feed snapshot', async () => {
+  const c = client(async (input) =>
+    new URL((input as Request).url).pathname === '/api/me'
+      ? json({ error: 'unauthorized' }, 401)
+      : json({ posts: ['saved'] }),
+  );
+  await c.fetch('/api/posts');
+  assert.equal((await c.fetch('/api/me')).status, 401);
+  c.setOnline(false);
+  const response = await c.fetch('/api/posts');
+  assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+  assert.deepEqual(await response.json(), { posts: ['saved'] });
+});
+
+test('a single failed read does not clear a proven connection', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let networkCalls = 0;
+  let failNext = false;
+  const fetch = createOfflineFetch(
+    async () => {
+      networkCalls++;
+      if (failNext) {
+        failNext = false;
+        throw new TypeError('offline');
+      }
+      return json({ posts: [`call-${networkCalls}`] });
+    },
+    {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      // The WebView's navigator.onLine is stuck at false, but the network
+      // checks out via the probe.
+      isOnline: () => false,
+      setOffline: () => {},
+      probe: async () => true,
+    },
+  );
+  t.mock.timers.tick(1000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(await (await fetch('/api/posts')).json(), { posts: ['call-1'] });
+
+  // One transient failure: the read falls back to saved content...
+  failNext = true;
+  const cached = await fetch('/api/posts');
+  assert.equal(cached.headers.get('X-Flaxia-Offline'), '1');
+  assert.equal(networkCalls, 2);
+
+  // ...but the proven connection is not invalidated, so the next read
+  // retries the network instead of being denied from the cache.
+  const fresh = await fetch('/api/posts');
+  assert.equal(fresh.headers.has('X-Flaxia-Offline'), false);
+  assert.equal(networkCalls, 3);
+  assert.deepEqual(await fresh.json(), { posts: ['call-3'] });
+});
+
+test('probing stops after the consecutive-failure cap and resumes on explicit retry', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const win = installWindowListeners();
+  try {
+    let probes = 0;
+    createOfflineFetch(async () => json({ posts: [] }), {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      isOnline: () => false,
+      setOffline: () => {},
+      probe: async () => {
+        probes++;
+        return false;
+      },
+    });
+    for (let i = 0; i < 40; i++) {
+      t.mock.timers.tick(30_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(probes, 20);
+    win.fire('flaxiaRetryConnectivity');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 21);
+  } finally {
+    win.restore();
+  }
+});
+
+test('a guest 401 that lands after the feed cache does not clear it', async () => {
+  let resolveMe: ((response: Response) => void) | undefined;
+  const c = client(async (input) => {
+    if (new URL((input as Request).url).pathname === '/api/me')
+      return new Promise<Response>((resolve) => {
+        resolveMe = resolve;
+      });
+    return json({ posts: ['saved'] });
+  });
+  await c.fetch('/api/posts');
+  const pendingMe = c.fetch('/api/me');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  resolveMe?.(json({ error: 'unauthorized' }, 401));
+  await pendingMe;
+  c.setOnline(false);
+  const response = await c.fetch('/api/posts');
+  assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+  assert.deepEqual(await response.json(), { posts: ['saved'] });
 });

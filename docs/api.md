@@ -2,6 +2,10 @@
 
 All API endpoints are served from `functions/api/[[route]].ts` via Hono framework.
 
+> 開発者向けドキュメントは [docs/developer/](developer/) にまとめています。
+> ゲーム作者は [Flaxia Game API](developer/game-api.md) と [Game SDK](developer/sdk.md) を、
+> 連携アプリ開発者は [REST API](developer/rest-api.md) を参照してください。
+
 ---
 
 ## Authentication
@@ -9,14 +13,21 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 SRP-6a end-to-end: the browser derives the verifier locally and the server
 never sees a password (see `docs/e2ee.md`).
 
+ログイン画面は `auth.flaxia.app` が配信します。Flaxia の `GET /api/auth/start` が
+PKCE の verifier を Cookie に保存して Auth へ 302 し、`GET /api/auth/callback` が
+`code` を grant に交換して `session` Cookie を発行します。詳細は
+[auth-redirect.md](auth-redirect.md) を参照してください。
+
 ### Register
 `POST /api/auth/register`
-- Body: `{ email, username, display_name, srp: { salt, verifier, group, kdf } }`
+- Body: `{ username, display_name, srp: { salt, verifier, group, kdf } }`
+- `email` is optional; accounts are username-first
 - SRP verifier is **required** — a plaintext `password` field is rejected with 400
 - Returns session cookie
 
 ### Login (SRP)
-1. `POST /api/auth/login/start` — `{ email }` → `{ challenge_id, salt, B, srp }`
+1. `POST /api/auth/login/start` — `{ username }` → `{ challenge_id, salt, B, srp }`
+   - `email` is still accepted for pre-username clients
    - `srp: false` means a pre-SRP account; only then may the client fall back
 2. `POST /api/auth/login/verify` — `{ challenge_id, A, M1 }` → session cookie
    - The client derives `M1` with the KDF id returned in step 1 (`srp_kdf`)
@@ -37,7 +48,7 @@ yes/no variant for callers that do not want to attach the proof to another
 request. It never creates a session.
 
 ### Legacy login (deprecated)
-`POST /api/auth/login` — `{ email, password }`
+`POST /api/auth/login` — `{ username, password }`
 - Exists **only** for accounts created before SRP (`srp_salt IS NULL`)
 - Deleted once `GET /api/admin/auth-migration` reports `cutoff_reached`
 
@@ -49,8 +60,10 @@ automatically after a successful legacy login, or on password change)
 `POST /api/auth/logout`
 
 ### Me
-`GET /api/auth/me`
-- Returns current user info
+`GET /api/me`
+- Returns current user info, including `badge_type` and the equipped title
+  (`equipped_title_id`, `title_name`, `title_name_ja`, `title_description`,
+  `title_description_ja`, `title_icon`) resolved from the title catalog
 
 ---
 
@@ -146,6 +159,24 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `POST /api/posts/:id/bookmark`
 `DELETE /api/posts/:id/bookmark`
 
+### Recommended Feed
+`GET /api/posts/recommended?limit=20&cursor=...`
+- Server-side ranking (following / trending / recent)
+
+`GET /api/posts/recommended?client_rank=1&include_vectors=1&limit=100`
+- Adds `vectors` (int8 public post embeddings), `vector_meta`, and
+  `base_scores`; the server computes these from follows, recency, popularity,
+  and the caller's own history, and the unlocked browser blends them with
+  cosine similarity against its Vault recommendation profile
+- `next_cursor` is compatible with the non-client endpoint
+
+### Recommendation Profile Sources
+`GET /api/recommendations/profile-sources`
+- Requires a session; rate limited
+- Returns the caller's fresh / bookmark / reply / share / dwell sources with
+  public post embeddings
+- Never returns or accepts a plaintext preference vector
+
 ---
 
 ## Upload
@@ -216,6 +247,24 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `GET /api/users/:username/followers`
 `GET /api/users/:username/following`
 
+### Suggestions
+`GET /api/users/suggest?q=`
+`GET /api/users/suggestions`
+- Returns user objects for typeahead / recommendations
+
+### Badge & title fields
+User objects returned by the profile, suggestions, followers/following,
+blocked list, search (`type=users` and the `users` array of post search), and
+notification `actor`/`actors` include:
+
+| Field | Type | Description |
+|---|---|---|
+| `badge_type` | `string \| null` | Avatar badge; currently `flaxia_plus` or `null` |
+| `equipped_title_id` | `string \| null` | Equipped achievement/title id, or `null` |
+| `title_name` / `title_name_ja` | `string \| null` | Title display name (en / ja) |
+| `title_description` / `title_description_ja` | `string \| null` | Title description (en / ja) |
+| `title_icon` | `string \| null` | Title icon image URL; non-image legacy values render as name only |
+
 ### Update Profile
 `PATCH /api/users/me`
 
@@ -251,17 +300,27 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
   They are disabled when `ENVIRONMENT=test`.
 - Responses are cached in KV for 60s with a hashed, per-viewer key.
 
+User results (both `type=users` and the `users` array returned with post
+search) include the badge and title fields described in
+[Badge & title fields](#badge--title-fields).
+
 ---
 
 ## Notifications
 
 `GET /api/notifications`
+- Each notification's `actor` / `actors` include the badge and title fields
+  described in [Badge & title fields](#badge--title-fields)
 
 ---
 
 ## Arcade (Game Posts)
 
 `GET /api/games?cursor=&limit=`
+
+`GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset=0`
+- Recommended mode adds `vectors`, `vector_meta`, and `base_scores` for
+  client-side ranking. Without `client_rank`, ordering stays server-side.
 
 ---
 

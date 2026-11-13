@@ -1,6 +1,8 @@
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
+import { parseMediaCues } from '../lib/post-cues.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -8,6 +10,21 @@ import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createMediaCarousel } from './MediaCarousel.js';
 import { createVideoPlayer } from './VideoPlayer.js';
+
+// Strip a leading emoji from a translated label so the play overlay can
+// pair its own typographic glyph with plain text.
+export function stripLeadingEmoji(label: string): string {
+  return label.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, '');
+}
+
+// Keyboard parity for the div-based launch surfaces.
+function makeActivatable(element: HTMLElement): void {
+  element.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    element.click();
+  });
+}
 
 // Create SWF execution button (similar to ZIP but for Flash)
 function createSwfExecutionButton(props: {
@@ -18,55 +35,24 @@ function createSwfExecutionButton(props: {
 }): HTMLElement {
   const container = document.createElement('div');
   container.className = 'execution-button';
-  container.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    cursor: pointer;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    padding: 20px;
-  `;
+  container.setAttribute('role', 'button');
+  container.setAttribute('tabindex', '0');
+  container.setAttribute('aria-label', props.label);
 
   // Icon
-  const icon = document.createElement('div');
+  const icon = document.createElement('span');
+  icon.className = 'stage-launch-icon';
+  icon.setAttribute('aria-hidden', 'true');
   icon.textContent = props.icon;
-  icon.style.cssText = `
-    font-size: 48px;
-    margin-bottom: 12px;
-  `;
 
   // Text
-  const text = document.createElement('div');
-  text.textContent = props.label;
-  text.style.cssText = `
-    font-size: 16px;
-    font-weight: 600;
-    text-align: center;
-  `;
+  const text = document.createElement('span');
+  text.className = 'stage-launch-label';
+  text.textContent = stripLeadingEmoji(props.label);
 
   container.appendChild(icon);
   container.appendChild(text);
-
-  // Hover effects
-  container.addEventListener('mouseenter', () => {
-    container.style.transform = 'scale(1.02)';
-    container.style.boxShadow = '0 4px 20px rgba(102, 126, 234, 0.4)';
-  });
-
-  container.addEventListener('mouseleave', () => {
-    container.style.transform = 'scale(1)';
-    container.style.boxShadow = 'none';
-  });
+  makeActivatable(container);
 
   // Click handler - directly trigger mode change for SWF
   container.addEventListener('click', async (e) => {
@@ -74,7 +60,7 @@ function createSwfExecutionButton(props: {
 
     // Show loading state
     const originalContent = container.innerHTML;
-    container.innerHTML = t('post_stage.loading_flash');
+    container.innerHTML = stripLeadingEmoji(t('post_stage.loading_flash'));
     container.style.pointerEvents = 'none';
 
     try {
@@ -101,45 +87,22 @@ interface ZipExecutionButtonProps {
 function createExecutionButton(props: ZipExecutionButtonProps): HTMLElement {
   const container = document.createElement('div');
   container.className = 'zip-execution-button';
-  container.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    color: white;
-    font-weight: 600;
-    font-size: 16px;
-    gap: 8px;
-  `;
+  container.setAttribute('role', 'button');
+  container.setAttribute('tabindex', '0');
+  container.setAttribute('aria-label', props.label);
 
   const icon = document.createElement('span');
+  icon.className = 'stage-launch-icon';
+  icon.setAttribute('aria-hidden', 'true');
   icon.textContent = props.icon;
-  icon.style.fontSize = '24px';
 
   const text = document.createElement('span');
-  text.textContent = props.label;
+  text.className = 'stage-launch-label';
+  text.textContent = stripLeadingEmoji(props.label);
 
   container.appendChild(icon);
   container.appendChild(text);
-
-  // Hover effects
-  container.addEventListener('mouseenter', () => {
-    container.style.transform = 'scale(1.02)';
-    container.style.boxShadow = '0 4px 20px rgba(102, 126, 234, 0.4)';
-  });
-
-  container.addEventListener('mouseleave', () => {
-    container.style.transform = 'scale(1)';
-    container.style.boxShadow = 'none';
-  });
+  makeActivatable(container);
 
   // Click handler
   container.addEventListener('click', (e) => {
@@ -160,119 +123,68 @@ function createThumbnailWithOverlay(props: {
 }): HTMLElement {
   const container = document.createElement('div');
   container.className = 'thumbnail-overlay-container';
+  container.setAttribute('role', 'button');
+  container.setAttribute('tabindex', '0');
+  container.setAttribute('aria-label', stripLeadingEmoji(props.overlayLabel));
 
   // The parent .post-stage--flash/--zip already establishes the aspect ratio
   // via padding-bottom, so we use absolute positioning to fill it instead of
   // adding another padding-bottom (which would double the height).
-  container.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: var(--bg-input);
-    border-radius: 8px;
-    overflow: hidden;
-  `;
-
   // Image container
   const imageContainer = document.createElement('div');
-  imageContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
+  imageContainer.className = 'thumbnail-media';
 
   // Thumbnail image
   const image = document.createElement('img');
-  setOfflineImage(image, nativeApiHref(`/api/thumbnail/${props.postId}`));
-  // Timeline mounts dozens of stages: decode lazily so off-screen
-  // thumbnails don't contend with first paint.
-  image.loading = 'lazy';
-  image.decoding = 'async';
-  image.style.cssText = `
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-    image-rendering: auto;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    backface-visibility: hidden;
-    transform: translateZ(0);
-    filter: contrast(1.1) brightness(1.05);
-  `;
+  // Data-saver: skip thumbnail bytes for ZIP/SWF — the play overlay already
+  // requires a tap, so the poster is pure prefetch cost.
+  const skipThumbnail = isDataSaverEnabled();
+  if (skipThumbnail) {
+    image.style.display = 'none';
+    imageContainer.dataset.dataSaver = '1';
+    imageContainer.style.background = 'var(--bg-input)';
+  } else {
+    setOfflineImage(image, nativeApiHref(`/api/thumbnail/${props.postId}`));
+    // Timeline mounts dozens of stages: decode lazily so off-screen
+    // thumbnails don't contend with first paint.
+    image.loading = 'lazy';
+    image.decoding = 'async';
+  }
 
-  // Load image with fade-in
+  // Load image with fade-in (CSS owns the opacity transition)
   image.onload = () => {
-    image.style.opacity = '1';
+    image.classList.add('is-loaded');
   };
 
   image.onerror = () => {
     // Show fallback on error
     image.style.display = 'none';
     const fallback = document.createElement('div');
-    fallback.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--bg-secondary);
-      color: var(--text-muted);
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 0.875rem;
-    `;
+    fallback.className = 'stage-fallback';
     fallback.textContent = t('post_stage.thumbnail_unavailable');
     imageContainer.appendChild(fallback);
   };
 
-  // Overlay button
+  // Play affordance: icon disc + label (hover handled in CSS).
   const overlay = document.createElement('div');
-  overlay.style.cssText = `
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0, 0, 0, 0.7);
-    color: white;
-    padding: 8px 16px;
-    border-radius: 20px;
-    font-size: 14px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.2s ease;
-    pointer-events: none;
-    z-index: 2;
-  `;
-  overlay.textContent = props.overlayLabel;
+  overlay.className = 'stage-play-overlay';
+  overlay.setAttribute('aria-hidden', 'true');
+
+  const playIcon = document.createElement('span');
+  playIcon.className = 'stage-play-icon';
+  playIcon.textContent = '▶';
+
+  const playLabel = document.createElement('span');
+  playLabel.className = 'stage-play-label';
+  playLabel.textContent = stripLeadingEmoji(props.overlayLabel);
+
+  overlay.appendChild(playIcon);
+  overlay.appendChild(playLabel);
 
   imageContainer.appendChild(image);
   imageContainer.appendChild(overlay);
   container.appendChild(imageContainer);
-
-  // Hover effects
-  container.addEventListener('mouseenter', () => {
-    overlay.style.background = 'rgba(0, 0, 0, 0.8)';
-    overlay.style.transform = 'translate(-50%, -50%) scale(1.05)';
-  });
-
-  container.addEventListener('mouseleave', () => {
-    overlay.style.background = 'rgba(0, 0, 0, 0.7)';
-    overlay.style.transform = 'translate(-50%, -50%) scale(1)';
-  });
+  makeActivatable(container);
 
   // Click handler - trigger execution
   container.addEventListener('click', (e) => {
@@ -343,6 +255,10 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   container.innerHTML = '';
 
   const attachments = props.post.attachments || [];
+  // Timed comments (Niconico-style cues) are parsed from the author's body and
+  // overlaid on the media. Cue lines themselves are not part of the visible body.
+  const parsedCues = parseMediaCues(props.post.text).cues;
+  const cues = parsedCues.length > 0 ? parsedCues : undefined;
 
   // Only show content if there are attachments or a thumbnail
   if (
@@ -361,7 +277,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     if (attachments.length > 0) {
       // Multi-media attachments render as a horizontal scroll carousel
       container.classList.add('post-stage--carousel');
-      mediaElement = createMediaCarousel({ postId: props.post.id, attachments });
+      mediaElement = createMediaCarousel({ postId: props.post.id, attachments, cues });
       container.appendChild(mediaElement);
       return;
     }
@@ -382,7 +298,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         mediaElement = createExecutionButton({
           postId: props.post.id,
           label: t('post_stage.click_execute_zip'),
-          icon: '🚀',
+          icon: '▶',
           onClick: () => props.onModeChange(PostCardMode.EXECUTING),
         });
       }
@@ -403,7 +319,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         mediaElement = createSwfExecutionButton({
           postId: props.post.id,
           label: t('post_stage.click_play_flash'),
-          icon: '⚡',
+          icon: '▶',
           onClick: () => props.onModeChange(PostCardMode.EXECUTING),
         });
         // Add flash class for 4:3 aspect ratio
@@ -414,12 +330,14 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       mediaElement = createAudioPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id,
+        cues,
       });
     } else if (props.post.gif_key && props.post.gif_key.startsWith('video/')) {
       container.classList.add('post-stage--video');
       mediaElement = createVideoPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id,
+        cues,
       });
     } else if (props.post.gif_key) {
       container.classList.add('post-stage--image');
@@ -453,7 +371,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       // Attachments have no execution mode — keep showing the carousel even if
       // the stage somehow ended up in EXECUTING mode.
       container.classList.add('post-stage--carousel');
-      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments }));
+      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments, cues }));
     } else if (isZipGame(props.post.payload_key)) {
       // The executeZipAuto function will handle creating the iframe and cleanup
       executeZipAuto(props.post.id, container, undefined, props.versionId).catch((error: Error) => {
