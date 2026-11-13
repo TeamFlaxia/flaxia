@@ -60,15 +60,21 @@ Session cookies are never returned to JavaScript.
 Any response that reaches the network restores normal online reads even if
 saved content is still being shown. Individual saved responses remain marked
 with `X-Flaxia-Offline` so stale data is still discoverable. While the client
-believes it is offline it keeps probing connectivity in the background (1s to
-30s backoff, 15s probe deadline); one successful probe restores online
-behavior, and a failed probe invalidates the previous proof of reachability.
-The timeline reload button requests an immediate probe and lets the next read
-try the network, and only one probe runs at a time. A successful probe also
-refreshes the session and timeline. `/api/auth/*` requests always attempt the
-network so a false offline hint can never disable sign-in. Other native paths
-that used to read `navigator.onLine` directly (images, game launch/sync, and
-notification polling) use the same reachability state.
+believes it is offline it probes connectivity in the background (1s to 30s
+backoff, 15s probe deadline) up to 20 consecutive failures; after that cap the
+loop stops until the browser fires `online` or the user taps reload, so a
+long outage cannot runaway-probe forever. One successful probe restores
+online behavior, and a failed probe invalidates the previous proof of
+reachability — but a single failed read never does: the next read retries the
+network and only falls back to saved content when the attempt itself fails.
+The probe itself uses the same 15s deadline as reads, so it cannot report
+offline while reads would still succeed. The timeline reload button requests
+an immediate probe and lets the next read try the network, and only one probe
+runs at a time. A successful probe also refreshes the session and timeline.
+`/api/auth/*` requests always attempt the network so a false offline hint can
+never disable sign-in. Other native paths that used to read `navigator.onLine`
+directly (images, game launch/sync, and notification polling) use the same
+reachability state.
 
 ## Bookmarked game downloads
 

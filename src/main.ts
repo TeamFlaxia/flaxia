@@ -78,8 +78,9 @@ const probeConnectivity = async (): Promise<boolean> => {
     const response = await nativeFetch('/api/me', {
       cache: 'no-store',
       credentials: 'include',
-      // A connected socket with a stalled response must not pin `probing`.
-      signal: AbortSignal.timeout(8000),
+      // Match the offline layer's 15s probe deadline: a probe stricter than
+      // a real read would report "offline" while reads still succeed.
+      signal: AbortSignal.timeout(15000),
     });
     try {
       await response.body?.cancel();
