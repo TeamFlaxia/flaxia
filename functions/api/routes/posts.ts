@@ -39,7 +39,7 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
-import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
+import { deleteGameTitlesForPosts, USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
 import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
@@ -3939,6 +3939,11 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
     }
 
     const descendantIds = descendants.map((r) => r.id);
+
+    // Game achievements are scoped to their game post. Remove them with the
+    // post so the public title catalog cannot retain orphaned definitions.
+    await deleteGameTitlesForPosts(c.env.DB, [post.id, ...descendantIds]);
+
     if (descendantIds.length > 0) {
       const placeholders = descendantIds.map(() => '?').join(',');
       await c.env.DB.prepare(`DELETE FROM posts WHERE id IN (${placeholders})`)
