@@ -5,6 +5,7 @@ import { formatCount } from '../lib/format.js';
 import { getLocale, t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { closeLeftNav } from '../lib/left-nav-drawer.js';
+import { setupLeftNavResize } from '../lib/left-nav-resize.js';
 import { isModalOpen } from '../lib/modal-state';
 import { applyNameColor } from '../lib/name-color.js';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
@@ -75,6 +76,7 @@ export class LeftNav {
   private boundHandleResize: () => void;
   private boundHandleModalChange: (e: Event) => void;
   private boundHandleDocumentClick: (e: MouseEvent) => void;
+  private cleanupResize: (() => void) | null = null;
 
   constructor(props: LeftNavProps = {}) {
     this.props = props;
@@ -86,6 +88,7 @@ export class LeftNav {
     this.boundHandleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.element = this.createElement();
+    this.cleanupResize = setupLeftNavResize(this.element);
     this.setupEventListeners();
     this.loadTags();
   }
@@ -195,17 +198,12 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
       items.forEach((item) => {
-        const unread =
-          item.id === 'notifications'
-            ? this.props.unreadCount || 0
-            : item.id === 'mail'
-              ? this.props.mailUnreadCount || 0
-              : 0;
+        const unread = item.id === 'notifications' ? this.props.unreadCount || 0 : 0;
         navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName, unread));
       });
     } else {
@@ -213,6 +211,7 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
       ];
       items.forEach((item) => {
         navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName));
@@ -377,6 +376,7 @@ export class LeftNav {
 
     const menuItems = [
       { id: 'profile', text: t('nav.profile'), icon: 'profile' },
+      { id: 'mail', text: t('nav.mail'), icon: 'mail' },
       { id: 'settings', text: t('nav.settings'), icon: 'settings' },
     ];
 
@@ -392,6 +392,13 @@ export class LeftNav {
       labelWrap.textContent = item.text;
       popupItem.appendChild(iconWrap);
       popupItem.appendChild(labelWrap);
+      if (item.id === 'mail' && (this.props.mailUnreadCount || 0) > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'nav-dm-badge';
+        const count = this.props.mailUnreadCount || 0;
+        badge.textContent = count >= 99 ? '99+' : formatCount(count);
+        popupItem.appendChild(badge);
+      }
 
       popupItem.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -580,6 +587,13 @@ export class LeftNav {
       navItem.classList.toggle('nav-item--active', isActive);
       navItem.setAttribute('aria-current', isActive ? 'page' : 'false');
     });
+    this.element.querySelectorAll('.nav-user-popup-item').forEach((popupItem) => {
+      const navId = popupItem.getAttribute('data-nav-id');
+      const isActive = navId === item;
+      popupItem.classList.toggle('nav-user-popup-item--active', isActive);
+      if (isActive) popupItem.setAttribute('aria-current', 'page');
+      else popupItem.removeAttribute('aria-current');
+    });
   }
 
   public getActiveItem(): string {
@@ -591,7 +605,9 @@ export class LeftNav {
   }
 
   private setNavBadge(navId: string, count: number): void {
-    const item = this.element.querySelector(`.nav-item[data-nav-id="${navId}"]`) as HTMLElement | null;
+    // Mail lives in the ⋯ popup now; update its badge there, guard the rail.
+    const popupItem = this.element.querySelector(`.nav-user-popup-item[data-nav-id="${navId}"]`) as HTMLElement | null;
+    const item = (this.element.querySelector(`.nav-item[data-nav-id="${navId}"]`) as HTMLElement | null) ?? popupItem;
     if (!item) return;
 
     const existingBadge = item.querySelector('.nav-dm-badge') as HTMLElement | null;
@@ -655,6 +671,8 @@ export class LeftNav {
   public destroy(): void {
     window.removeEventListener('resize', this.boundHandleResize);
     window.removeEventListener('modalchange', this.boundHandleModalChange);
+    this.cleanupResize?.();
+    this.cleanupResize = null;
     this.closePopup();
     this.element.remove();
   }
@@ -711,18 +729,13 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
 
       items.forEach((item) => {
-        const count =
-          item.id === 'notifications'
-            ? (leftNav.props.unreadCount ?? 0)
-            : item.id === 'mail'
-              ? (leftNav.props.mailUnreadCount ?? 0)
-              : 0;
+        const count = item.id === 'notifications' ? (leftNav.props.unreadCount ?? 0) : 0;
         const navItem = document.createElement('button');
         navItem.type = 'button';
         navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;
@@ -755,6 +768,7 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
       ];
 
       items.forEach((item) => {

@@ -15,6 +15,35 @@ export type PlayerInfo = {
   isHost: boolean;
 };
 
+/** The title shown after the player's username, fully resolved for display. */
+export type EquippedTitle = {
+  id: string;
+  name: string;
+  nameJa: string;
+  description: string;
+  descriptionJa: string;
+  icon: string;
+};
+
+/** Who is playing right now. Every field is null while signed out. */
+export type PlayerIdentity = {
+  userId: string | null;
+  username: string | null;
+  displayName: string | null;
+  avatarKey: string | null;
+  equippedTitle: EquippedTitle | null;
+};
+
+/** The definition half of a game-authored title frame. */
+export type GameTitlePayload = {
+  titleId: string;
+  name: string;
+  nameJa?: string;
+  description?: string;
+  descriptionJa?: string;
+  icon?: string;
+};
+
 export type RoomInfo = {
   roomId: string;
   gameId: string;
@@ -35,6 +64,9 @@ export type CaptureFrame = {
 export type ParentMessage =
   | { type: 'REQUEST_FULLSCREEN' }
   | { type: 'REQUEST_FRESH' }
+  | { type: 'REQUEST_IDENTITY' }
+  | ({ type: 'CREATE_TITLE' } & GameTitlePayload)
+  | ({ type: 'AWARD_TITLE' } & GameTitlePayload)
   | { type: 'POST_SCORE'; score: number; label: string }
   | { type: 'DOCUMENT_READY'; requestId: string }
   | { type: 'VIEWER_CLOSE'; requestId: string }
@@ -72,6 +104,10 @@ export type SandboxMessage =
   | { type: 'FULLSCREEN_DENIED' }
   | { type: 'FRESH_GRANTED' }
   | { type: 'FRESH_DENIED' }
+  | { type: 'PLAYER_IDENTITY'; identity: PlayerIdentity }
+  | { type: 'TITLE_CREATED'; titleId: string }
+  | { type: 'TITLE_AWARDED'; titleId: string }
+  | { type: 'TITLE_ERROR'; code: string; message: string; titleId?: string }
   | { type: 'SCORE_SUBMITTED'; score: number; label: string }
   | { type: 'DOCUMENT_DATA'; requestId: string; bytes: ArrayBuffer }
   | { type: 'PREVIEW_INIT'; requestId: string }
@@ -116,6 +152,18 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
       return isPreviewFullscreenRequest(msg);
     case 'REQUEST_FRESH':
       return true;
+    case 'REQUEST_IDENTITY':
+      return true;
+    case 'CREATE_TITLE':
+    case 'AWARD_TITLE':
+      return (
+        isCappedString(msg.titleId, 128) &&
+        isCappedString(msg.name, 64) &&
+        (msg.nameJa === undefined || isCappedString(msg.nameJa, 64)) &&
+        (msg.description === undefined || isCappedString(msg.description, 200)) &&
+        (msg.descriptionJa === undefined || isCappedString(msg.descriptionJa, 200)) &&
+        (msg.icon === undefined || isCappedString(msg.icon, 512))
+      );
     case 'POST_SCORE':
       return typeof msg.score === 'number' && !Number.isNaN(msg.score) && typeof msg.label === 'string';
     case 'DOCUMENT_READY':
@@ -188,6 +236,17 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
     case 'FRESH_GRANTED':
     case 'FRESH_DENIED':
       return true;
+    case 'PLAYER_IDENTITY':
+      return isRecord(msg.identity);
+    case 'TITLE_CREATED':
+    case 'TITLE_AWARDED':
+      return isCappedString(msg.titleId, 128);
+    case 'TITLE_ERROR':
+      return (
+        isCappedString(msg.code, 64) &&
+        isCappedString(msg.message, 500) &&
+        (msg.titleId === undefined || isCappedString(msg.titleId, 128))
+      );
     case 'SCORE_SUBMITTED':
       return typeof msg.score === 'number' && !Number.isNaN(msg.score) && typeof msg.label === 'string';
     case 'DOCUMENT_DATA':

@@ -239,6 +239,13 @@ jobs:
       - run: npx cap sync android
         env:
           CAPACITOR_PLATFORM: android
+      - name: Register flaxia:// deep link and verify it
+        run: |
+          set -euo pipefail
+          node scripts/patch-native-deeplink.mjs
+          # The native sign-in returns through flaxia://auth/callback; without the
+          # intent-filter the shipped APK/AAB can never complete login.
+          grep -q 'android:scheme="flaxia"' android/app/src/main/AndroidManifest.xml
       - name: Decode google-services.json
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -307,6 +314,13 @@ jobs:
             exit 1
           fi
           echo "Verified Android APK signature and versionCode: $APK_VERSION_CODE"
+          # Native sign-in returns via flaxia://auth/callback; the merged
+          # manifest of the shipped APK must contain the deep-link filter.
+          if ! "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump xmltree "$APK_PATH" AndroidManifest.xml | grep -q 'android:scheme.*flaxia'; then
+            echo "::error::Release APK AndroidManifest does not register the flaxia:// deep link — native login would be impossible."
+            exit 1
+          fi
+          echo "Verified Android APK registers the flaxia:// deep link"
       - name: Upload Release Artifacts
         env:
           GH_TOKEN: ${{ github.token }}

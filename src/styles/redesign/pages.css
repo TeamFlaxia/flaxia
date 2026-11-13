@@ -807,6 +807,15 @@
   line-height: 1.3;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-header .settings-title-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--accent-text);
 }
 
 .settings-back {
@@ -918,6 +927,25 @@
 
 .settings-nav-item--active:hover {
   background: var(--bg-secondary);
+}
+
+.settings-nav-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.settings-nav-item--active .settings-nav-icon {
+  color: var(--accent-text);
+}
+
+.settings-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Right panes */
@@ -1157,16 +1185,17 @@
   line-height: 1.5;
 }
 
-/* shadcn-style switch: 36x20, primary track when on */
+/* shadcn-style switch: 40x22, bright green when on (high contrast in both themes) */
 .settings-switch {
   position: relative;
-  flex: 0 0 36px;
-  width: 36px;
-  height: 20px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 22px;
   margin: 0;
-  border: 1px solid transparent;
+  padding: 0;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--bg-tertiary);
+  background: var(--border-strong);
   cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
@@ -1176,27 +1205,40 @@
 .settings-switch::before {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 1px;
+  top: 50%;
+  left: 2px;
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--bg-primary);
-  box-shadow: var(--shadow-xs);
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.25);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: translateY(-50%);
   transition: transform var(--duration-base) var(--ease-standard);
 }
 
 .settings-switch:checked {
-  background: var(--primary);
+  background: #22c55e;
+  border-color: #16a34a;
 }
 
 .settings-switch:checked::before {
-  background: var(--primary-fg);
-  transform: translateX(16px);
+  background: #ffffff;
+  border-color: rgba(6, 51, 28, 0.5);
+  transform: translateY(-50%) translateX(18px);
+}
+
+/* Dark mode: green on dark slate needs a halo to read as "on" at a glance */
+:root[data-theme="dark"] .settings-switch:checked {
+  background: #22c55e;
+  border-color: #4ade80;
+  box-shadow:
+    0 0 0 3px rgba(34, 197, 94, 0.35),
+    0 0 12px rgba(34, 197, 94, 0.55);
 }
 
 .settings-switch:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid #22c55e;
   outline-offset: 2px;
 }
 
@@ -1359,14 +1401,14 @@
   }
 
   .settings-switch::before {
-    top: 2px;
+    top: 50%;
     left: 2px;
     width: 18px;
     height: 18px;
   }
 
   .settings-switch:checked::before {
-    transform: translateX(20px);
+    transform: translateY(-50%) translateX(20px);
   }
 }
 
@@ -2868,6 +2910,14 @@
 .main-container:has(.settings-page) .main-content {
   max-width: 860px;
   flex: 1;
+}
+
+/* Mail is a focused workspace too: hide the right rail like settings. */
+.main-container:has(.mail-page) .right-panel,
+.main-container:has(.mail-thread-page) .right-panel,
+.main-container:has(.mail-compose-page) .right-panel,
+.main-container:has(.mail-settings-page) .right-panel {
+  display: none;
 }
 
 /* Arcade is an immersive game view: hide the right rail and let the game

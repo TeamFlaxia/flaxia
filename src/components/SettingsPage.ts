@@ -21,10 +21,20 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { icon } from '../lib/icons.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
-import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
+import {
+  getDataSaverMode,
+  getReplyStyle,
+  getShowNsfw,
+  isBrowserSaveDataEnabled,
+  ReplyStyle,
+  setDataSaverMode,
+  setReplyStyle,
+  setShowNsfw,
+} from '../lib/settings.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
@@ -82,6 +92,11 @@ function createSettingsTwoPane() {
   const heading = document.createElement('h1');
   heading.textContent = t('settings.title');
   heading.tabIndex = -1;
+  const titleIcon = document.createElement('span');
+  titleIcon.className = 'settings-title-icon';
+  titleIcon.setAttribute('aria-hidden', 'true');
+  titleIcon.appendChild(icon('settings', { width: '18', height: '18' }));
+  heading.insertBefore(titleIcon, heading.firstChild);
   header.appendChild(back);
   header.appendChild(heading);
   container.appendChild(header);
@@ -138,7 +153,15 @@ function createSettingsTwoPane() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-nav-item';
-    button.textContent = t(category.titleKey);
+    const navIcon = document.createElement('span');
+    navIcon.className = 'settings-nav-icon';
+    navIcon.setAttribute('aria-hidden', 'true');
+    navIcon.appendChild(icon(category.iconName as Parameters<typeof icon>[0], { width: '16', height: '16' }));
+    const navLabel = document.createElement('span');
+    navLabel.className = 'settings-nav-label';
+    navLabel.textContent = t(category.titleKey);
+    button.appendChild(navIcon);
+    button.appendChild(navLabel);
     button.addEventListener('click', () => showCategory(category.id));
     group.appendChild(button);
     items.set(category.id, button);
@@ -377,6 +400,39 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     displayMessage.style.color = 'var(--accent-text)';
   });
 
+  // Data saver toggle (traffic-priority mode, device-local only)
+  const dataSaverLabel = document.createElement('label');
+  dataSaverLabel.className = 'settings-switch-row';
+
+  const dataSaverCheckbox = document.createElement('input');
+  dataSaverCheckbox.type = 'checkbox';
+  // Reflect the browser Save-Data hint on first paint so the toggle is
+  // already on when the OS/browser requests reduced data usage.
+  dataSaverCheckbox.checked = getDataSaverMode() || isBrowserSaveDataEnabled();
+  dataSaverCheckbox.className = 'settings-switch';
+
+  const dataSaverTextDiv = document.createElement('div');
+  dataSaverTextDiv.className = 'settings-switch-text';
+
+  const dataSaverNameSpan = document.createElement('span');
+  dataSaverNameSpan.className = 'settings-switch-name';
+  dataSaverNameSpan.textContent = t('settings.data_saver');
+
+  const dataSaverDescSpan = document.createElement('span');
+  dataSaverDescSpan.className = 'settings-switch-desc';
+  dataSaverDescSpan.textContent = t('settings.data_saver_desc');
+
+  dataSaverTextDiv.appendChild(dataSaverNameSpan);
+  dataSaverTextDiv.appendChild(dataSaverDescSpan);
+  dataSaverLabel.appendChild(dataSaverTextDiv);
+  dataSaverLabel.appendChild(dataSaverCheckbox);
+
+  dataSaverCheckbox.addEventListener('change', () => {
+    setDataSaverMode(dataSaverCheckbox.checked);
+    displayMessage.textContent = t('settings.display_saved');
+    displayMessage.style.color = 'var(--accent-text)';
+  });
+
   // Theme selector
   const themeTitle = document.createElement('div');
   themeTitle.className = 'fx-label settings-subheading';
@@ -434,6 +490,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   displaySection.appendChild(displayTitle);
   displaySection.appendChild(radioGroup);
   displaySection.appendChild(nsfwLabel);
+  displaySection.appendChild(dataSaverLabel);
   displaySection.appendChild(themeTitle);
   displaySection.appendChild(themeRadioGroup);
   displaySection.appendChild(displayMessage);

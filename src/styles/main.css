@@ -36,18 +36,18 @@
   --text-secondary: #334155;
   --text-muted: #64748b;
 
-  /* Primary action fill & signature brand accent (vibrant emerald) */
-  --primary: #10b981;
-  --primary-hover: #059669;
-  --primary-fg: #022c22;
-  --accent: #10b981;
-  --accent-hover: #059669;
-  --accent-dark: #047857;
-  --accent-soft: rgba(16, 185, 129, 0.1);
-  --accent-text: #047857;
-  --on-accent: #022c22;
-  --gradient-accent: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  --gradient-accent-hover: linear-gradient(135deg, #059669 0%, #047857 100%);
+  /* Primary action fill & signature brand accent (bright green — unified in both themes) */
+  --primary: #22c55e;
+  --primary-hover: #4ade80;
+  --primary-fg: #052e16;
+  --accent: #22c55e;
+  --accent-hover: #4ade80;
+  --accent-dark: #16a34a;
+  --accent-soft: rgba(34, 197, 94, 0.18);
+  --accent-text: #4ade80;
+  --on-accent: #052e16;
+  --gradient-accent: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  --gradient-accent-hover: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
   --gradient-glow: none;
 
   /* Likes / live */
@@ -65,7 +65,7 @@
   --warning: #f59e0b;
   --link: var(--accent-text);
   --link-hover: var(--accent-hover);
-  --ring: rgba(16, 185, 129, 0.35);
+  --ring: rgba(34, 197, 94, 0.45);
 
   /* Flaxia+ post text colours (WCAG-checked for the light canvas). */
   --post-color-red: #b91c1c;
@@ -147,18 +147,18 @@
   --text-secondary: #cbd5e1;
   --text-muted: #94a3b8;
 
-  /* Primary action fill & signature brand accent (luminous emerald) */
-  --primary: #10b981;
-  --primary-hover: #34d399;
-  --primary-fg: #022c22;
-  --accent: #10b981;
-  --accent-hover: #34d399;
-  --accent-dark: #059669;
-  --accent-soft: rgba(16, 185, 129, 0.18);
-  --accent-text: #34d399;
-  --on-accent: #022c22;
-  --gradient-accent: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  --gradient-accent-hover: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+  /* Primary action fill & signature brand accent (bright green for dark mode — high contrast) */
+  --primary: #22c55e;
+  --primary-hover: #4ade80;
+  --primary-fg: #052e16;
+  --accent: #22c55e;
+  --accent-hover: #4ade80;
+  --accent-dark: #16a34a;
+  --accent-soft: rgba(34, 197, 94, 0.18);
+  --accent-text: #4ade80;
+  --on-accent: #052e16;
+  --gradient-accent: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  --gradient-accent-hover: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
   --gradient-glow: none;
 
   /* Likes / live */
@@ -176,7 +176,7 @@
   --warning: #fbbf24;
   --link: var(--accent-text);
   --link-hover: var(--accent-hover);
-  --ring: rgba(16, 185, 129, 0.4);
+  --ring: rgba(34, 197, 94, 0.45);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.3);
@@ -2571,6 +2571,103 @@ h1 {
   user-select: none;
   outline: none;
   contain: layout style paint;
+}
+
+/* === Media cue overlay (Niconico-style timed comments) === */
+.media-cues {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.media-cue {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 100%;
+  padding: 0 10px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
+  white-space: nowrap;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.9),
+    1px 1px 0 rgba(0, 0, 0, 0.9),
+    -1px -1px 0 rgba(0, 0, 0, 0.9),
+    1px -1px 0 rgba(0, 0, 0, 0.9),
+    -1px 1px 0 rgba(0, 0, 0, 0.9);
+}
+
+.media-cue code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 0.85em;
+}
+
+.media-cue--fly {
+  animation: media-cue-fly var(--cue-duration, 5000ms) linear forwards;
+  will-change: transform;
+}
+
+@keyframes media-cue-fly {
+  from {
+    transform: translateX(var(--cue-from, 100%));
+  }
+  to {
+    transform: translateX(var(--cue-to, -100%));
+  }
+}
+
+.media-cue--top,
+.media-cue--bottom {
+  left: 50%;
+  max-width: 90%;
+  white-space: normal;
+  text-align: center;
+  transform: translateX(-50%);
+  animation: media-cue-fade-in 0.15s ease-out;
+}
+
+@keyframes media-cue-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.media-cue--out {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.media-cue--still {
+  left: 50%;
+  top: 45%;
+  white-space: normal;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  animation: media-cue-fade-cycle 2s ease forwards;
+}
+
+@keyframes media-cue-fade-cycle {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
 }
 
 .video-player--loaded {
