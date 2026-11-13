@@ -114,7 +114,7 @@ jobs:
       matrix:
         # Each group gets its own server, D1 database and Durable Object
         # workers, so the reset-based suites never share state across jobs.
-        group: [auth-vault, posts-feeds, media-games, platform-ui]
+        group: [auth-vault, posts-feeds, media-games, activitypub, platform-ui]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

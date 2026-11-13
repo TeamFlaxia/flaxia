@@ -1,0 +1,73 @@
+name: Federation
+
+# The differential test against a real ActivityPub implementation.
+#
+# A second instance (GoToSocial) runs next to the instance under test. Both
+# sides federate with each other and the documents they publish are compared
+# with each other, so a difference in the protocol is visible.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    # The peer is an external implementation: a new release of it may change
+    # the behaviour of the federation, so the test runs once a week as well.
+    - cron: '17 5 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Apply migrations
+        run: npm run migrate:local
+      - name: Start the instance under test
+        env:
+          TEST_PEER: gotosocial
+        run: |
+          set -o pipefail
+          # The peer runs on the host network, so it reaches the instance and
+          # the other way round.
+          npx wrangler pages dev dist \
+            --binding ADMIN_USERNAMES=remydrescarlet \
+            --d1=DB_TEST \
+            --port 8788 \
+            --inspector-port 9231 \
+            --binding BASE_URL=http://localhost:8788 \
+            --binding ENVIRONMENT=test \
+            --binding AUTH_AUTHORITY_MODE=off \
+            --binding AP_DIRECT_DELIVERY=1 \
+            --binding AP_ALLOWED_PRIVATE_PEERS=localhost,127.0.0.1 \
+            --binding CROWD_ORCHESTRATOR_URL=http://127.0.0.1:9 \
+            --binding CROWD_API_KEY=test-api-key \
+            --binding CROWD_WEBHOOK_SECRET=test-callback-secret \
+            --binding CROWD_WEBHOOK_SIGNING_SECRET=test-webhook-signing-secret \
+            > /tmp/federation-app.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8788/ > /dev/null 2>&1; then
+              echo "The instance is ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8788/ > /dev/null
+      - name: Compare the federation with the peer
+        env:
+          FLAXIA_FEDERATION_PEER: gotosocial
+        run: node --test --experimental-strip-types tests/federation/federation.test.ts
+      - name: Show the log of the instance
+        if: always()
+        run: tail -n 200 /tmp/federation-app.log

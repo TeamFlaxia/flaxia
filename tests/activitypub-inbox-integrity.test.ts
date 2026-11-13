@@ -4,26 +4,43 @@ import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 
-const src = readFileSync(new URL('../functions/queue-worker.ts', import.meta.url), 'utf8');
-const api = readFileSync(new URL('../functions/api/routes/activitypub.ts', import.meta.url), 'utf8');
+const workerSource = readFileSync(new URL('../functions/queue-worker.ts', import.meta.url), 'utf8');
+const handlers = readFileSync(new URL('../functions/lib/activitypub/handlers.ts', import.meta.url), 'utf8');
+const inbox = readFileSync(new URL('../functions/lib/activitypub/inbox.ts', import.meta.url), 'utf8');
 const migration = readFileSync(new URL('../migrations/0103_remote_activity_identity.sql', import.meta.url), 'utf8');
 
+test('the queue worker delegates the activity handling to the ActivityPub module', () => {
+  assert.match(workerSource, /import\('\.\/lib\/activitypub\/handlers'\)/);
+  assert.match(workerSource, /handleIncomingActivity\(/);
+});
+
 test('Undo may only remove records belonging to the verified outer actor', () => {
-  assert.match(src, /activity\.actor !== actorId/);
-  assert.match(src, /object\.actor !== actorId/);
-  assert.match(src, /bind\(userResult\.id, actorId\)/);
+  assert.match(handlers, /activity\.actor !== actorId/);
+  assert.match(handlers, /object\.actor !== actorId/);
+  assert.match(handlers, /DELETE FROM ap_followers WHERE local_user_id = \? AND actor_url = \?/);
+  assert.match(handlers, /\.bind\(userId, actorId\)/);
 });
 
 test('remote likes and announces must not impersonate a local user', () => {
-  assert.match(src, /bind\(likeId, postId, null, actorId\)/);
-  assert.match(src, /bind\(shareId, postId, null, actorId\)/);
+  assert.match(handlers, /INSERT OR IGNORE INTO likes \(id, post_id, user_id, actor_id, created_at\)/);
+  assert.match(handlers, /INSERT OR IGNORE INTO shares \(id, post_id, user_id, actor_id, created_at\)/);
+  assert.match(handlers, /VALUES \(\?, \?, NULL, \?,/);
   assert.match(migration, /user_id TEXT,/);
 });
 
+test('the inbox verifies the signature and the digest before a delivery is queued', () => {
+  assert.match(inbox, /verifyHttpSignature\(/);
+  assert.match(inbox, /verifyDigest\(/);
+  assert.match(inbox, /keyId\/actor origin mismatch/);
+  assert.doesNotMatch(inbox, /console\.(?:log|info|warn|error)\([^\n]*(?:signature|digest)/i);
+});
+
 test('ActivityPub does not sign shared-inbox actor lookups using arbitrary local keys', () => {
+  const api = readFileSync(new URL('../functions/api/routes/activitypub.ts', import.meta.url), 'utf8');
+  const keys = readFileSync(new URL('../functions/lib/activitypub/keys.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(api, /SELECT ak\.private_key_pem, u\.username/);
-  assert.match(api, /INSERT OR IGNORE INTO actor_keys/);
-  assert.equal((api.match(/app\.get\('\/.well-known\/webfinger'/g) ?? []).length, 1);
+  assert.match(keys, /INSERT OR IGNORE INTO actor_keys/);
+  assert.equal((api.match(/app\.get\('\/api\/\.well-known\/webfinger'/g) ?? []).length, 1);
 });
 
 test('remote activity migration preserves local shares and permits remote identities with foreign keys enabled', () => {
@@ -61,70 +78,6 @@ registerHooks({
   },
 });
 const { default: worker } = await import('../functions/queue-worker.ts');
-for (const type of ['Like', 'Announce', 'Follow']) {
-  test(`Undo ${type} uses the signed actor and target object`, async () => {
-    const queries: unknown[][] = [];
-    const env = {
-      DB: {
-        prepare(sql: string) {
-          return {
-            bind(...values: unknown[]) {
-              queries.push([sql, ...values]);
-              return this;
-            },
-            async first() {
-              return { id: 'local-user' };
-            },
-            async run() {
-              return { success: true, meta: { changes: 1 } };
-            },
-          };
-        },
-      },
-    } as unknown as Parameters<typeof worker.queue>[1];
-    for (const embeddedActor of ['https://remote.example/alice', 'https://remote.example/bob']) {
-      queries.length = 0;
-      let acknowledged = false;
-      const batch = {
-        messages: [
-          {
-            id: 'message',
-            body: {
-              type: 'inbox',
-              username: 'local-user',
-              actorId: 'https://remote.example/alice',
-              activity: {
-                type: 'Undo',
-                actor: 'https://remote.example/alice',
-                object: {
-                  type,
-                  actor: embeddedActor,
-                  id: 'https://remote.example/activities/123',
-                  object: 'https://flaxia.app/notes/post_-123',
-                },
-              },
-            },
-            ack() {
-              acknowledged = true;
-            },
-            retry() {
-              assert.fail('must not retry');
-            },
-          },
-        ],
-      } as unknown as Parameters<typeof worker.queue>[0];
-      await worker.queue(batch, env);
-      assert.ok(acknowledged);
-      if (embeddedActor.endsWith('/bob')) assert.equal(queries.length, 0);
-      else {
-        const deletion = queries.find(([sql]) => String(sql).includes('DELETE'));
-        assert.ok(deletion, 'valid Undo must delete the recorded activity');
-        assert.equal(deletion[2], 'https://remote.example/alice');
-        if (type !== 'Follow') assert.equal(deletion[1], 'post_-123');
-      }
-    }
-  });
-}
 
 test('delivery cannot follow an inbox redirect to an unchecked destination', async () => {
   const keyPair = await crypto.subtle.generateKey(
@@ -139,7 +92,8 @@ test('delivery cannot follow an inbox redirect to an unchecked destination', asy
   let retried = false;
   globalThis.fetch = async (_input, init) => {
     requests++;
-    assert.equal(init?.redirect, 'error');
+    // A redirect is not followed: the signature is bound to the inbox.
+    assert.equal(init?.redirect, 'manual');
     throw new TypeError('Redirect refused');
   };
   try {

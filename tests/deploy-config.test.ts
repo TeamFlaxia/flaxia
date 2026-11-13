@@ -136,6 +136,14 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['VECTORIZE_WEB', 'web embeddings stay disabled until a dedicated index is created'],
     ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
     ['AUTH_UI_ORIGIN', 'login UI origin defaults to https://auth.flaxia.app'],
+    [
+      'AP_ALLOWED_PRIVATE_PEERS',
+      'only the federation test peer may be private; the variable is inert outside test and development',
+    ],
+    [
+      'AP_DIRECT_DELIVERY',
+      'only the federation test delivers without a queue; the variable is inert outside test and development',
+    ],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

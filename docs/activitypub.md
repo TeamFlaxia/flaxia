@@ -1,8 +1,8 @@
 # ActivityPub Federation
 
-## Overview
-
-Flaxia implements ActivityPub for federation with other ActivityPub-compatible services (Mastodon, Misskey, etc.).
+Flaxia federates with other ActivityPub services (Mastodon, GoToSocial, Misskey, …).
+This document is the specification of the implementation: what the instance
+publishes, what it accepts and how it is tested.
 
 ## Architecture
 
@@ -13,103 +13,148 @@ Flaxia implements ActivityPub for federation with other ActivityPub-compatible s
 └──────────────┘     └──────────────────┘     └──────────────┘
                                                         │
                                                         ▼
-                                                 Process Activity
-                                                 (Store/Forward)
-                                                        │
-                                                        ▼
-┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Remote      │◀────│  Outbox Delivery  │◀────│  Queue Producer  │
-│  Instance    │     │  (Worker)         │     │  (Pages Function)│
-└──────────────┘     └──────────────────┘     └──────────────────┘
+                                              functions/lib/activitypub/handlers.ts
+                                              (store the activity)
+┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
+│  Remote      │◀────│  Queue Delivery  │◀────│  functions/  │
+│  Instance    │     │  (Queue Worker)  │     │  api/routes/ │
+└──────────────┘     └──────────────────┘     └──────────────┘
 ```
 
-## Key Components
+### Modules (`functions/lib/activitypub/`)
 
-### `functions/lib/activitypub/`
-- `crypto.ts` — HTTP Signature verification and signing
-- `note.ts` — ActivityPub Note object creation
-- `signature.ts` — HTTP Signature utilities
+| Module | Responsibility |
+|---|---|
+| `context.ts` | JSON-LD contexts, media types, content negotiation |
+| `text.ts` | Remote HTML → plain text, plain text → HTML, hashtags, mentions |
+| `actor.ts` | Actor URLs, actor document, WebFinger resources, local actor lookup |
+| `note.ts` | Note objects, audience mapping (`to`/`cc`) |
+| `activities.ts` | Builders for every activity the instance sends |
+| `signature.ts` | HTTP Signatures: parsing, signing, verification (no network) |
+| `fetch.ts` | Network access: SSRF guard, actor documents, key resolution |
+| `webfinger.ts` | WebFinger discovery document |
+| `inbox.ts` | The verification pipeline of both inbox endpoints |
+| `handlers.ts` | Processing of the received activities |
+| `delivery.ts` | Delivery: one message per remote inbox |
 
-### `functions/queue-worker.ts`
-Queue consumer (deployed as separate Worker `flaxia-backend`):
-- Processes incoming activities from the queue
-- Delivers outgoing activities to remote inboxes
-
-### Bindings
-- `AP_DELIVERY_QUEUE` — Queue for outbound delivery (`wrangler.toml`)
-- `BACKEND` — Service binding to `flaxia-backend` Worker (`wrangler.toml`)
+The route handlers (`functions/api/routes/activitypub.ts`) only map paths to
+modules; the queue worker (`functions/queue-worker.ts`) only decides what to do
+with a message.
 
 ## Endpoints
 
-### WebFinger
-`GET /.well-known/webfinger?resource=acct:user@domain`
-- Returns actor URL and profile page
-- Standard WebFinger response format
+All paths below are served under `/api`. The canonical paths at the root
+(`/…`) redirect to them, see `public/_redirects`.
 
-### NodeInfo
-`GET /.well-known/nodeinfo`
-- Returns NodeInfo 2.1 link
-- Software: `flaxia`, version: current
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/.well-known/webfinger?resource=…` | Discovery of an account (`acct:` and profile URL) |
+| `GET /api/host-meta` | LRDD host meta, points at the WebFinger endpoint |
+| `GET /api/.well-known/nodeinfo` | NodeInfo discovery document |
+| `GET /api/nodeinfo/2.1` | NodeInfo document of the instance |
+| `GET /api/actors/:username` | Actor document (Person) |
+| `GET /api/actors/:username/followers` | Ordered collection of the followers |
+| `GET /api/actors/:username/following` | Ordered collection of the followed accounts |
+| `GET /api/actors/:username/liked` | Ordered collection of the liked notes |
+| `GET /api/actors/:username/featured` | Ordered collection (empty) |
+| `GET /api/actors/:username/outbox` | Ordered collection of the published activities |
+| `GET /api/notes/:noteId` | The Note of a post |
+| `POST /api/actors/:username/inbox` | Personal inbox of an actor |
+| `POST /api/inbox` | Shared inbox of the instance |
 
-### Actor
-`GET /api/actors/:username`
-- Returns ActivityPub Actor object (Person)
-- Includes: id, inbox, outbox, followers, following, publicKey
-- URLs are under the main domain
+The actor document publishes the collections, the shared inbox, the key and
+the flags a peer needs (`manuallyApprovesFollowers`, `discoverable`,
+`indexable`).
 
-### Inbox
-`POST /api/inbox`
-- Receives activities from remote instances
-- Content-Type: `application/activity+json`
-- Validates HTTP Signature before processing
-- Enqueues processing via Cloudflare Queue
+## Supported activities
 
-### Outbox
-`GET /api/actors/:username/outbox`
-- Returns public posts (ordered by `created_at` desc)
-- Paginated
-
-## Supported Activities
-
-| Activity | Direction | Description |
+| Activity | Direction | Notes |
 |---|---|---|
-| `Create` (Note) | Inbound | Remote user posts |
-| `Follow` | Both | Follow request |
-| `Accept` (Follow) | Outbound | Accept follow |
-| `Like` | Both | Like a post |
-| `Announce` | Both | Share/boost a post |
-| `Undo` | Both | Undo Follow/Like/Announce |
-| `Delete` | Inbound | Delete remote post/actor |
+| `Create` (Note) | Both | A post of an account the user follows is stored with the remote author |
+| `Follow` | Both | The `Accept` is queued, not delivered inline |
+| `Accept` | Inbound | Marks a remote follow as accepted |
+| `Reject` | Inbound | Marks a remote follow as rejected |
+| `Like` | Both | Flaxia's "fresh" is the like |
+| `Announce` | Both | Flaxia's "reload" is the boost |
+| `Undo` | Both | Follow, Like, Announce and Block |
+| `Delete` | Both | Deletes a note or a remote actor |
+| `Update` | Inbound | Refreshes the cached profile of a remote actor |
+| `Block` | Inbound | Records a blocked remote actor |
+| `Move` | Inbound | Remembers that a remote actor moved |
+
+An activity is only ever applied for the actor that signed it. An `Undo` that
+refers to another actor is ignored, and only the author of a note may delete
+it.
+
+## Audience
+
+| Visibility | `to` | `cc` |
+|---|---|---|
+| `public` | `…#Public` | followers, mentions |
+| `unlisted` | followers, mentions | `…#Public` |
+| `private` | followers, mentions | – |
+| `direct` | mentions | – |
+
+Mentions are published as `tag` entries (`Mention`), hashtags as `tag` entries
+(`Hashtag`).
 
 ## Authentication & Security
 
 ### HTTP Signatures
-- All outgoing requests are signed using the actor's RSA key pair
-- Incoming requests are verified against the actor's public key (fetched via WebFinger)
-- Signatures use `Signature` header or `Digest` + `Signature` headers
 
-### Key Management
-- RSA key pairs stored in `ap_actor_keys` table
-- Generated on user registration
-- Public key exposed via Actor endpoint
+* Draft Cavage (`draft-cavage-http-signatures-12`), RSA-SHA256.
+* The signature has to cover `(request-target)`, `date` and – for a request
+  with a body – `digest`.
+* The key is resolved from the `keyId` of the signature and only from the
+  origin of the actor: a key hosted somewhere else never vouches for an actor.
+* The `created` and `expires` parameters of the signature are honoured.
+* A signature that does not cover the host is only accepted for the host the
+  actor lives on.
 
-## Database Tables
+### Other guards
 
-- `ap_actor_keys` — Local user key pairs
-- `ap_followers` — Remote followers (actor_url, inbox_url, status)
-- `ap_liked` — Remote likes on local posts
-- `ap_shares` — Remote shares on local posts
+* The body of an inbox delivery is limited to 256 KiB.
+* The inbox is rate limited per client address.
+* An exact replay of a delivery is dropped (fingerprint of signature, date
+  and digest).
+* Every activity is claimed once, so a retried delivery is not applied twice.
+* Every request to a remote instance goes through the SSRF guard: only public
+  http(s) targets, every redirect hop is validated again.
 
-## Queue Consumer (`flaxia-backend`)
+### Private peers
 
-The backend Worker (`functions/queue-worker.ts`) handles:
-1. Processing incoming activities from the queue
-2. Delivering outgoing activities to remote inboxes
-3. Retry logic for failed deliveries
+`AP_ALLOWED_PRIVATE_PEERS` allows the federation to talk to a peer that runs
+next to the instance (a container on the same machine). The variable is only
+honoured when `ENVIRONMENT` is `test` or `development`; in production it has
+no effect at all.
 
-Deployment:
+## Database tables
+
+| Table | Content |
+|---|---|
+| `actor_keys` | The key pair of a local actor |
+| `ap_actors` | Cached actor documents of remote instances |
+| `ap_followers` | Remote followers of a local account |
+| `ap_following` | Remote accounts a local account follows |
+| `ap_blocks` | Blocked remote actors |
+| `ap_activities` | Activities that were already processed (idempotency) |
+| `posts.ap_object_id` | The ActivityPub object id of a received post |
+
+## Tests
+
+| Layer | Location | Needs |
+|---|---|---|
+| Unit | `tests/activitypub-{note,signature,inbox,inbox-handlers,delivery}.test.ts` | nothing |
+| Integration | `tests/activitypub-discovery.test.ts` | `npm run dev:test` |
+| Guards | `tests/activitypub-inbox-integrity.test.ts`, `tests/security-guards.test.ts` | nothing |
+
 ```bash
-npx wrangler deploy functions/queue-worker.ts \
-  --config wrangler.toml.worker \
-  --name flaxia-ap-delivery
+npm run test:group -- activitypub
 ```
+
+The unit tests run against a real SQLite database that is built from the real
+D1 migrations (`tests/helpers/d1.ts`), so a query that does not match the
+production schema fails there as well.
+
+The differential test against a real instance (GoToSocial, Mastodon) lives in
+`tests/federation/` and is described in `docs/federation-testing.md`.

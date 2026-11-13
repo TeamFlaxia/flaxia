@@ -46,7 +46,9 @@ test('the ActivityPub inbox redirect is preserved', async () => {
   assert.equal(inbox.length, 1, 'expected exactly one /users/:username/inbox rule');
   const rule = inbox[0];
   assert.ok(rule, 'inbox rule must exist');
-  assert.equal(rule[1], '/api/users/:username/inbox');
+  // The inbox of an actor lives under its actor URL: the address a peer
+  // learns from the actor document.
+  assert.equal(rule[1], '/api/actors/:username/inbox');
   assert.equal(rule[2], '308');
 });
 
