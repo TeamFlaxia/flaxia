@@ -5,17 +5,21 @@ export const TILE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 // older style revisions. Raster layers stay on the browser HTTP cache.
 export const TILE_ORIGINS = ['https://tiles.openfreemap.org/planet/', 'https://tiles.openfreemap.org/tiles/'] as const;
 
+// Tile URLs use their own scheme so they can never collide with the native
+// auth deep link (flaxia://auth/callback) that the apps register at OS level.
+const TILE_SCHEME = 'flaxia-tiles://';
+
 export function isTileUrl(url: string): boolean {
   return TILE_ORIGINS.some((origin) => url.startsWith(origin));
 }
 
 export function rewriteTileUrl(url: string): string | null {
-  return isTileUrl(url) ? `flaxia://${url}` : null;
+  return isTileUrl(url) ? `${TILE_SCHEME}${url}` : null;
 }
 
 export function unwrapTileUrl(url: string): string | null {
-  if (!url.startsWith('flaxia://')) return null;
-  const inner = url.slice('flaxia://'.length);
+  if (!url.startsWith(TILE_SCHEME)) return null;
+  const inner = url.slice(TILE_SCHEME.length);
   return isTileUrl(inner) ? inner : null;
 }
 

@@ -177,7 +177,7 @@ export class MapsPage {
     this.packAbort?.abort();
     if (this.maplibre && this.protocolRegistered) {
       try {
-        this.maplibre.removeProtocol('flaxia');
+        this.maplibre.removeProtocol('flaxia-tiles');
       } catch {
         // already removed
       }
@@ -474,7 +474,7 @@ export class MapsPage {
       await maplibre.importScriptInWorkers(protocolUrl);
       if (this.destroyed) return;
       const styleUrl: string = this.styleUrl;
-      maplibre.addProtocol('flaxia', async (params, abortController) => {
+      maplibre.addProtocol('flaxia-tiles', async (params, abortController) => {
         const url = unwrapTileUrl(params.url);
         if (!url) throw new Error('Unsupported tile URL');
         const data = await handleTileFetch(url, abortController.signal, (kind) => {

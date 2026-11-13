@@ -7,18 +7,20 @@ import { BASE_URL, resetDb } from './helpers/setup.ts';
 describe('tile cache URL routing', () => {
   it('rewrites the vector tile paths used by the Liberty style', () => {
     const planet = 'https://tiles.openfreemap.org/planet/14/14550/6450.pbf';
-    assert.equal(rewriteTileUrl(planet), `flaxia://${planet}`);
-    assert.equal(unwrapTileUrl(`flaxia://${planet}`), planet);
+    assert.equal(rewriteTileUrl(planet), `flaxia-tiles://${planet}`);
+    assert.equal(unwrapTileUrl(`flaxia-tiles://${planet}`), planet);
 
     const legacy = 'https://tiles.openfreemap.org/tiles/14/14550/6450.pbf';
-    assert.equal(rewriteTileUrl(legacy), `flaxia://${legacy}`);
+    assert.equal(rewriteTileUrl(legacy), `flaxia-tiles://${legacy}`);
   });
 
   it('leaves raster and foreign URLs untouched', () => {
     assert.equal(rewriteTileUrl('https://tiles.openfreemap.org/natural_earth/1/0/0.png'), null);
     assert.equal(rewriteTileUrl('https://example.com/planet/1/0/0.pbf'), null);
-    assert.equal(unwrapTileUrl('flaxia://https://example.com/planet/1/0/0.pbf'), null);
+    assert.equal(unwrapTileUrl('flaxia-tiles://https://example.com/planet/1/0/0.pbf'), null);
     assert.equal(unwrapTileUrl('https://tiles.openfreemap.org/planet/1/0/0.pbf'), null);
+    // The native auth deep link shares neither scheme nor origin with tiles.
+    assert.equal(unwrapTileUrl('flaxia://auth/callback'), null);
   });
 
   it('keeps the standalone worker cache policy in sync with cache.ts', () => {

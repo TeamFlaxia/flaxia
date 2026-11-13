@@ -85,6 +85,7 @@ const groups = {
     'crowd-killswitch',
     'crowd-nsfw-binding',
     'crowd-scan-file',
+    'diagnostics',
     'extract-zip-to-r2',
     'file-blocklist',
     'file-extensions',
