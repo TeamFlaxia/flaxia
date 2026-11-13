@@ -4,11 +4,11 @@ import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.6.1';
+export const CROWD_NODE_VERSION = '0.7.1';
 
 export const CROWD_SITE_ID = 'flaxia';
 
-export const CROWD_SITE_CAPABILITIES = ['ai-inference', 'vector-embed', 'nudenet'];
+export const CROWD_SITE_CAPABILITIES = ['ai-inference', 'vector-embed', 'nudenet', 'cc-extract', 'embed-gemma'];
 
 export const CROWD_NODE_MAX_CPU_LOAD = 0.15;
 

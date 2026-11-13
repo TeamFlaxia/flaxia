@@ -248,7 +248,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
         'INSERT INTO posts (id, user_id, text, engagement_hotness, created_at) VALUES (?, ?, ?, ?, ?)',
       );
       const insertEmbedding = sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)');
-      const vector = JSON.stringify(Array.from({ length: 1024 }, (_, index) => (index === 0 ? 1 : 0)));
+      const vector = JSON.stringify(Array.from({ length: 768 }, (_, index) => (index === 0 ? 1 : 0)));
       const now = new Date().toISOString();
       for (let i = 0; i < 3; i++) {
         insert.run(`candidate-${i}`, `author-${i}`, `Candidate ${i}`, 10 - i, now);
@@ -264,7 +264,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
         base_scores?: Record<string, number>;
       };
       assert.equal(body.posts.length, 3);
-      assert.equal(body.vector_meta?.dim, 1024);
+      assert.equal(body.vector_meta?.dim, 768);
       assert.equal(body.vector_meta?.encoding, 'int8');
       assert.equal(Object.keys(body.vectors || {}).length, 3);
       assert.ok(body.posts.every((post) => typeof body.base_scores?.[post.id] === 'number'));
@@ -278,7 +278,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
     try {
       const insertPost = sqlite.prepare('INSERT INTO posts (id, user_id, parent_id) VALUES (?, ?, ?)');
       const insertEmbedding = sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)');
-      const vector = JSON.stringify(Array.from({ length: 1024 }, (_, index) => Number(index === 0)));
+      const vector = JSON.stringify(Array.from({ length: 768 }, (_, index) => Number(index === 0)));
       for (let i = 0; i < 120; i++) {
         const id = `history-${i}`;
         insertPost.run(id, 'author', null);

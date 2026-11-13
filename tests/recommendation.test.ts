@@ -6,7 +6,7 @@ import { decodeVector, encodeVector } from '../src/lib/recommendation/vector-cod
 
 describe('recommendation vectors', () => {
   it('round-trips int8 vectors within quantization error', () => {
-    const vector = Array.from({ length: 1024 }, (_, index) => Math.sin(index / 7) * (index % 11));
+    const vector = Array.from({ length: 768 }, (_, index) => Math.sin(index / 7) * (index % 11));
     const encoded = encodeVector(vector);
     assert.ok(encoded);
     const decoded = decodeVector(encoded, vector.length);
