@@ -2,6 +2,10 @@
 
 All API endpoints are served from `functions/api/[[route]].ts` via Hono framework.
 
+> 開発者向けドキュメントは [docs/developer/](developer/) にまとめています。
+> ゲーム作者は [Flaxia Game API](developer/game-api.md) と [Game SDK](developer/sdk.md) を、
+> 連携アプリ開発者は [REST API](developer/rest-api.md) を参照してください。
+
 ---
 
 ## Authentication
@@ -56,8 +60,10 @@ automatically after a successful legacy login, or on password change)
 `POST /api/auth/logout`
 
 ### Me
-`GET /api/auth/me`
-- Returns current user info
+`GET /api/me`
+- Returns current user info, including `badge_type` and the equipped title
+  (`equipped_title_id`, `title_name`, `title_name_ja`, `title_description`,
+  `title_description_ja`, `title_icon`) resolved from the title catalog
 
 ---
 
@@ -241,6 +247,24 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `GET /api/users/:username/followers`
 `GET /api/users/:username/following`
 
+### Suggestions
+`GET /api/users/suggest?q=`
+`GET /api/users/suggestions`
+- Returns user objects for typeahead / recommendations
+
+### Badge & title fields
+User objects returned by the profile, suggestions, followers/following,
+blocked list, search (`type=users` and the `users` array of post search), and
+notification `actor`/`actors` include:
+
+| Field | Type | Description |
+|---|---|---|
+| `badge_type` | `string \| null` | Avatar badge; currently `flaxia_plus` or `null` |
+| `equipped_title_id` | `string \| null` | Equipped achievement/title id, or `null` |
+| `title_name` / `title_name_ja` | `string \| null` | Title display name (en / ja) |
+| `title_description` / `title_description_ja` | `string \| null` | Title description (en / ja) |
+| `title_icon` | `string \| null` | Title icon image URL; non-image legacy values render as name only |
+
 ### Update Profile
 `PATCH /api/users/me`
 
@@ -265,11 +289,17 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 
 `GET /api/search?q=<query>&type=<posts|users|hashtags>`
 
+User results (both `type=users` and the `users` array returned with post
+search) include the badge and title fields described in
+[Badge & title fields](#badge--title-fields).
+
 ---
 
 ## Notifications
 
 `GET /api/notifications`
+- Each notification's `actor` / `actors` include the badge and title fields
+  described in [Badge & title fields](#badge--title-fields)
 
 ---
 

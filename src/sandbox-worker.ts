@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
 import { servePublicLoader } from './lib/game-loader-public';
 import { serveGameLoaderAsset } from './lib/game-loader-routes';
+import { GAME_SDK_IIFE } from './lib/game-sdk.generated';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import { cacheWvfsResponse } from './lib/wvfs-response-cache';
@@ -392,6 +393,16 @@ app.get('/api/game-storage', (c) => {
 
 app.get('/sdk/multiplayer.js', (c) => {
   return c.body(MULTIPLAYER_SDK_IIFE, 200, {
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=86400',
+  });
+});
+
+// Flaxia Game SDK — the unified sandbox-side wrapper (multiplayer, score,
+// fullscreen, fresh). Games load it with a single script tag; see
+// docs/developer/game-api.md.
+app.get('/sdk/game.js', (c) => {
+  return c.body(GAME_SDK_IIFE, 200, {
     'Content-Type': 'application/javascript; charset=utf-8',
     'Cache-Control': 'public, max-age=86400',
   });

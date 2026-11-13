@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { extendSession, getSessionToken } from '../../lib/auth';
+import { equippedTitleFields } from '../../lib/titles';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -35,9 +36,14 @@ me.get('/me', requireAuth, async (c) => {
         .run();
     }
 
+    // Resolve the equipped title (achievement) so clients can render the
+    // badge and title from this single identity payload.
+    const titleFields = await equippedTitleFields(c.env.DB, user.equipped_title_id);
+
     return c.json({
       user: {
         ...userForResponse,
+        ...titleFields,
         ng_words: JSON.parse(user.ng_words ?? '[]') as string[],
       },
     });

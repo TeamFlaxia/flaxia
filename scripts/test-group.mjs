@@ -94,6 +94,8 @@ const groups = {
     'file-scans',
     'game-loader',
     'game-loader-fallback',
+    'game-sdk',
+    'game-sdk-protocol-sync',
     'game-storage-migration',
     'game-versions',
     'image-dimensions',

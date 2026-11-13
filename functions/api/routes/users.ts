@@ -33,6 +33,7 @@ import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isCreatableSrpKdf } from '../../lib/srp';
+import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { batchGetFreshAndBookmarkStatus, detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
@@ -142,13 +143,14 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE id != ? AND frozen_at IS NULL
-      AND id NOT IN (
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.id != ? AND u.frozen_at IS NULL
+      AND u.id NOT IN (
         SELECT followee_id FROM follows WHERE follower_id = ?
       )
-      ORDER BY id
+      ORDER BY u.id
       LIMIT 100
     `)
       .bind(currentUserId, currentUserId)
@@ -433,12 +435,13 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.frozen_at IS NULL AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)
       ORDER BY
-        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
-        created_at DESC
+        CASE WHEN LOWER(u.username) LIKE ? THEN 0 ELSE 1 END,
+        u.created_at DESC
       LIMIT ?
     `)
       .bind(prefix + '%', prefix + '%', prefix + '%', limit)
@@ -451,6 +454,12 @@ users.get('/users/suggest', async (c) => {
       avatar_key: u.avatar_key || '',
       badge_type: (u.badge_type as string | null) ?? null,
       name_color: (u.name_color as string | null) ?? null,
+      equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+      title_name: (u.title_name as string | null) ?? null,
+      title_name_ja: (u.title_name_ja as string | null) ?? null,
+      title_description: (u.title_description as string | null) ?? null,
+      title_description_ja: (u.title_description_ja as string | null) ?? null,
+      title_icon: (u.title_icon as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -702,9 +711,10 @@ users.get('/users/:username/followers', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.follower_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.followee_id = ?
     `;
 
@@ -816,9 +826,10 @@ users.get('/users/:username/following', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.followee_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.follower_id = ?
     `;
 
@@ -2171,9 +2182,10 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
+       ${USER_TITLE_JOIN}
        WHERE b.blocker_id = ?
        ORDER BY b.created_at DESC`,
     )

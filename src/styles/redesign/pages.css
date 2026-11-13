@@ -2912,6 +2912,14 @@
   flex: 1;
 }
 
+/* Mail is a focused workspace too: hide the right rail like settings. */
+.main-container:has(.mail-page) .right-panel,
+.main-container:has(.mail-thread-page) .right-panel,
+.main-container:has(.mail-compose-page) .right-panel,
+.main-container:has(.mail-settings-page) .right-panel {
+  display: none;
+}
+
 /* Arcade is an immersive game view: hide the right rail and let the game
    viewport fill every available pixel. */
 .main-container:has(.arcade-page) {
