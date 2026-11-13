@@ -145,4 +145,4 @@ binding = "AP_DELIVERY_QUEUE"
 
 [[vectorize]]
 binding = "VECTORIZE"
-index_name = "flaxia-posts"
+index_name = "flaxia-posts-768"

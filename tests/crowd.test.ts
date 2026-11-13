@@ -419,8 +419,8 @@ describe('POST /api/crowd/webhook — vector-embed', () => {
           result: {
             output: {
               vector: [1, 0, 0, 0, 0, 0, 0, 0],
-              model: 'Qwen/Qwen3-Embedding-0.6B',
-              dimensions: 1024,
+              model: 'google/embeddinggemma-2',
+              dimensions: 768,
             },
           },
         },
@@ -447,8 +447,8 @@ describe('POST /api/crowd/webhook — vector-embed', () => {
         status: 'done',
         result: {
           vector: [1, 1, 0, 0, 0, 0, 0, 0],
-          model: 'Qwen/Qwen3-Embedding-0.6B',
-          dimensions: 1024,
+          model: 'google/embeddinggemma-2',
+          dimensions: 768,
         },
       },
       { postId },
@@ -463,7 +463,7 @@ describe('POST /api/crowd/webhook — vector-embed', () => {
       {
         taskId: 't-ve-empty',
         status: 'done',
-        result: { output: { model: 'Qwen/Qwen3-Embedding-0.6B' } },
+        result: { output: { model: 'google/embeddinggemma-2' } },
       },
       { postId: 'whatever' },
     );

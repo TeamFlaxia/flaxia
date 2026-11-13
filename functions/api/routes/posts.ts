@@ -1132,9 +1132,9 @@ posts.get('/posts/:id/similar', async (c) => {
     const currentUserId = c.get('user')?.id;
 
     // Get the post's embedding
-    const embedRow = await c.env.DB.prepare('SELECT embedding FROM post_embeddings WHERE post_id = ?')
+    const embedRow = await c.env.DB.prepare('SELECT embedding, dimensions FROM post_embeddings WHERE post_id = ?')
       .bind(postId)
-      .first<{ embedding: string }>();
+      .first<{ embedding: string; dimensions: number | null }>();
     if (!embedRow) return c.json({ posts: [] });
 
     let vector: number[];
@@ -1145,9 +1145,9 @@ posts.get('/posts/:id/similar', async (c) => {
     }
     if (!Array.isArray(vector)) return c.json({ posts: [] });
 
-    // Query Vectorize
+    // Query Vectorize only with the index's current model dimension.
     let similarIds: string[] = [];
-    const vectorize = c.env.VECTORIZE;
+    const vectorize = vector.length === RECOMMENDATION_VECTOR_DIM ? c.env.VECTORIZE : undefined;
     if (vectorize) {
       try {
         const result = await vectorize.query(vector, { topK: limit + 1, returnValues: false, returnMetadata: false });
@@ -1173,7 +1173,8 @@ posts.get('/posts/:id/similar', async (c) => {
         if (row.post_id === postId) continue;
         try {
           const v = JSON.parse(row.embedding);
-          if (Array.isArray(v)) scored.push({ id: row.post_id, sim: cosineSimilarity(vector, v) });
+          if (Array.isArray(v) && v.length === vector.length)
+            scored.push({ id: row.post_id, sim: cosineSimilarity(vector, v) });
         } catch {
           /* skip */
         }

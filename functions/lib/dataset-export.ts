@@ -145,7 +145,7 @@ including quick skips as negative feedback.
 - \`hour\` — event time truncated to the top of the hour (full precision is
   never exported: exact timestamps enable re-identification by joining
   public interaction times)
-- \`post_embedding\` — 1024-d content embedding of the game
+- \`post_embedding\` — 768-d content embedding of the game
 - \`label\` — reward used for RL (normalized dwell, or engagement boosts)
 
 ## Suggested use

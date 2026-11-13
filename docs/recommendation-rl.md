@@ -8,7 +8,7 @@ Flaxia の For You と Arcade は、**個人の好みベクトルを端末内で
 
 | データ | 保存先 | サーバーが見えるか |
 |---|---|---|
-| 好みベクトル（1024次元 int8/float） | Vault item `recommendation_profile` / `reco-profile-v1`（AES-GCM） | ❌ 暗号文のみ |
+| 好みベクトル（768次元 int8/float） | Vault item `recommendation_profile` / `reco-profile-v1`（AES-GCM） | ❌ 暗号文のみ |
 | 候補投稿の埋め込み | `post_embeddings.embedding`（公開コンテンツ由来） | ✅ |
 | サーバー側 base score | リクエスト時に算出（follow / 履歴 / 人気 / 未プレイ） | ✅ |
 | fresh / reply / share / dwell イベント | `freshs` / `arcade_events` など | ✅ |
@@ -30,7 +30,7 @@ Flaxia の For You と Arcade は、**個人の好みベクトルを端末内で
 ```json
 {
   "v": 1,
-  "dim": 1024,
+  "dim": 768,
   "vector": [0.012, -0.004, "..."],
   "sourceCount": 42,
   "sourceVersion": "2026-11-06T00:00:00.000Z|42",
@@ -59,7 +59,7 @@ GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset
   "vectors": {
     "<post_id>": { "scale": 0.031, "data": "..." }
   },
-  "vector_meta": { "dim": 1024, "encoding": "int8" },
+  "vector_meta": { "dim": 768, "encoding": "int8" },
   "base_scores": { "<post_id>": 0.42 },
   "next_cursor": "..."
 }

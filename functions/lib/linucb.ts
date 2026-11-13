@@ -2,7 +2,7 @@
 // recommender to maximize dwell time. Kept dependency-free and pure so it can
 // be unit-tested with `node --test`.
 //
-// A 1024-d content embedding is projected to a smaller dimension with a
+// A 768-d content embedding is projected to a smaller dimension with a
 // deterministic random projection (Johnson-Lindenstrauss), keeping the
 // per-user `A⁻¹` state compact enough for D1/KV storage.
 
@@ -19,7 +19,7 @@ export const DEFAULT_BANDIT_CONFIG: LinUCBConfig = {
   enabled: false,
   alpha: 0.6,
   dim: 64,
-  srcDim: 1024,
+  srcDim: 768,
   seed: 20260701,
   lambda: 0.6,
 };

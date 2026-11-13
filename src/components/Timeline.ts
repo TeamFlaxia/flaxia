@@ -8,7 +8,7 @@ import { isModalOpen } from '../lib/modal-state.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
-import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
+import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../lib/recommendation/vector-codec.js';
 import {
   DATA_SAVER_AD_SPACING_MULTIPLIER,
   getForYouBatchSize,
@@ -678,7 +678,7 @@ export class Timeline {
     const posts = (Array.isArray(data.posts) ? data.posts : []).filter((post) => !this.seenPostIds.has(post.id));
     if (posts.length === 0) return { queue: [], nextCursor: data.next_cursor || undefined };
 
-    const dim = data.vector_meta?.dim ?? 1024;
+    const dim = data.vector_meta?.dim ?? RECOMMENDATION_VECTOR_DIM;
     const vectors = new Map<string, number[]>();
     for (const [postId, encoded] of Object.entries(data.vectors || {})) {
       const vector = decodeVector(encoded, dim);
