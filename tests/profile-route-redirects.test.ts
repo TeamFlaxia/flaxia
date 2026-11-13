@@ -66,3 +66,19 @@ test('the profile function still hands non-crawler browsers to the SPA', async (
   assert.match(source, /if \(!isCrawler\(userAgent\)\)/);
   assert.match(source, /return await context\.next\(\);/);
 });
+
+test('ActivityPub discovery documents are rewrites, not redirects', async () => {
+  const source = await readFile(REDIRECTS_URL, 'utf8');
+  const byFrom = new Map(rules(source).map((rule) => [rule[0], rule]));
+  for (const [from, to] of [
+    ['/.well-known/webfinger', '/api/.well-known/webfinger'],
+    ['/.well-known/nodeinfo', '/api/.well-known/nodeinfo'],
+    ['/host-meta', '/api/host-meta'],
+  ]) {
+    assert.deepEqual(
+      byFrom.get(from),
+      [from, to, '200'],
+      `${from} must be served as a 200 rewrite; some ActivityPub peers do not follow 308 on discovery`,
+    );
+  }
+});
