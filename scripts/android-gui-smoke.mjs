@@ -7,7 +7,35 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
-const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+const sleepSync = (seconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
+// The emulator occasionally drops off adb mid-run ("device offline") and comes
+// back a few seconds later. Wait for it to reconnect instead of failing the job.
+function deviceOnline() {
+  try {
+    return execFileSync('adb', ['get-state'], { encoding: 'utf8' }).trim() === 'device';
+  } catch {
+    return false;
+  }
+}
+function waitForDevice(attempts = 60) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (deviceOnline()) return true;
+    sleepSync(1);
+  }
+  return false;
+}
+function start() {
+  const transient = /device offline|no devices|more than one device|device not found/i;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    waitForDevice(30);
+    try {
+      return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+    } catch (error) {
+      if (!transient.test(String(error))) throw error;
+    }
+  }
+  return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+}
 async function connect() {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -82,13 +110,6 @@ async function waitForNetwork(page) {
   }
   throw new Error('Device cannot reach the production API: ' + JSON.stringify(last));
 }
-// The emulator occasionally drops the WebView DevTools target while the app
-// keeps rendering. Reconnect and retry the phase instead of failing the job.
-function targetClosed(error) {
-  return /Target page, context or browser has been closed|Target closed|Session closed|Browser has been closed/i.test(
-    String(error),
-  );
-}
 async function disconnect() {
   await current?.browser.close().catch(() => {});
   current = undefined;
@@ -144,20 +165,37 @@ async function onlinePhase() {
   await current.page.locator('.timeline').waitFor({ timeout: 60000 });
   console.log('API probe:', JSON.stringify(await probe()));
   await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  const count = await current.page.locator('.post-card').count();
+  const count = await postCount(current.page);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-online.png' });
   return count;
 }
+async function postCount(page) {
+  // The timeline can re-render right after the first card appears. Retry the
+  // count briefly instead of failing on a transient zero.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const count = await page.locator('.post-card').count();
+    if (count > 0) return count;
+    await page.waitForTimeout(250);
+  }
+  return 0;
+}
 async function offlinePhase() {
   current = await connect();
-  await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
   await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'true', null, {
     timeout: 90000,
   });
-  return current.page.locator('.post-card').count();
+  // The offline snapshot is restored asynchronously; wait for it while the
+  // document is already offline instead of counting a card that may be
+  // replaced by the cold-start render.
+  await current.page.waitForFunction(() => document.querySelectorAll('.post-card').length > 0, null, {
+    timeout: 90000,
+  });
+  return postCount(current.page);
 }
 try {
+  waitForDevice();
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
+  waitForDevice();
   adb('shell', 'svc', 'wifi', 'enable');
   adb('shell', 'svc', 'data', 'enable');
   start();
@@ -167,9 +205,12 @@ try {
       online = await onlinePhase();
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed during online phase (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Online phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      waitForDevice();
+      adb('shell', 'svc', 'wifi', 'enable');
+      adb('shell', 'svc', 'data', 'enable');
       start();
     }
   }
@@ -185,22 +226,37 @@ try {
       offline = await offlinePhase();
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed during offline phase (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Offline phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      waitForDevice();
+      adb('shell', 'am', 'force-stop', app);
+      start();
     }
   }
+  console.log(`Timeline post counts: online=${online} offline=${offline}`);
   assert.ok(online > 0 && offline > 0);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-offline-cold-start.png' });
+  waitForDevice();
   adb('shell', 'svc', 'wifi', 'enable');
+  adb('shell', 'svc', 'data', 'enable');
   for (let attempt = 1; ; attempt++) {
     try {
-      await current.page.waitForFunction(() => navigator.onLine, null, { timeout: 60000 });
+      // navigator.onLine can stay false in the WebView after the emulator
+      // network returns. The app's probe is authoritative, so ask it to retry
+      // and wait for the document state it publishes.
+      await current.page.evaluate(() => window.dispatchEvent(new Event('flaxiaRetryConnectivity')));
+      await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'false', null, {
+        timeout: 90000,
+      });
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed while restoring connectivity (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Connectivity did not recover (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      waitForDevice();
+      adb('shell', 'svc', 'wifi', 'enable');
+      adb('shell', 'svc', 'data', 'enable');
       current = await connect();
     }
   }

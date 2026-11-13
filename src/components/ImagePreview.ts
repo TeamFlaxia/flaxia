@@ -1,3 +1,4 @@
+import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
@@ -5,11 +6,24 @@ import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const container = document.createElement('div');
   container.className = 'image-preview';
+
+  // Data-saver: don't fetch image bytes until the user taps. Blob URLs
+  // (already fetched+decrypted) and confirmed reloads bypass the gate.
+  if (!props.src && !props.dataSaverConfirmed && isDataSaverEnabled()) {
+    container.appendChild(
+      createDataSaverPlaceholder(t('media.data_saver_load_image'), () => {
+        const real = createImagePreview({ ...props, dataSaverConfirmed: true });
+        container.replaceWith(real);
+      }),
+    );
+    return container;
+  }
 
   if (!props.gifKey) {
     // Fallback for posts without image

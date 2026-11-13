@@ -12,6 +12,7 @@ import topicRouter from './routes/current-topic';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
 import mailRouter from './routes/mail';
+import mapsRouter from './routes/maps';
 import meRouter from './routes/me';
 import mediaRouter from './routes/media';
 import multiplayerRouter from './routes/multiplayer';
@@ -64,6 +65,7 @@ type Bindings = {
   MAIL_SERVICE?: Fetcher;
   MAIL_INTERNAL_SECRET?: string;
   MAIL_DOMAIN?: string;
+  MAPS_STYLE_URL?: string;
 };
 
 type Variables = {
@@ -130,6 +132,9 @@ app.route('/api', bugReportsRouter);
 
 // Auth/me routes (extracted to routes/me.ts)
 app.route('/api', meRouter);
+
+// Flaxia Maps & Weathers routes
+app.route('/api', mapsRouter);
 
 // Ad routes (extracted to routes/ads.ts)
 app.route('/api', adsRouter);

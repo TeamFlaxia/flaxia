@@ -128,6 +128,18 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     if (statements.length > 0) {
       await db.batch(statements);
     }
+
+    // Game titles are authored at runtime and scoped to posts that just got
+    // deleted; the platform catalog (game_post_id IS NULL) stays seeded.
+    // Local dev can still hold a pre-0132 database here, so probe first.
+    if (existing.has('titles')) {
+      const titleColumns = (await db.prepare("SELECT name FROM pragma_table_info('titles')").all()) as {
+        results: { name: string }[];
+      };
+      if (titleColumns.results.some((column) => column.name === 'game_post_id')) {
+        await db.prepare('DELETE FROM titles WHERE game_post_id IS NOT NULL').run();
+      }
+    }
   }
   return c.json({ ok: true });
 });

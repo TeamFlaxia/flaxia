@@ -16,22 +16,29 @@ tags.get('/tags/trending', async (c) => {
 
     const result = await c.env.DB.prepare(`
 WITH recent_posts AS (
-  SELECT id, hashtags
+  SELECT id, hashtags, ai_tags
   FROM posts
   WHERE hidden = 0 AND status = 'published'
   ORDER BY created_at DESC
   LIMIT ?
+),
+all_tags AS (
+  SELECT value AS tag, recent_posts.id AS post_id
+  FROM recent_posts, json_each(recent_posts.hashtags)
+  UNION
+  SELECT value AS tag, recent_posts.id AS post_id
+  FROM recent_posts, json_each(recent_posts.ai_tags)
 )
 SELECT
-  value AS tag,
-  COUNT(DISTINCT recent_posts.id) AS count,
+  tag,
+  COUNT(DISTINCT post_id) AS count,
   ROUND(
-    COUNT(DISTINCT recent_posts.id) * 100.0 /
+    COUNT(DISTINCT post_id) * 100.0 /
       MAX(1, (SELECT COUNT(*) FROM recent_posts)),
     1
   ) AS percentage
-FROM recent_posts, json_each(recent_posts.hashtags)
-GROUP BY value
+FROM all_tags
+GROUP BY tag
 ORDER BY count DESC, tag ASC
 LIMIT 5
     `)

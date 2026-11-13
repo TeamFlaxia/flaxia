@@ -28,6 +28,7 @@ import {
   Lock,
   Mail,
   MailOpen,
+  Map as MapIcon,
   Maximize,
   Megaphone,
   MessageCircle,
@@ -90,6 +91,7 @@ export type IconName =
   | 'settings'
   | 'explore'
   | 'arcade'
+  | 'maps'
   | 'notifications'
   | 'profile'
   | 'maximize'
@@ -154,6 +156,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   settings: Settings,
   explore: Search,
   arcade: Gamepad2,
+  maps: MapIcon,
   notifications: Bell,
   profile: User,
   maximize: Maximize,

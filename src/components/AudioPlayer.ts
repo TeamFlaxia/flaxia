@@ -1,9 +1,22 @@
+import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 import { GifPreviewProps } from '../types/post.js';
 import { AudioVisualizer } from './AudioVisualizer.js';
+import { createMediaCueOverlay } from './MediaCues.js';
 
 export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
+  // Data-saver: don't fetch audio bytes until the user taps.
+  if (!props.src && !props.dataSaverConfirmed && isDataSaverEnabled()) {
+    const placeholder = createDataSaverPlaceholder(t('media.data_saver_load_audio'), () => {
+      const real = createAudioPlayer({ ...props, dataSaverConfirmed: true });
+      placeholder.replaceWith(real);
+    });
+    placeholder.classList.add('audio-player');
+    return placeholder;
+  }
+
   const container = document.createElement('div');
   container.className = 'audio-player';
   container.tabIndex = 0;
@@ -134,6 +147,10 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   container.appendChild(loadingEl);
   container.appendChild(overlay);
   container.appendChild(controls);
+
+  // --- Media cue overlay (Niconico-style timed comments) ---
+  const cueOverlay = createMediaCueOverlay(props.cues);
+  if (cueOverlay) container.appendChild(cueOverlay.element);
 
   let isDragging = false;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -308,6 +325,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   audio.addEventListener('timeupdate', () => {
     updateSeekbar();
     updateBuffered();
+    cueOverlay?.update(audio.currentTime);
   });
 
   audio.addEventListener('progress', updateBuffered);
@@ -465,6 +483,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
 
   // --- Cleanup ---
   container.addEventListener('DOMNodeRemoved', () => {
+    cueOverlay?.destroy();
     if (hideTimer) {
       clearTimeout(hideTimer);
       hideTimer = null;

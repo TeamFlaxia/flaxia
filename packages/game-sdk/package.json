@@ -1,0 +1,32 @@
+{
+  "name": "@flaxia/game-sdk",
+  "version": "0.1.0",
+  "description": "Flaxia Game SDK — thin typed wrapper for sandbox games (multiplayer, score, fullscreen, fresh)",
+  "type": "module",
+  "main": "dist/game-sdk.js",
+  "module": "dist/game-sdk.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "dev": "vite build --watch",
+    "test": "node --test --experimental-strip-types ../../tests/game-sdk.test.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TeamFlaxia/flaxia.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0"
+  }
+}

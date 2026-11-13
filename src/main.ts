@@ -5,6 +5,7 @@ import './styles/redesign/timeline.css';
 import './styles/redesign/composer.css';
 import './styles/redesign/overlays.css';
 import './styles/redesign/pages.css';
+import './styles/redesign/maps.css';
 import './styles/redesign/mail.css';
 import './styles/redesign/command.css';
 import './styles/redesign/rail.css';
@@ -77,8 +78,9 @@ const probeConnectivity = async (): Promise<boolean> => {
     const response = await nativeFetch('/api/me', {
       cache: 'no-store',
       credentials: 'include',
-      // A connected socket with a stalled response must not pin `probing`.
-      signal: AbortSignal.timeout(8000),
+      // Match the offline layer's 15s probe deadline: a probe stricter than
+      // a real read would report "offline" while reads still succeed.
+      signal: AbortSignal.timeout(15000),
     });
     try {
       await response.body?.cancel();
@@ -141,6 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'admin'
       | 'settings'
       | 'arcade'
+      | 'maps'
       | 'billing-success'
       | 'billing-canceled'
       | 'download'
@@ -163,6 +166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let notificationsPage: NotificationsPage | null = null;
     let settingsPage: ReturnType<typeof import('./components/SettingsPage.js').createSettingsPage> | null = null;
     let arcadePage: ArcadePageHandle | null = null;
+    let mapsPage: PageComponent | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
     let downloadPage: PageComponent | null = null;
@@ -475,6 +479,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const here = `${window.location.pathname}${window.location.search}`;
         const returnTo = here === '/login' || here === '/register' ? '/home' : here;
         if (await beginNativeAuthRedirect(returnTo, view)) return;
+        if (nativeClient) {
+          // In the app WebView there is no usable /api/auth/start: the origin
+          // is capacitor://localhost or https://localhost, and navigating
+          // there strands the user outside the app shell. Stay and explain.
+          console.warn('[auth] native sign-in browser could not be opened');
+          showToast(t('auth.external_failed'), true);
+          return;
+        }
         const query = new URLSearchParams({
           return_to: returnTo,
           lang: getLocale(),
@@ -560,6 +572,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (arcadePage) {
           arcadePage.destroy();
           arcadePage = null;
+        }
+        if (mapsPage) {
+          mapsPage.destroy();
+          mapsPage = null;
         }
         if (searchPage) {
           searchPage.destroy();
@@ -1068,6 +1084,42 @@ document.addEventListener('DOMContentLoaded', async () => {
           hidePageLoader();
 
           // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        if (view === 'maps') {
+          currentView = 'maps';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'maps',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createMapsPage } = await import('./components/MapsPage.js');
+          mapsPage = createMapsPage();
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(mapsPage.getElement()));
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
           setupMobileLeftNav(leftNav.getElement());
 
           return;
@@ -1624,6 +1676,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           run: () => {
             pushSpaHistory('/arcade');
             void navigateTo('arcade');
+          },
+        },
+        {
+          id: 'maps',
+          label: t('nav.maps'),
+          group: navigationGroup,
+          keywords: 'maps weather',
+          run: () => {
+            pushSpaHistory('/maps');
+            void navigateTo('maps');
           },
         },
         {

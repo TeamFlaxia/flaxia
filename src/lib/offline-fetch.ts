@@ -1,3 +1,4 @@
+import { logEvent } from './diagnostics.ts';
 import type { OfflineStore } from './offline-store.ts';
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -5,6 +6,10 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const READ_TIMEOUT_MS = 8000;
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
 const PROBE_TIMEOUT_MS = 15000;
+// Stop background probing after this many consecutive failures so an
+// offline episode cannot runaway-probe a server forever. An 'online'
+// event or the timeline reload button resets the counter.
+const MAX_PROBE_FAILURES = 20;
 
 interface OfflineFetchOptions {
   store: OfflineStore;
@@ -70,6 +75,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
   // offline. Any response that actually reaches the network sets this true.
   let reachable = false;
   let retryIndex = 0;
+  let probeFailures = 0;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let probing = false;
   let connectivityEpoch = 0;
@@ -106,9 +112,10 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       retryTimer = undefined;
     }
     retryIndex = 0;
+    probeFailures = 0;
   };
   const scheduleRetry = () => {
-    if (!options.probe || retryTimer !== undefined || probing) return;
+    if (!options.probe || retryTimer !== undefined || probing || probeFailures >= MAX_PROBE_FAILURES) return;
     const delay = RETRY_DELAYS_MS[Math.min(retryIndex, RETRY_DELAYS_MS.length - 1)];
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
@@ -139,12 +146,15 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     if (reconnected) {
       reachable = true;
       clearRetry();
+      logEvent('offline-fetch', 'probe_recovered');
       options.setOffline(false);
       return;
     }
     // A failed probe invalidates any earlier proof of reachability.
     reachable = false;
     retryIndex++;
+    probeFailures++;
+    logEvent('offline-fetch', 'probe_failed', { retryIndex, probeFailures });
     options.setOffline(true);
     scheduleRetry();
   };
@@ -199,12 +209,17 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     // Sign-in must never be suppressed by a stale navigator.onLine value.
     const authRequest = url.pathname.startsWith('/api/auth/');
     const fallback = async (): Promise<Response> => {
-      reachable = false;
+      // A single failed read must not invalidate the sticky proof that the
+      // network works: one stalled /api/posts used to flip the whole app
+      // offline and gate every later read into 503s. The probe (and the
+      // browser 'offline' event) remain the only things allowed to clear
+      // `reachable`; a failed read only schedules another probe.
       options.setOffline(true);
       scheduleRetry();
       const record = cacheable ? await safely(() => store.get(key)) : undefined;
       if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
       if (record && generation === currentGeneration && now() - record.savedAt <= MAX_AGE) {
+        logEvent('offline-fetch', 'fallback_cache', { method: request.method, path: url.pathname });
         return new Response(record.body, {
           headers: {
             'Content-Type': record.body.type,
@@ -215,14 +230,20 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
         });
       }
       if (record && now() - record.savedAt > MAX_AGE) await safely(() => store.delete(key));
-      if (request.method !== 'GET' && request.method !== 'HEAD')
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        logEvent('offline-fetch', 'fallback_throw', { method: request.method, path: url.pathname });
         throw new TypeError('This action requires an internet connection');
+      }
+      logEvent('offline-fetch', 'fallback_denied', { method: request.method, path: url.pathname });
       return new Response(JSON.stringify({ error: 'offline_unavailable' }), {
         status: 503,
         headers: { 'Content-Type': 'application/json', 'X-Flaxia-Offline': '1', 'Cache-Control': 'no-store' },
       });
     };
-    if (!options.isOnline() && !reachable && !authRequest) return fallback();
+    if (!options.isOnline() && !reachable && !authRequest) {
+      logEvent('offline-fetch', 'read_gated', { path: url.pathname });
+      return fallback();
+    }
     const controller = new AbortController();
     const abort = () => controller.abort(request.signal.reason);
     request.signal.addEventListener('abort', abort, { once: true });

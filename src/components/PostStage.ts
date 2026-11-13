@@ -1,6 +1,8 @@
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
+import { parseMediaCues } from '../lib/post-cues.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -134,11 +136,20 @@ function createThumbnailWithOverlay(props: {
 
   // Thumbnail image
   const image = document.createElement('img');
-  setOfflineImage(image, nativeApiHref(`/api/thumbnail/${props.postId}`));
-  // Timeline mounts dozens of stages: decode lazily so off-screen
-  // thumbnails don't contend with first paint.
-  image.loading = 'lazy';
-  image.decoding = 'async';
+  // Data-saver: skip thumbnail bytes for ZIP/SWF — the play overlay already
+  // requires a tap, so the poster is pure prefetch cost.
+  const skipThumbnail = isDataSaverEnabled();
+  if (skipThumbnail) {
+    image.style.display = 'none';
+    imageContainer.dataset.dataSaver = '1';
+    imageContainer.style.background = 'var(--bg-input)';
+  } else {
+    setOfflineImage(image, nativeApiHref(`/api/thumbnail/${props.postId}`));
+    // Timeline mounts dozens of stages: decode lazily so off-screen
+    // thumbnails don't contend with first paint.
+    image.loading = 'lazy';
+    image.decoding = 'async';
+  }
 
   // Load image with fade-in (CSS owns the opacity transition)
   image.onload = () => {
@@ -244,6 +255,10 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   container.innerHTML = '';
 
   const attachments = props.post.attachments || [];
+  // Timed comments (Niconico-style cues) are parsed from the author's body and
+  // overlaid on the media. Cue lines themselves are not part of the visible body.
+  const parsedCues = parseMediaCues(props.post.text).cues;
+  const cues = parsedCues.length > 0 ? parsedCues : undefined;
 
   // Only show content if there are attachments or a thumbnail
   if (
@@ -262,7 +277,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     if (attachments.length > 0) {
       // Multi-media attachments render as a horizontal scroll carousel
       container.classList.add('post-stage--carousel');
-      mediaElement = createMediaCarousel({ postId: props.post.id, attachments });
+      mediaElement = createMediaCarousel({ postId: props.post.id, attachments, cues });
       container.appendChild(mediaElement);
       return;
     }
@@ -315,12 +330,14 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       mediaElement = createAudioPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id,
+        cues,
       });
     } else if (props.post.gif_key && props.post.gif_key.startsWith('video/')) {
       container.classList.add('post-stage--video');
       mediaElement = createVideoPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id,
+        cues,
       });
     } else if (props.post.gif_key) {
       container.classList.add('post-stage--image');
@@ -354,7 +371,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       // Attachments have no execution mode — keep showing the carousel even if
       // the stage somehow ended up in EXECUTING mode.
       container.classList.add('post-stage--carousel');
-      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments }));
+      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments, cues }));
     } else if (isZipGame(props.post.payload_key)) {
       // The executeZipAuto function will handle creating the iframe and cleanup
       executeZipAuto(props.post.id, container, undefined, props.versionId).catch((error: Error) => {

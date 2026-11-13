@@ -98,7 +98,17 @@ export function isImageKey(key: string | null | undefined): key is string {
 
 const NSFW_RATE_LIMIT_MS = 10_000;
 const EMBED_RATE_LIMIT_MS = 10_000;
+const TAG_RATE_LIMIT_MS = 10_000;
 const PENDING_EMBED_MAX_ATTEMPTS = 5;
+
+/** Taxonomy size for AI trend tagging (candidates + "none" choice). */
+export const TREND_TAG_CANDIDATE_LIMIT = 20;
+/** Decision model id (must match the Crowd node allowlist). */
+export const DECISION_MODEL_ID = 'LiquidAI/d1-omni-600M';
+/** EmbeddingGemma 2 native dimensions. */
+export const EMBEDDING_DIMENSIONS = 768;
+/** Max image URLs per embed/decision call (vision token budget guard). */
+export const MAX_MEDIA_URLS = 8;
 
 // One row per (post, media object): a post with 4 image attachments needs 4
 // verdicts, and a post_id-only key could only ever hold one.
@@ -106,7 +116,7 @@ const PENDING_EMBED_MAX_ATTEMPTS = 5;
 // across overwrites (gif/{postId}/{position}.{ext}), so a verdict keyed only on
 // (post, key) would keep vouching for an image that was swapped in later.
 const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, content_sha TEXT, ai_passed INTEGER, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
-const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
+const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, payload TEXT, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
 // Replay guard for the header-signed Crowd webhook. A nonce is inserted once
 // and retained until the timestamp tolerance window closes, so a captured
 // (body, signature) pair can never be replayed.
@@ -116,8 +126,10 @@ const CROWD_WEBHOOK_NONCE_SCHEMA = `nonce TEXT PRIMARY KEY, expires_at INTEGER N
 // the same Pages Function worker shares one budget.
 const nsfwScanPosts = new Set<string>();
 const embeddingPosts = new Set<string>();
+const taggingPosts = new Set<string>();
 let lastNsfwSubmitTime = 0;
 let lastEmbedTime = 0;
+let lastTagTime = 0;
 
 /** Resolve Crowd configuration from the Pages/Worker environment. */
 export function crowdConfig(env: CrowdEnv): CrowdConfig {
@@ -331,6 +343,11 @@ async function ensureEmbeddingSourceColumn(db: D1Database): Promise<void> {
 export async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS pending_embeddings (${PENDING_EMBEDS_SCHEMA})`).run();
+    try {
+      await db.prepare('ALTER TABLE pending_embeddings ADD COLUMN payload TEXT').run();
+    } catch {
+      // Already present.
+    }
     await db
       .prepare('CREATE INDEX IF NOT EXISTS idx_pending_embeddings_created ON pending_embeddings(created_at)')
       .run();
@@ -556,37 +573,72 @@ export async function screenPostImages(
 
 // ── Vector embeddings ──
 
+export interface PostMediaInput {
+  /** R2 keys of image attachments (incl. gif/thumbnail single image). */
+  imageKeys?: string[];
+  /** R2 key of the audio attachment (16kHz mono is transcoded node-side). */
+  audioKey?: string;
+  /** R2 key of the video attachment (first frame is sampled node-side). */
+  videoKey?: string;
+}
+
+export interface PostMediaUrls {
+  imageUrls: string[];
+  audioUrl?: string;
+  videoUrl?: string;
+}
+
+/** Node-fetchable public URLs for a post's media (same contract as NSFW). */
+export function postMediaUrls(config: CrowdConfig, media: PostMediaInput): PostMediaUrls {
+  const imageUrls = (media.imageKeys ?? [])
+    .filter((key): key is string => Boolean(key) && isImageKey(key))
+    .slice(0, MAX_MEDIA_URLS)
+    .map((key) => `${config.baseUrl}/api/images/${key}`);
+  const out: PostMediaUrls = { imageUrls };
+  if (media.audioKey) out.audioUrl = `${config.baseUrl}/api/images/${media.audioKey}`;
+  if (media.videoKey) out.videoUrl = `${config.baseUrl}/api/images/${media.videoKey}`;
+  return out;
+}
+
 export async function enqueuePendingEmbed(
   db: D1Database | undefined,
   postId: string,
   text: string,
   attempts = 0,
   error?: string,
+  payload?: string,
 ): Promise<void> {
   if (!db) return;
   try {
     await ensurePendingEmbedsTable(db);
     await db
       .prepare(
-        `INSERT INTO pending_embeddings (post_id, text, attempts, last_error)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO pending_embeddings (post_id, text, payload, attempts, last_error)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(post_id) DO UPDATE SET
+           payload = excluded.payload,
            attempts = excluded.attempts,
            last_error = excluded.last_error`,
       )
-      .bind(postId, text, attempts, error ?? null)
+      .bind(postId, text, payload ?? null, attempts, error ?? null)
       .run();
   } catch (e) {
     console.error(`Failed to enqueue pending embed for post ${postId}:`, e);
   }
 }
 
-async function submitEmbedTask(config: CrowdConfig, postId: string, text: string): Promise<boolean> {
+async function submitEmbedTask(
+  config: CrowdConfig,
+  postId: string,
+  text: string,
+  media?: PostMediaInput,
+): Promise<boolean> {
   const client = getCrowdClient(config);
   if (!client) return false;
 
   // Embed the human-readable body, not the color markup.
   const embeddingText = stripPostColors(text);
+  const urls = media ? postMediaUrls(config, media) : { imageUrls: [] as string[] };
   const callbackUrl = buildCallbackUrl({
     baseUrl: config.baseUrl,
     type: 'vector-embed',
@@ -595,7 +647,12 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   try {
     await client.submit({
       workload: 'vector-embed',
-      payload: { text: embeddingText },
+      payload: {
+        text: embeddingText,
+        ...(urls.imageUrls.length ? { imageUrls: urls.imageUrls } : {}),
+        ...(urls.audioUrl ? { audioUrl: urls.audioUrl } : {}),
+        ...(urls.videoUrl ? { videoUrl: urls.videoUrl } : {}),
+      } as never,
       callbackUrl,
       timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['vector-embed'],
     });
@@ -632,25 +689,40 @@ export async function drainPendingEmbeds(
 
   const rows = await db
     .prepare(
-      `SELECT post_id, text, attempts FROM pending_embeddings
+      `SELECT post_id, text, payload, attempts FROM pending_embeddings
        WHERE attempts < ?
        ORDER BY created_at ASC
        LIMIT ?`,
     )
     .bind(PENDING_EMBED_MAX_ATTEMPTS, maxBatch)
-    .all<{ post_id: string; text: string; attempts: number }>();
+    .all<{ post_id: string; text: string; payload: string | null; attempts: number }>();
 
   let submitted = 0;
   for (const row of rows.results || []) {
     if (embeddingPosts.has(row.post_id)) continue;
     if (respectThrottle && Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) break;
 
-    const ok = await submitEmbedTask(config, row.post_id, row.text);
+    let media: PostMediaInput | undefined;
+    if (row.payload) {
+      try {
+        media = JSON.parse(row.payload) as PostMediaInput;
+      } catch {
+        media = undefined;
+      }
+    }
+    const ok = await submitEmbedTask(config, row.post_id, row.text, media);
     if (ok) {
       await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(row.post_id).run();
       submitted++;
     } else {
-      await enqueuePendingEmbed(db, row.post_id, row.text, row.attempts + 1, 'submission failed');
+      await enqueuePendingEmbed(
+        db,
+        row.post_id,
+        row.text,
+        row.attempts + 1,
+        'submission failed',
+        row.payload ?? undefined,
+      );
     }
     if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   }
@@ -668,13 +740,14 @@ export async function embedPost(
   env: CrowdEnv,
   postId: string,
   text: string,
+  media?: PostMediaInput,
 ): Promise<void> {
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
   try {
     const config = crowdConfig(env);
     if (!db) {
-      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text);
+      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text, media);
       return;
     }
 
@@ -683,7 +756,8 @@ export async function embedPost(
     // is still queued for the next drain instead of being lost. Both the outbox
     // and `submitEmbedTask` keep the raw body so stripping happens exactly once
     // (it is not idempotent for escaped markers such as `\{red}`).
-    await enqueuePendingEmbed(db, postId, text);
+    const payload = media ? JSON.stringify(media) : undefined;
+    await enqueuePendingEmbed(db, postId, text, 0, undefined, payload);
     if (!config.configured || config.screeningDisabled) return;
 
     // This drain skips `postId` (the in-flight guard), so backfilled rows are
@@ -692,15 +766,248 @@ export async function embedPost(
     await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
 
     if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
-    const ok = await submitEmbedTask(config, postId, text);
+    const ok = await submitEmbedTask(config, postId, text, media);
     if (ok) {
       await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
     } else {
-      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed', payload);
     }
   } finally {
     embeddingPosts.delete(postId);
   }
+}
+
+// ── AI trend tagging (d1-omni decision) ──
+
+/**
+ * Rank a full choice distribution (incl. "none") and pick the tags to apply.
+ *
+ * Rule (Top3 + none): sort options by probability desc, take the Top3 slots.
+ * "none" is never emitted as a tag; only tags ranked strictly above "none"
+ * are added. So: none in Top3 as 1st => 0 tags, 2nd => 1 tag, 3rd => 2 tags;
+ * none outside Top3 => 3 tags.
+ */
+export function pickTopTagsWithNone(probabilities: Record<string, number>, topK = 3): string[] {
+  const ranked = Object.entries(probabilities)
+    .filter(([, p]) => typeof p === 'number' && Number.isFinite(p))
+    .sort((a, b) => b[1] - a[1])
+    .map(([tag]) => tag);
+  const top = ranked.slice(0, topK);
+  const noneIdx = top.indexOf('none');
+  const tagsOnly = noneIdx === -1 ? top : top.slice(0, noneIdx);
+  return tagsOnly.filter((t) => t !== 'none');
+}
+
+export async function ensureTrendTagTable(db: D1Database): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS trend_tag_candidates (
+           tag TEXT PRIMARY KEY,
+           score REAL NOT NULL DEFAULT 0,
+           is_active INTEGER NOT NULL DEFAULT 1,
+           updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         )`,
+      )
+      .run();
+    await db
+      .prepare(
+        'CREATE INDEX IF NOT EXISTS idx_trend_tag_candidates_active ON trend_tag_candidates(is_active, score DESC)',
+      )
+      .run();
+  } catch (e) {
+    console.error('Failed to ensure trend_tag_candidates table:', e);
+  }
+}
+
+/**
+ * Rebuild the taxonomy from user-supplied hashtags. Frequency is decayed by
+ * recency (7-day window); system tags are excluded so the decision model
+ * never has to choose them.
+ */
+export async function refreshTrendTagCandidates(db: D1Database, limit = TREND_TAG_CANDIDATE_LIMIT): Promise<string[]> {
+  await ensureTrendTagTable(db);
+  const result = await db
+    .prepare(
+      `WITH recent AS (
+         SELECT hashtags, created_at FROM posts
+         WHERE hidden = 0 AND status = 'published' AND parent_id IS NULL
+           AND created_at >= datetime('now', '-7 days')
+       )
+       SELECT
+         value AS tag,
+         SUM(
+           CASE
+             WHEN recent.created_at >= datetime('now', '-1 day') THEN 3.0
+             WHEN recent.created_at >= datetime('now', '-3 days') THEN 2.0
+             ELSE 1.0
+           END
+         ) AS score
+       FROM recent, json_each(recent.hashtags)
+       WHERE LOWER(value) NOT IN ('nsfw', 'r18', 'hidden')
+       GROUP BY LOWER(value)
+       HAVING score >= 3
+       ORDER BY score DESC, tag ASC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{ tag: string; score: number }>();
+
+  const tags = (result.results || []).map((r) => String(r.tag));
+  const now = new Date().toISOString();
+  if (tags.length > 0) {
+    const stmts = tags.map((tag, i) =>
+      db
+        .prepare(
+          `INSERT INTO trend_tag_candidates (tag, score, is_active, updated_at)
+           VALUES (?, ?, 1, ?)
+           ON CONFLICT(tag) DO UPDATE SET score = excluded.score, is_active = 1, updated_at = excluded.updated_at`,
+        )
+        .bind(tag, result.results?.[i]?.score ?? 0, now),
+    );
+    await db.batch(stmts);
+  }
+  // Retire candidates that fell out of the window.
+  if (tags.length > 0) {
+    const placeholders = tags.map(() => '?').join(',');
+    await db
+      .prepare(`UPDATE trend_tag_candidates SET is_active = 0, updated_at = ? WHERE tag NOT IN (${placeholders})`)
+      .bind(now, ...tags)
+      .run();
+  }
+  return tags;
+}
+
+export async function loadTrendTagCandidates(db: D1Database, limit = TREND_TAG_CANDIDATE_LIMIT): Promise<string[]> {
+  await ensureTrendTagTable(db);
+  const result = await db
+    .prepare('SELECT tag FROM trend_tag_candidates WHERE is_active = 1 ORDER BY score DESC, tag ASC LIMIT ?')
+    .bind(limit)
+    .all<{ tag: string }>();
+  return (result.results || []).map((r) => String(r.tag));
+}
+
+/**
+ * Submit a post for AI tagging. The decision call carries text + images OR
+ * text + audio (never both); posts with both get two calls whose Top3
+ * results are merged host-side (dedupe, first-seen wins).
+ */
+export async function tagPost(
+  db: D1Database | undefined,
+  env: CrowdEnv,
+  postId: string,
+  text: string,
+  media?: PostMediaInput,
+): Promise<void> {
+  if (taggingPosts.has(postId)) return;
+  taggingPosts.add(postId);
+  try {
+    const config = crowdConfig(env);
+    if (!config.configured || config.screeningDisabled) return;
+    if (Date.now() - lastTagTime < TAG_RATE_LIMIT_MS) return;
+    const client = getCrowdClient(config);
+    if (!client || !db) return;
+
+    let candidates = await loadTrendTagCandidates(db);
+    if (candidates.length < 2) {
+      candidates = await refreshTrendTagCandidates(db);
+    }
+    if (candidates.length < 2) return;
+
+    const criteria: Record<string, string> = {};
+    for (const tag of candidates) criteria[tag] = tag;
+    criteria.none = 'none';
+    const questions = {
+      trend: {
+        type: 'choice',
+        instructions: 'この投稿の話題として当てはまるタグを選んでください（該当なしなら none）。',
+        criteria,
+      },
+    };
+    const urls = media ? postMediaUrls(config, media) : { imageUrls: [] as string[] };
+    const state = stripPostColors(text) || null;
+
+    const calls: Array<{
+      imageUrls?: string[];
+      audioUrl?: string;
+    }> = [];
+    if (urls.imageUrls.length > 0) calls.push({ imageUrls: urls.imageUrls });
+    if (urls.audioUrl) calls.push({ audioUrl: urls.audioUrl });
+    if (calls.length === 0) calls.push({});
+
+    for (const call of calls) {
+      const callbackUrl = buildCallbackUrl({
+        baseUrl: config.baseUrl,
+        type: 'ai-inference',
+        params: { postId, kind: 'tag' },
+      });
+      await client.submit({
+        workload: 'ai-inference',
+        payload: {
+          task: 'decision',
+          model: DECISION_MODEL_ID,
+          decision: {
+            state,
+            questions,
+            ...(call.imageUrls ? { imageUrls: call.imageUrls } : {}),
+            ...(call.audioUrl ? { audioUrl: call.audioUrl } : {}),
+          },
+        } as never,
+        callbackUrl,
+        timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['ai-inference'],
+      });
+      lastTagTime = Date.now();
+    }
+    console.log(`AI tag task submitted for post ${postId} (calls=${calls.length})`);
+  } catch (e) {
+    console.error(`AI tag submission failed for post ${postId}:`, e);
+  } finally {
+    taggingPosts.delete(postId);
+  }
+}
+
+async function ensureAiTagsColumn(db: D1Database): Promise<void> {
+  try {
+    await db.prepare("ALTER TABLE posts ADD COLUMN ai_tags TEXT NOT NULL DEFAULT '[]'").run();
+  } catch {
+    // Already present.
+  }
+}
+
+async function handleAiInferenceResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
+  const postId = url.searchParams.get('postId');
+  const kind = url.searchParams.get('kind');
+  if (!postId || kind !== 'tag') return;
+  const output = extractCallbackOutput(event) as
+    | { answers?: Record<string, { probabilities?: Record<string, number> }> }
+    | undefined;
+  const probabilities = output?.answers?.trend?.probabilities;
+  if (!probabilities) return;
+  const picked = pickTopTagsWithNone(probabilities);
+  if (picked.length === 0) return;
+  await ensureAiTagsColumn(db);
+  const row = (await db.prepare('SELECT ai_tags FROM posts WHERE id = ?').bind(postId).first()) as {
+    ai_tags: string | null;
+  } | null;
+  if (!row) return;
+  let current: string[] = [];
+  try {
+    current = row.ai_tags ? (JSON.parse(row.ai_tags) as string[]) : [];
+    if (!Array.isArray(current)) current = [];
+  } catch {
+    current = [];
+  }
+  const merged = [...current];
+  const seen = new Set(merged.map((t) => t.toLowerCase()));
+  for (const tag of picked) {
+    if (!seen.has(tag.toLowerCase())) {
+      merged.push(tag);
+      seen.add(tag.toLowerCase());
+    }
+  }
+  if (merged.length === current.length) return;
+  await db.prepare('UPDATE posts SET ai_tags = ? WHERE id = ?').bind(JSON.stringify(merged), postId).run();
+  console.log(`AI tag webhook for post ${postId}: tags=${picked.join(',')}`);
 }
 
 // ── Webhook handling ──
@@ -791,10 +1098,16 @@ async function handleVectorEmbedResult(
   }
   await ensureEmbeddingSourceColumn(db);
 
-  const model = (output.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
-  const dimensions = (output.dimensions as number) || 1024;
+  const model = (output.model as string) || 'google/embeddinggemma-2';
+  const dimensions = (output.dimensions as number) || EMBEDDING_DIMENSIONS;
+  // Dimension guard: never compare new-model vectors against old ones.
+  // The Vectorize index is being rebuilt for 768d, so skip the upsert until
+  // callback vectors match the index dimension and rely on D1.
+  if (dimensions !== EMBEDDING_DIMENSIONS) {
+    console.warn(`Vector embed webhook for post ${postId}: unexpected dims=${dimensions}, storing in D1 only`);
+  }
 
-  if (env.VECTORIZE) {
+  if (env.VECTORIZE && dimensions === EMBEDDING_DIMENSIONS) {
     try {
       await env.VECTORIZE.upsert([{ id: postId, values: vector }]);
     } catch (ve) {
@@ -1000,6 +1313,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleNsfwResult(url, event, db);
       } else if (callbackType === 'vector-embed') {
         await handleVectorEmbedResult(url, event, db, env);
+      } else if (callbackType === 'ai-inference') {
+        await handleAiInferenceResult(url, event, db);
       } else if (callbackType === 'file-scan') {
         await handleFileScanResult(url, event, db, env);
       } else if (callbackType === 'translate') {

@@ -13,6 +13,8 @@ export function viewToBottomNavId(view: string): string {
       return 'translate';
     case 'arcade':
       return 'arcade';
+    case 'maps':
+      return 'maps';
     case 'profile':
     case 'settings':
     case 'bookmarks':
