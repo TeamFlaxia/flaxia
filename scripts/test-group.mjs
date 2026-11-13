@@ -142,6 +142,7 @@ const groups = {
     'deploy-config',
     'device-platform',
     'left-nav-handlers',
+    'left-nav-layout',
     'mail-address',
     'mail-mime-guard',
     'mail-routing',

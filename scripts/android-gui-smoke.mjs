@@ -7,20 +7,35 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
-function waitForDevice() {
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      execFileSync('adb', ['wait-for-device'], { timeout: 60_000, stdio: 'ignore' });
-      return;
-    } catch (error) {
-      if (attempt === 2) throw error;
-    }
+const sleepSync = (seconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
+// The emulator occasionally drops off adb mid-run ("device offline") and comes
+// back a few seconds later. Wait for it to reconnect instead of failing the job.
+function deviceOnline() {
+  try {
+    return execFileSync('adb', ['get-state'], { encoding: 'utf8' }).trim() === 'device';
+  } catch {
+    return false;
   }
 }
-const start = () => {
-  waitForDevice();
-  console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
-};
+function waitForDevice(attempts = 60) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (deviceOnline()) return true;
+    sleepSync(1);
+  }
+  return false;
+}
+function start() {
+  const transient = /device offline|no devices|more than one device|device not found/i;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    waitForDevice(30);
+    try {
+      return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+    } catch (error) {
+      if (!transient.test(String(error))) throw error;
+    }
+  }
+  return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+}
 async function connect() {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {

@@ -5,6 +5,7 @@ import { formatCount } from '../lib/format.js';
 import { getLocale, t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { closeLeftNav } from '../lib/left-nav-drawer.js';
+import { setupLeftNavResize } from '../lib/left-nav-resize.js';
 import { isModalOpen } from '../lib/modal-state';
 import { applyNameColor } from '../lib/name-color.js';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
@@ -75,6 +76,7 @@ export class LeftNav {
   private boundHandleResize: () => void;
   private boundHandleModalChange: (e: Event) => void;
   private boundHandleDocumentClick: (e: MouseEvent) => void;
+  private cleanupResize: (() => void) | null = null;
 
   constructor(props: LeftNavProps = {}) {
     this.props = props;
@@ -86,6 +88,7 @@ export class LeftNav {
     this.boundHandleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.element = this.createElement();
+    this.cleanupResize = setupLeftNavResize(this.element);
     this.setupEventListeners();
     this.loadTags();
   }
@@ -668,6 +671,8 @@ export class LeftNav {
   public destroy(): void {
     window.removeEventListener('resize', this.boundHandleResize);
     window.removeEventListener('modalchange', this.boundHandleModalChange);
+    this.cleanupResize?.();
+    this.cleanupResize = null;
     this.closePopup();
     this.element.remove();
   }
