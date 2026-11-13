@@ -123,13 +123,22 @@ describe('ActivityPub inbox handlers', () => {
       });
 
       const post = await db
-        .prepare('SELECT text, hashtags, actor_id, ap_object_id FROM posts WHERE actor_id = ?')
+        .prepare('SELECT text, hashtags, actor_id, ap_object_id, user_id, username FROM posts WHERE actor_id = ?')
         .bind(REMOTE_ACTOR)
-        .first<{ text: string; hashtags: string; actor_id: string; ap_object_id: string }>();
+        .first<{
+          text: string;
+          hashtags: string;
+          actor_id: string;
+          ap_object_id: string;
+          user_id: string;
+          username: string;
+        }>();
       assert.ok(post, 'the note of the follower must be stored');
       assert.equal(post.text, 'hi @bob #flaxia');
       assert.deepEqual(JSON.parse(post.hashtags), ['flaxia']);
       assert.equal(post.ap_object_id, `${REMOTE}/notes/1`);
+      assert.equal(post.user_id, '', 'a remote note is not owned by the local recipient');
+      assert.equal(post.username, 'alice@remote.example');
 
       const notification = await db
         .prepare("SELECT type FROM notifications WHERE user_id = 'local-2' AND type = 'mention'")
@@ -187,6 +196,53 @@ describe('ActivityPub inbox handlers', () => {
       .bind(`${BASE}/notes/post-1`)
       .first<{ n: number }>();
     assert.equal(count?.n, 0);
+  });
+
+  it('stores a remote Note once even when two local accounts follow the actor', async () => {
+    await db
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
+         VALUES ('local-3', 'carol@test.com', '', 'carol', 'Carol', '', '2026-01-01T00:00:00.000Z')`,
+      )
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+         VALUES ('following-carol', 'local-3', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
+      )
+      .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
+      .run();
+    const object = {
+      id: `${REMOTE}/notes/shared-recipient`,
+      type: 'Note',
+      attributedTo: REMOTE_ACTOR,
+      content: 'shared with two followers',
+    };
+    for (const [username, activityId] of [
+      ['alice', 'recipient-alice'],
+      ['carol', 'recipient-carol'],
+    ]) {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username,
+        activity: {
+          id: `${REMOTE}/activities/${activityId}`,
+          type: 'Create',
+          actor: REMOTE_ACTOR,
+          object,
+        },
+      });
+    }
+    const count = await db
+      .prepare('SELECT COUNT(*) AS n FROM posts WHERE ap_object_id = ?')
+      .bind(object.id)
+      .first<{ n: number }>();
+    assert.equal(count?.n, 1);
+    const owner = await db
+      .prepare('SELECT user_id FROM posts WHERE ap_object_id = ?')
+      .bind(object.id)
+      .first<{ user_id: string }>();
+    assert.equal(owner?.user_id, '');
   });
 
   it('ignores a Note of a follower the account does not follow back', async () => {
