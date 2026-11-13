@@ -1,6 +1,40 @@
 /// <reference types="@cloudflare/workers-types" />
 
 /**
+ * Decode the base64 content of a PEM block.
+ *
+ * Keys are usually encoded with the standard alphabet, but some instances
+ * publish them with the url safe alphabet or with a trailing character
+ * outside the alphabet. The content is decoded as it is and, when that
+ * fails, without the trailing characters. The key itself is verified by
+ * every signature that is checked with it.
+ */
+function decodePem(contents: string): Uint8Array<ArrayBuffer> {
+  const variants = [contents, contents.replace(/[^A-Za-z0-9+/=]+$/, '')];
+
+  for (const variant of variants) {
+    const normalized = variant.replace(/-/g, '+').replace(/_/g, '/');
+    if (/[^A-Za-z0-9+/=]/.test(normalized)) continue;
+
+    let padded = normalized;
+    while (padded.length % 4 !== 0) {
+      padded += '=';
+    }
+
+    try {
+      const binary = atob(padded);
+      const bytes = new Uint8Array(new ArrayBuffer(binary.length));
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      return bytes;
+    } catch {}
+  }
+
+  throw new Error('Failed to decode PEM base64 content');
+}
+
+/**
  * Generate RSA-SHA256 key pair for ActivityPub
  */
 export async function generateKeyPair(): Promise<{ publicKey: CryptoKey; privateKey: CryptoKey }> {
@@ -62,38 +96,18 @@ export async function importPublicKey(pem: string): Promise<CryptoKey> {
   const pemFooter = '-----END PUBLIC KEY-----';
   const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, ''); // Remove all whitespace including newlines and spaces
 
-  // Validate base64 characters and clean
-  const cleanedPem = pemContents.replace(/[^A-Za-z0-9+/=]/g, '');
-  if (cleanedPem.length !== pemContents.length) {
-    throw new Error('Invalid base64 characters in public key PEM');
-  }
-
-  // Ensure proper padding
-  let paddedPem = cleanedPem;
-  while (paddedPem.length % 4 !== 0) {
-    paddedPem += '=';
-  }
-
   // Decode base64 using Web Crypto API (Cloudflare Functions compatible)
-  try {
-    const binaryDerString = atob(paddedPem);
-    const binaryDerArray = new Uint8Array(binaryDerString.length);
-    for (let i = 0; i < binaryDerString.length; i++) {
-      binaryDerArray[i] = binaryDerString.charCodeAt(i);
-    }
-    return crypto.subtle.importKey(
-      'spki',
-      binaryDerArray.buffer,
-      {
-        name: 'RSASSA-PKCS1-v1_5',
-        hash: 'SHA-256',
-      },
-      true,
-      ['verify'],
-    );
-  } catch {
-    throw new Error('Failed to decode PEM base64 content');
-  }
+  const binaryDerArray = decodePem(pemContents);
+  return crypto.subtle.importKey(
+    'spki',
+    binaryDerArray,
+    {
+      name: 'RSASSA-PKCS1-v1_5',
+      hash: 'SHA-256',
+    },
+    true,
+    ['verify'],
+  );
 }
 
 /**
@@ -105,22 +119,12 @@ export async function importPrivateKey(pem: string): Promise<CryptoKey> {
   const pemFooter = '-----END PRIVATE KEY-----';
   const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, ''); // Remove all whitespace including newlines and spaces
 
-  // Validate base64 characters
-  const invalidChars = pemContents.replace(/[^A-Za-z0-9+/=]/g, '');
-  if (invalidChars.length !== pemContents.length) {
-    throw new Error('Invalid base64 characters in private key PEM');
-  }
-
   // Decode base64 using Web Crypto API (Cloudflare Functions compatible)
   try {
-    const binaryDerString = atob(pemContents);
-    const binaryDerArray = new Uint8Array(binaryDerString.length);
-    for (let i = 0; i < binaryDerString.length; i++) {
-      binaryDerArray[i] = binaryDerString.charCodeAt(i);
-    }
+    const binaryDerArray = decodePem(pemContents);
     return crypto.subtle.importKey(
       'pkcs8',
-      binaryDerArray.buffer,
+      binaryDerArray,
       {
         name: 'RSASSA-PKCS1-v1_5',
         hash: 'SHA-256',

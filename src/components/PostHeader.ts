@@ -29,21 +29,10 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   attachPlusBadge(avatar, props.badge_type);
 
   // アバター画像は遅延読み込み（テキスト表示を優先）
-  if (props.avatar_key) {
-    // requestIdleCallback を使ってアイコン読み込みを遅延
-    if ('requestIdleCallback' in window) {
-      window.requestIdleCallback?.(
-        () => {
-          loadAvatarImage(avatarInner, props.avatar_key!);
-        },
-        { timeout: 1000 },
-      );
-    } else {
-      // フォールバック：setTimeoutで遅延読み込み
-      setTimeout(() => {
-        loadAvatarImage(avatarInner, props.avatar_key!);
-      }, 100);
-    }
+  if (props.avatar_url) {
+    scheduleAvatarLoad(() => loadAvatarUrl(avatarInner, props.avatar_url!));
+  } else if (props.avatar_key) {
+    scheduleAvatarLoad(() => loadAvatarImage(avatarInner, props.avatar_key!));
   }
 
   const displayName = document.createElement('span');
@@ -72,8 +61,13 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   if (titleBadge) header.appendChild(titleBadge);
   header.appendChild(timestamp);
 
-  // Make avatar and names clickable to navigate to profile
+  // Make avatar and names clickable to navigate to profile. A remote actor
+  // lives on another instance, so its profile opens there.
   const navigateToProfile = () => {
+    if (props.profile_url) {
+      window.open(props.profile_url, '_blank', 'noopener,noreferrer');
+      return;
+    }
     window.history.pushState({}, '', `/profile/${props.username}`);
     window.dispatchEvent(
       new CustomEvent('spaNavigate', {
@@ -98,6 +92,29 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   });
 
   return header;
+}
+
+function scheduleAvatarLoad(load: () => void): void {
+  if ('requestIdleCallback' in window) {
+    window.requestIdleCallback?.(load, { timeout: 1000 });
+  } else {
+    setTimeout(load, 100);
+  }
+}
+
+function loadAvatarUrl(avatarInner: HTMLElement, url: string): void {
+  const img = new Image();
+  img.referrerPolicy = 'no-referrer';
+  img.onload = () => {
+    avatarInner.style.backgroundImage = `url(${img.src})`;
+    avatarInner.style.backgroundSize = 'cover';
+    avatarInner.style.backgroundPosition = 'center';
+    avatarInner.querySelector(':scope > .avatar-initial')?.remove();
+  };
+  img.onerror = () => {
+    // Keep the initial letter when the remote image is unavailable.
+  };
+  img.src = url;
 }
 
 // アバター画像を非同期で読み込む関数

@@ -21,6 +21,10 @@ type QueueMessage = DeliveryMessage | InboxMessage;
 interface Env {
   DB: D1Database;
   BASE_URL: string;
+  AP_DELIVERY_QUEUE?: Queue;
+  ENVIRONMENT?: string;
+  AP_ALLOWED_PRIVATE_PEERS?: string;
+  CACHE?: KVNamespace;
   EXPORT_KV?: KVNamespace;
   EXPORT_BUCKET?: R2Bucket;
   BUCKET?: R2Bucket;
@@ -29,12 +33,28 @@ interface Env {
   MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
+  CROWD_ORCHESTRATOR_URL?: string;
+  CROWD_API_KEY?: string;
+  CROWD_WEBHOOK_SECRET?: string;
+  CC_CRAWL?: string;
+  CC_DOMAINS?: string;
+  WEB_EMBEDDINGS_ENABLED?: string;
 }
 
 export default {
   // Triggered by `triggers.crons` in wrangler.toml.worker — exports the
   // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
-  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    if (event.cron === '0 * * * *') {
+      try {
+        const { drainCcIngestion } = await import('./lib/cc-ingest');
+        await drainCcIngestion(env);
+      } catch (error) {
+        console.error('Common Crawl ingestion failed:', (error as Error).message);
+      }
+      return;
+    }
+
     try {
       const { runDatasetExport } = await import('./lib/dataset-export');
       const count = await runDatasetExport(env);
@@ -164,9 +184,10 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
       method: 'POST',
       headers: headers,
       body: body,
-      // The signature is bound to this inbox. Following a remote redirect
-      // would forward signed requests to an unchecked destination.
-      redirect: 'error',
+      // The signature is bound to this inbox. A remote redirect is not
+      // followed: it would forward a signed request to an unchecked
+      // destination.
+      redirect: 'manual',
       signal: controller.signal,
     });
 
@@ -176,6 +197,12 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
     if (response.ok) {
       console.log('ActivityPub delivery successful:', (activity as { type: string }).type);
+      message.ack();
+    } else if (response.status >= 300 && response.status < 400) {
+      console.error('ActivityPub delivery was redirected:', {
+        status: response.status,
+        activityType: (activity as { type: string }).type,
+      });
       message.ack();
     } else {
       console.error('ActivityPub delivery failed:', {
@@ -210,678 +237,31 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
   }
 }
 
+/**
+ * Process an activity that was delivered to one of our inboxes.
+ *
+ * The handling itself lives in the ActivityPub module so it can be tested
+ * without a queue: the worker only decides what to do with the message.
+ */
 async function handleInboxActivity(msg: InboxMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { username, activity, actorId } = msg;
 
   try {
-    const activityType = (activity as { type: string }).type;
-
-    switch (activityType) {
-      case 'Create':
-        await handleCreateActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Follow':
-        await handleFollowActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Accept':
-        await handleAcceptActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Like':
-        await handleLikeActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Announce':
-        await handleAnnounceActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Delete':
-        await handleDeleteActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Undo':
-        await handleUndoActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      case 'Update':
-        await handleUpdateActivity(activity as Record<string, unknown>, username, actorId, env);
-        break;
-      default:
-        console.warn('Unknown activity type:', activityType);
-    }
-
+    const { handleIncomingActivity } = await import('./lib/activitypub/handlers');
+    await handleIncomingActivity(
+      {
+        DB: env.DB,
+        BASE_URL: env.BASE_URL,
+        AP_DELIVERY_QUEUE: env.AP_DELIVERY_QUEUE,
+        ENVIRONMENT: env.ENVIRONMENT,
+        AP_ALLOWED_PRIVATE_PEERS: env.AP_ALLOWED_PRIVATE_PEERS,
+        CACHE: env.CACHE,
+      },
+      { activity: activity as Record<string, unknown>, actorId, username },
+    );
     message.ack();
   } catch (e) {
     console.error('Inbox processing error:', e);
     message.retry();
   }
-}
-
-async function handleCreateActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  if (!object || object.type !== 'Note') {
-    console.log('Ignoring Create activity with non-Note object');
-    return;
-  }
-
-  const content = object.content;
-  if (!content || typeof content !== 'string') {
-    console.error('Note missing content');
-    return;
-  }
-
-  if (content.length > 200) {
-    console.error('Note content too long:', content.length);
-    return;
-  }
-
-  // The Note must be attributed to the signing actor; otherwise any
-  // federated key could publish content under another actor's name.
-  const attributedTo = object.attributedTo;
-  const attributedMatch =
-    typeof attributedTo === 'string'
-      ? attributedTo === actorId
-      : Array.isArray(attributedTo) && attributedTo.includes(actorId);
-  if (!attributedMatch) {
-    console.error('Note attributedTo does not match signing actor');
-    return;
-  }
-
-  const userResult = (await env.DB.prepare(`
-    SELECT id FROM users WHERE username = ? COLLATE NOCASE
-  `)
-    .bind(username)
-    .first()) as { id: string } | null;
-
-  if (!userResult) {
-    console.error('User not found:', username);
-    return;
-  }
-
-  const userId = userResult.id;
-
-  // Only actors the target user has a follow relationship with may have
-  // their Notes published. Without this, any holder of a federated signing
-  // key could inject posts into any local timeline context.
-  const followRel = await env.DB.prepare(`SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?`)
-    .bind(userId, actorId)
-    .first();
-  if (!followRel) {
-    console.error('Ignoring Create from non-follower actor:', actorId);
-    return;
-  }
-
-  // Always mint the post id server-side: activity ids are attacker input
-  // and must never become primary keys (id squatting / collision).
-  const postId = generatePostId();
-
-  // Federated content is untrusted markup: store plain text only.
-  const plainContent = content.replace(/<[^>]*>/g, '').slice(0, 200);
-
-  const hashtagSet = new Set<string>();
-  const hashtagRegex = /#(\w+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = hashtagRegex.exec(plainContent)) !== null) {
-    hashtagSet.add(match[1]);
-  }
-  const hashtags = Array.from(hashtagSet);
-
-  // Extract mentions from content
-  const mentionSet = new Set<string>();
-  const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-  let mentionMatch: RegExpExecArray | null;
-  while ((mentionMatch = mentionRegex.exec(plainContent)) !== null) {
-    mentionSet.add(mentionMatch[1]);
-  }
-  const mentionedUsernames = Array.from(mentionSet);
-
-  let parentId: string | null = null;
-  const rootId: string | null = null;
-  const depth = 0;
-
-  if (object.inReplyTo) {
-    const replyTo = object.inReplyTo as string;
-    const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
-    if (postIdMatch) {
-      parentId = postIdMatch[1];
-    }
-  }
-
-  await env.DB.prepare(`
-    INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  `)
-    .bind(postId, userId, username, plainContent, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
-    .run();
-
-  // Create mention notifications for mentioned users
-  if (mentionedUsernames.length > 0) {
-    try {
-      const filteredUsernames = mentionedUsernames.filter((mu) => mu.toLowerCase() !== username.toLowerCase());
-
-      if (filteredUsernames.length > 0) {
-        // Batch lookup all mentioned users
-        const placeholders = filteredUsernames.map(() => '?').join(',');
-        const mentionedUsers = (await env.DB.prepare(
-          `SELECT id, username, display_name, avatar_key, badge_type FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`,
-        )
-          .bind(...filteredUsernames)
-          .all<{ id: string; username: string; display_name: string; avatar_key: string | null }>()) as D1Result<{
-          id: string;
-          username: string;
-          display_name: string;
-          avatar_key: string | null;
-        }>;
-
-        const actorData = JSON.stringify({
-          username: username,
-          display_name: username,
-          domain: new URL(actorId).hostname,
-        });
-
-        const stmts = (mentionedUsers.results || []).map((mentionedUser) =>
-          env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) VALUES (?, ?, ?, ?, ?, ?)',
-          ).bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData),
-        );
-
-        if (stmts.length > 0) {
-          await env.DB.batch(stmts);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to create mention notifications for ActivityPub post:', e);
-      // Don't fail the post creation if mention notifications fail
-    }
-  }
-
-  console.log('Note received and stored:', postId);
-}
-
-async function handleFollowActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const userResult = (await env.DB.prepare(`
-    SELECT id FROM users WHERE username = ? COLLATE NOCASE
-  `)
-    .bind(username)
-    .first()) as { id: string } | null;
-
-  if (!userResult) {
-    console.error('User not found:', username);
-    return;
-  }
-
-  const localUserId = userResult.id;
-
-  const existingFollow = await env.DB.prepare(`
-    SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?
-  `)
-    .bind(localUserId, actorId)
-    .first();
-
-  if (existingFollow) {
-    console.log('Follower already exists:', actorId);
-    return;
-  }
-
-  // Fetch actor's inbox URL and profile information.
-  // Both the actor URL and the advertised inbox are remote input: gate them
-  // before fetching, and only accept an inbox on the actor's own origin so a
-  // malicious actor document cannot redirect signed deliveries at intranet URLs.
-  let inboxUrl = activity.actor as string;
-  let actorData: Record<string, unknown> | null = null;
-  let actorOrigin: string | null = null;
-  try {
-    actorOrigin = parsePublicHttpUrl(actorId).origin;
-  } catch {
-    console.error('Refusing to fetch non-public actor URL:', actorId);
-  }
-  if (actorOrigin) {
-    try {
-      const { fetchWithSsrfGuard } = await import('./lib/url-guard');
-      const actorResponse = await fetchWithSsrfGuard(actorId, {
-        headers: {
-          Accept: 'application/activity+json, application/ld+json',
-        },
-        timeoutMs: 10000,
-      });
-
-      if (actorResponse.ok) {
-        actorData = (await actorResponse.json()) as Record<string, unknown>;
-        const advertised = actorData.inbox;
-        if (typeof advertised === 'string') {
-          try {
-            const inboxParsed = parsePublicHttpUrl(advertised);
-            if (inboxParsed.origin === actorOrigin) {
-              inboxUrl = inboxParsed.toString();
-            } else {
-              console.error('Refusing cross-origin actor inbox:', advertised);
-            }
-          } catch {
-            console.error('Refusing invalid actor inbox:', advertised);
-          }
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch actor inbox:', e);
-    }
-  }
-
-  const followerId = generateId();
-  await env.DB.prepare(`
-    INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  `)
-    .bind(followerId, localUserId, actorId, inboxUrl)
-    .run();
-
-  console.log('Follow request recorded:', actorId);
-
-  // Create notification for follow with actor information
-  try {
-    const { nanoid } = await import('nanoid');
-
-    // Extract actor name for display
-    let actorDisplayName = 'Unknown User';
-    let actorUsername = 'unknown';
-    let domain = 'unknown';
-
-    if (actorData) {
-      actorDisplayName = (actorData.name as string) || (actorData.preferredUsername as string) || 'Unknown User';
-      actorUsername = (actorData.preferredUsername as string) || 'unknown';
-
-      // Extract domain from actor URL for "MastodonのXXXさん" format
-      try {
-        const actorUrl = new URL(actorId);
-        domain = actorUrl.hostname;
-      } catch {
-        domain = actorId.includes('://') ? new URL(actorId).hostname : actorId;
-      }
-    } else {
-      // Fallback: extract domain from actor URL
-      try {
-        const actorUrl = new URL(actorId);
-        domain = actorUrl.hostname;
-      } catch {
-        domain = actorId.includes('://') ? new URL(actorId).hostname : actorId;
-      }
-    }
-
-    // Store actor information in the notification
-    await env.DB.prepare(`
-      INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `)
-      .bind(
-        nanoid(),
-        localUserId,
-        'ap_follow',
-        null,
-        actorId,
-        JSON.stringify({
-          username: actorUsername,
-          display_name: actorDisplayName,
-          domain: domain,
-          actor_url: actorId,
-        }),
-      )
-      .run();
-
-    console.log('Follow notification created for:', actorDisplayName, 'from domain:', domain);
-  } catch (e) {
-    console.error('Failed to create follow notification:', e);
-  }
-
-  // Send Accept activity automatically
-  try {
-    console.log('Preparing ActivityPub follow acceptance');
-
-    const { signRequest } = await import('./lib/activitypub/signature');
-
-    // Get user's private and public keys for signing
-    const keyResult = await env.DB.prepare(`
-      SELECT ak.private_key_pem FROM actor_keys ak
-      JOIN users u ON u.id = ak.user_id
-      WHERE u.username = ?
-    `)
-      .bind(username)
-      .first();
-
-    if (!keyResult || !keyResult.private_key_pem) {
-      console.error('No private key found for user:', username);
-      return;
-    }
-
-    const privateKeyPem = keyResult.private_key_pem as string;
-    const keyId = `${env.BASE_URL}/api/actors/${username}#main-key`;
-
-    // Build Accept activity - use the original Follow activity as object
-    const acceptActivity = {
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      id: `${env.BASE_URL}/activities/accept-${followerId}`,
-      type: 'Accept',
-      actor: `${env.BASE_URL}/api/actors/${username}`,
-      object: activity, // Use the entire original Follow activity
-      to: [actorId],
-      published: new Date().toISOString(),
-    };
-
-    const body = JSON.stringify(acceptActivity);
-    const headers = await signRequest(inboxUrl, body, privateKeyPem, keyId);
-
-    const response = await fetch(inboxUrl, {
-      method: 'POST',
-      headers: headers,
-      body: body,
-    });
-
-    if (response.status === 200) {
-      console.log('Accept activity sent successfully:', response.status);
-    } else if (response.status === 202) {
-      console.warn('Accept activity was accepted but not processed yet (202)');
-    } else {
-      console.error('Failed to send Accept activity:', {
-        status: response.status,
-      });
-    }
-  } catch (e: unknown) {
-    console.error('Error sending Accept activity:', { name: (e as Error).name });
-  }
-}
-
-async function handleAcceptActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  if (!object || object.type !== 'Follow') {
-    console.log('Ignoring Accept for non-Follow activity');
-    return;
-  }
-
-  const followActor = object.actor as string;
-  if (!followActor) {
-    console.error('Accept activity missing object actor');
-    return;
-  }
-
-  // Update ap_following status to accepted
-  const userResult = (await env.DB.prepare(`SELECT id FROM users WHERE username = ? COLLATE NOCASE`)
-    .bind(username)
-    .first()) as { id: string } | null;
-
-  if (userResult) {
-    const result = await env.DB.prepare(
-      `UPDATE ap_following SET status = ? WHERE local_user_id = ? AND target_actor_url = ? AND status = 'sent'`,
-    )
-      .bind('accepted', userResult.id, followActor)
-      .run();
-    console.log('Follow accepted from:', followActor, 'updated:', result.meta?.changes || 0, 'rows');
-  } else {
-    console.log('Follow accepted from:', followActor);
-  }
-}
-
-async function handleLikeActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  const objectUrl = (object?.id || object) as string;
-  if (!objectUrl) {
-    console.error('Like activity missing object');
-    return;
-  }
-
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
-  if (!postIdMatch) {
-    console.log('Like target is not a local post:', objectUrl);
-    return;
-  }
-
-  const postId = postIdMatch[1];
-
-  const postResult = await env.DB.prepare(`
-    SELECT id FROM posts WHERE id = ?
-  `)
-    .bind(postId)
-    .first();
-
-  if (!postResult) {
-    console.log('Liked post not found:', postId);
-    return;
-  }
-
-  const existingLike = await env.DB.prepare(`
-    SELECT id FROM likes WHERE post_id = ? AND actor_id = ?
-  `)
-    .bind(postId, actorId)
-    .first();
-
-  if (existingLike) {
-    console.log('Like already exists:', postId, actorId);
-    return;
-  }
-
-  const likeId = generateId();
-  await env.DB.prepare(`
-    INSERT OR IGNORE INTO likes (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  `)
-    .bind(likeId, postId, null, actorId)
-    .run();
-
-  console.log('Like recorded:', postId, actorId);
-}
-
-async function handleAnnounceActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  const objectUrl = (object?.id || object) as string;
-  if (!objectUrl) {
-    console.error('Announce activity missing object');
-    return;
-  }
-
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
-  if (!postIdMatch) {
-    console.log('Announce target is not a local post:', objectUrl);
-    return;
-  }
-
-  const postId = postIdMatch[1];
-
-  const postResult = (await env.DB.prepare(`
-    SELECT id, user_id, text FROM posts WHERE id = ?
-  `)
-    .bind(postId)
-    .first()) as { id: string; user_id: string; text: string } | null;
-
-  if (!postResult) {
-    console.log('Announced post not found:', postId);
-    return;
-  }
-
-  const existingShare = await env.DB.prepare(`
-    SELECT id FROM shares WHERE post_id = ? AND actor_id = ?
-  `)
-    .bind(postId, actorId)
-    .first();
-
-  if (existingShare) {
-    console.log('Share already exists:', postId, actorId);
-    return;
-  }
-
-  const shareId = generateId();
-  const inserted = await env.DB.prepare(`
-    INSERT OR IGNORE INTO shares (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  `)
-    .bind(shareId, postId, null, actorId)
-    .run();
-
-  if (inserted.meta.changes === 0) return;
-
-  await env.DB.prepare(
-    'UPDATE posts SET reload_count = reload_count + 1, engagement_hotness = engagement_hotness + 3.0 WHERE id = ?',
-  )
-    .bind(postId)
-    .run();
-
-  if (postResult.user_id) {
-    try {
-      await env.DB.prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(generateId(), postResult.user_id, 'ap_announce', postId, actorId)
-        .run();
-    } catch (e) {
-      console.error('Failed to create Announce notification:', e);
-    }
-  }
-
-  console.log('Share recorded:', postId, actorId);
-}
-
-async function handleDeleteActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  const objectUrl = (object?.id || object) as string;
-  if (!objectUrl) {
-    console.error('Delete activity missing object');
-    return;
-  }
-
-  console.log('Delete activity received for:', objectUrl);
-}
-
-async function handleUndoActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  if (!object) {
-    console.error('Undo activity missing object');
-    return;
-  }
-
-  // The verified outer actor must own the activity being undone. Otherwise
-  // a signed Undo from A could delete B's follow/like/share records.
-  if (activity.actor !== actorId || (object.actor !== undefined && object.actor !== actorId)) {
-    console.warn('Ignoring Undo referring to a different actor');
-    return;
-  }
-
-  const objectType = object.type;
-  switch (objectType) {
-    case 'Like':
-      const objectUrl = typeof object.object === 'string' ? object.object : '';
-      const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
-      if (postIdMatch) {
-        await env.DB.prepare(`
-          DELETE FROM likes WHERE post_id = ? AND actor_id = ?
-        `)
-          .bind(postIdMatch[1], actorId)
-          .run();
-        console.log('Like removed:', postIdMatch[1], actorId);
-      }
-      break;
-    case 'Announce':
-      const announceUrl = typeof object.object === 'string' ? object.object : '';
-      const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
-      if (sharePostIdMatch) {
-        const removed = await env.DB.prepare(`
-          DELETE FROM shares WHERE post_id = ? AND actor_id = ?
-        `)
-          .bind(sharePostIdMatch[1], actorId)
-          .run();
-
-        if (removed.meta.changes > 0) {
-          await env.DB.prepare(
-            'UPDATE posts SET reload_count = MAX(0, reload_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 3.0) WHERE id = ?',
-          )
-            .bind(sharePostIdMatch[1])
-            .run();
-          await env.DB.prepare("DELETE FROM notifications WHERE post_id = ? AND actor_id = ? AND type = 'ap_announce'")
-            .bind(sharePostIdMatch[1], actorId)
-            .run();
-        }
-        console.log('Share removed:', sharePostIdMatch[1], actorId);
-      }
-      break;
-    case 'Follow':
-      const userResult = (await env.DB.prepare(`
-        SELECT id FROM users WHERE username = ? COLLATE NOCASE
-      `)
-        .bind(username)
-        .first()) as { id: string } | null;
-
-      if (userResult) {
-        await env.DB.prepare(`
-          DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?
-        `)
-          .bind(userResult.id, actorId)
-          .run();
-        console.log('Follow removed:', actorId);
-      }
-      break;
-    default:
-      console.log('Unknown undo object type:', objectType);
-  }
-}
-
-async function handleUpdateActivity(
-  activity: Record<string, unknown>,
-  username: string,
-  actorId: string,
-  env: Env,
-): Promise<void> {
-  const object = activity.object as Record<string, unknown>;
-  if (!object) {
-    console.error('Update activity missing object');
-    return;
-  }
-
-  // Profile/note Update persistence is not implemented yet. Do not issue a
-  // network fetch at the whim of a remote actor when there is no consumer for
-  // the fetched data (and therefore no meaningful benefit).
-  if (activity.actor !== actorId || (object.attributedTo && object.attributedTo !== actorId)) {
-    console.warn('Ignoring Update from a mismatched actor');
-    return;
-  }
-  console.log('Ignoring unsupported ActivityPub Update:', object.type);
-}
-
-function generateId(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function generatePostId(): string {
-  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-  let result = '';
-  const values = new Uint8Array(10);
-  crypto.getRandomValues(values);
-  for (let i = 0; i < 10; i++) {
-    result += alphabet[values[i] % alphabet.length];
-  }
-  return result;
 }

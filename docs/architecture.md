@@ -100,14 +100,18 @@ fixed file count. Major areas include:
 - `reports`, `ng_words`, `hidden_posts`
 - `ads`, `ad_interactions`, `ad_config`
 - `mentions`, `polls`, `post_thumbnails`
-- ActivityPub: `ap_actor_keys`, `ap_followers`, `ap_liked`, `ap_shares`
+- ActivityPub: `actor_keys`, `ap_actors`, `ap_followers`, `ap_following`,
+  `ap_blocks`, `ap_activities`
 
 ## ActivityPub Federation
 
-- Actor endpoints: `/.well-known/webfinger`, `/.well-known/nodeinfo`
+- Discovery: `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/host-meta`
+- Actor endpoints and collections under `/api/actors/:username`
 - Inbox/Delivery via Cloudflare Queues
 - HTTP Signatures (src: `functions/lib/activitypub/signature.ts`)
-- Supports: Follow, Like (Fresh), Announce (Share), Undo, Note (Create)
+- Supports: Follow, Accept, Reject, Like (Fresh), Announce (Share), Undo,
+  Note (Create), Delete, Update, Block, Move
+- The specification of the implementation is `docs/activitypub.md`
 
 ## SPA Routing
 

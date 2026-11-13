@@ -2573,6 +2573,103 @@ h1 {
   contain: layout style paint;
 }
 
+/* === Media cue overlay (Niconico-style timed comments) === */
+.media-cues {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.media-cue {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 100%;
+  padding: 0 10px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
+  white-space: nowrap;
+  text-shadow:
+    0 0 4px rgba(0, 0, 0, 0.9),
+    1px 1px 0 rgba(0, 0, 0, 0.9),
+    -1px -1px 0 rgba(0, 0, 0, 0.9),
+    1px -1px 0 rgba(0, 0, 0, 0.9),
+    -1px 1px 0 rgba(0, 0, 0, 0.9);
+}
+
+.media-cue code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 0.85em;
+}
+
+.media-cue--fly {
+  animation: media-cue-fly var(--cue-duration, 5000ms) linear forwards;
+  will-change: transform;
+}
+
+@keyframes media-cue-fly {
+  from {
+    transform: translateX(var(--cue-from, 100%));
+  }
+  to {
+    transform: translateX(var(--cue-to, -100%));
+  }
+}
+
+.media-cue--top,
+.media-cue--bottom {
+  left: 50%;
+  max-width: 90%;
+  white-space: normal;
+  text-align: center;
+  transform: translateX(-50%);
+  animation: media-cue-fade-in 0.15s ease-out;
+}
+
+@keyframes media-cue-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.media-cue--out {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.media-cue--still {
+  left: 50%;
+  top: 45%;
+  white-space: normal;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  animation: media-cue-fade-cycle 2s ease forwards;
+}
+
+@keyframes media-cue-fade-cycle {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .video-player--loaded {
   min-height: 0;
 }

@@ -23,7 +23,10 @@
 }
 
 /* The central content column (.timeline, .explore-page, .profile-page, etc.) */
-.main-container > :not(.left-nav):not(.right-panel):not(.thread-page):not(.arcade-page):not(.settings-page) {
+.main-container
+  > :not(.left-nav):not(.right-panel):not(.thread-page):not(.arcade-page):not(.settings-page):not(.mail-page):not(
+    .mail-thread-page
+  ):not(.mail-compose-page):not(.mail-settings-page) {
   flex: 1;
   min-width: 0;
   max-width: 640px;
@@ -68,7 +71,7 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  width: 290px;
+  width: var(--flaxia-nav-width, 290px);
   flex-shrink: 0;
   height: 100vh;
   padding: 10px 14px 10px;
@@ -1477,7 +1480,10 @@
     margin-top: 0;
   }
 
-  .main-container > :not(.left-nav):not(.right-panel):not(.thread-page):not(.arcade-page):not(.settings-page),
+  .main-container
+    > :not(.left-nav):not(.right-panel):not(.thread-page):not(.arcade-page):not(.settings-page):not(.mail-page):not(
+      .mail-thread-page
+    ):not(.mail-compose-page):not(.mail-settings-page),
   .thread-main-content {
     flex: 1;
     max-width: 640px;

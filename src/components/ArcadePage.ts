@@ -9,7 +9,7 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
-import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
+import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../lib/recommendation/vector-codec.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
@@ -621,7 +621,7 @@ export class ArcadePage {
 
   private rankRecommendedGames(data: ClientRankedGamesResponse, promoteInitial = true): Game[] {
     if (!this.recommendedProfile) return data.games || [];
-    const dim = data.vector_meta?.dim ?? 1024;
+    const dim = data.vector_meta?.dim ?? RECOMMENDATION_VECTOR_DIM;
     const vectors = new Map<string, number[]>();
     for (const [postId, encoded] of Object.entries(data.vectors || {})) {
       const vector = decodeVector(encoded, dim);

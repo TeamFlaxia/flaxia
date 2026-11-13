@@ -3,6 +3,10 @@ import { nanoid } from 'nanoid';
 import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
+import { buildFollowActivity, buildUndoActivity } from '../../lib/activitypub/activities';
+import { deliverToInbox } from '../../lib/activitypub/delivery';
+import { fetchFederationDocument, isPrivatePeerAllowed, resolveRemoteActor } from '../../lib/activitypub/fetch';
+import { actorPrivateKey, ensureActorKey } from '../../lib/activitypub/keys';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import {
   clearSessionCookie,
@@ -33,6 +37,7 @@ import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isCreatableSrpKdf } from '../../lib/srp';
+import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { batchGetFreshAndBookmarkStatus, detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
@@ -142,13 +147,14 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE id != ? AND frozen_at IS NULL
-      AND id NOT IN (
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.id != ? AND u.frozen_at IS NULL
+      AND u.id NOT IN (
         SELECT followee_id FROM follows WHERE follower_id = ?
       )
-      ORDER BY id
+      ORDER BY u.id
       LIMIT 100
     `)
       .bind(currentUserId, currentUserId)
@@ -235,47 +241,53 @@ users.post('/remote-follow', requireAuth, async (c) => {
 
     const localUser = user;
 
-    const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    let wfResponse: Response;
-    try {
-      wfResponse = (await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json')).response;
-    } catch (error: unknown) {
-      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
-      throw error;
+    // A remote instance is reached over https. An instance that runs next to
+    // this one (the federation test peer) may serve plain http, but only when
+    // it is on the list of allowed private peers.
+    const origins = [`https://${domain}`];
+    if (isPrivatePeerAllowed(c.env, domain)) origins.push(`http://${domain}`);
+
+    // The key of the account signs the requests: an instance that runs in
+    // secure mode only answers a signed request. The key is created when the
+    // account federates for the first time.
+    await ensureActorKey(c.env.DB, localUser.id);
+    const privateKeyPem = await actorPrivateKey(c.env.DB, localUser.id);
+    const signOptions = privateKeyPem
+      ? {
+          privateKeyPem,
+          keyId: `${c.env.BASE_URL}/api/actors/${localUser.username}#main-key`,
+        }
+      : {};
+
+    let wfData: { links?: Array<{ rel: string; href?: string; type?: string }> } | null = null;
+    for (const origin of origins) {
+      const webfingerUrl = `${origin}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
+      const response = await fetchFederationDocument(webfingerUrl, c.env, {
+        headers: { Accept: 'application/jrd+json, application/json' },
+        ...signOptions,
+      });
+      if (!response || !response.ok) continue;
+      wfData = (await response.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
+      break;
     }
 
-    if (!wfResponse.ok) {
+    if (!wfData) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
-
-    const wfData = (await wfResponse.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
     const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    let actorUrl: string;
-    let actorResponse: Response;
-    try {
-      const actorResult = await fetchRemoteJson(selfLink.href, 'application/activity+json, application/ld+json');
-      actorUrl = actorResult.url;
-      actorResponse = actorResult.response;
-    } catch (error: unknown) {
-      if (error instanceof SsrfError) return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
-      throw error;
-    }
-
-    if (!actorResponse.ok) {
+    // The actor document is the source of truth for the inbox: it is only
+    // accepted when it lives on the same origin as the actor and when it
+    // points at a public inbox.
+    const actor = await resolveRemoteActor(selfLink.href, c.env, signOptions);
+    if (!actor) {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
-
-    const actorData = (await actorResponse.json()) as { inbox?: string };
-    let inboxUrl: string;
-    try {
-      inboxUrl = parsePublicHttpUrl(String(actorData.inbox ?? '')).toString();
-    } catch {
-      return c.json({ error: 'Remote actor has no valid inbox' }, 400);
-    }
+    const actorUrl = actor.actorUrl;
+    const inboxUrl = actor.inbox;
 
     const existing = await c.env.DB.prepare(
       'SELECT id FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?',
@@ -289,29 +301,46 @@ users.post('/remote-follow', requireAuth, async (c) => {
 
     const followId = nanoid();
     await c.env.DB.prepare(`
-      INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, target_username, target_domain, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, shared_inbox_url, target_username, target_domain, display_name, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     `)
-      .bind(followId, localUser.id, actorUrl, inboxUrl, remoteUsername, domain)
+      .bind(followId, localUser.id, actorUrl, inboxUrl, actor.sharedInbox, remoteUsername, domain, actor.displayName)
       .run();
 
-    const followActivity = {
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      id: `${c.env.BASE_URL}/activities/follow-${followId}`,
-      type: 'Follow',
-      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-      object: actorUrl,
-      to: [actorUrl],
-    };
+    // Remember the actor document so later deliveries do not have to fetch
+    // it again.
+    await c.env.DB.prepare(`
+      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      ON CONFLICT(actor_url) DO UPDATE SET
+        inbox_url = excluded.inbox_url,
+        shared_inbox_url = excluded.shared_inbox_url,
+        public_key_pem = excluded.public_key_pem,
+        preferred_username = excluded.preferred_username,
+        display_name = excluded.display_name,
+        icon_url = excluded.icon_url,
+        domain = excluded.domain,
+        fetched_at = excluded.fetched_at
+    `)
+      .bind(
+        actor.actorUrl,
+        actor.inbox,
+        actor.sharedInbox,
+        actor.publicKeyPem,
+        actor.preferredUsername,
+        actor.displayName,
+        actor.iconUrl,
+        actor.domain,
+      )
+      .run();
 
-    if (c.env.AP_DELIVERY_QUEUE) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
-        inboxUrl,
-        activity: followActivity,
-        senderUsername: localUser.username,
-      });
-    }
+    const followActivity = buildFollowActivity(c.env.BASE_URL, localUser.username, actorUrl, followId);
+
+    await deliverToInbox(c.env, {
+      inboxUrl,
+      username: localUser.username,
+      activity: followActivity,
+    });
 
     await c.env.DB.prepare('UPDATE ap_following SET status = ? WHERE id = ?').bind('sent', followId).run();
 
@@ -386,27 +415,16 @@ users.delete('/remote-follow', requireAuth, async (c) => {
 
     await c.env.DB.prepare('DELETE FROM ap_following WHERE id = ?').bind(following.id).run();
 
-    const followActivityId = `${c.env.BASE_URL}/activities/follow-${following.id}`;
-    const undoActivity = {
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      id: `${c.env.BASE_URL}/activities/undo-${following.id}`,
-      type: 'Undo',
-      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-      object: {
-        id: followActivityId,
-        type: 'Follow',
-        actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
-        object: actorUrl,
-      },
+    const followActivity = buildFollowActivity(c.env.BASE_URL, localUser.username, actorUrl, following.id);
+    const undoActivity = buildUndoActivity(c.env.BASE_URL, localUser.username, followActivity, following.id, {
       to: [actorUrl],
-    };
+    });
 
-    if (c.env.AP_DELIVERY_QUEUE && following.target_inbox_url) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
+    if (following.target_inbox_url) {
+      await deliverToInbox(c.env, {
         inboxUrl: following.target_inbox_url,
+        username: localUser.username,
         activity: undoActivity,
-        senderUsername: localUser.username,
       });
     }
 
@@ -421,6 +439,77 @@ users.delete('/remote-follow', requireAuth, async (c) => {
   }
 });
 
+// GET /remote/actors/:domain/:username - the profile of an account of another instance
+users.get('/remote/actors/:domain/:username', async (c) => {
+  const domain = c.req.param('domain');
+  const username = c.req.param('username');
+  if (!domain || !username) {
+    return c.json({ error: 'Missing account' }, 400);
+  }
+
+  const actor = await c.env.DB.prepare(
+    `SELECT actor_url, preferred_username, display_name, icon_url, domain, inbox_url
+     FROM ap_actors WHERE domain = ? AND preferred_username = ? LIMIT 1`,
+  )
+    .bind(domain.toLowerCase(), username)
+    .first<{
+      actor_url: string;
+      preferred_username: string | null;
+      display_name: string | null;
+      icon_url: string | null;
+      domain: string | null;
+      inbox_url: string | null;
+    }>();
+
+  if (!actor) {
+    return c.json({ error: 'Remote account not found' }, 404);
+  }
+
+  // Whether the account that is signed in follows this account.
+  const user = c.get('user');
+  let following = false;
+  let followState: string | null = null;
+  if (user) {
+    const state = await c.env.DB.prepare(
+      'SELECT status FROM ap_following WHERE local_user_id = ? AND target_actor_url = ? LIMIT 1',
+    )
+      .bind(user.id, actor.actor_url)
+      .first<{ status: string }>();
+    followState = state?.status ?? null;
+    following = followState === 'accepted';
+  }
+
+  const posts = await c.env.DB.prepare(
+    `SELECT id, text, created_at, fresh_count, reload_count, reply_count, ap_object_id
+     FROM posts WHERE actor_id = ? AND status = 'published' AND hidden = 0
+     ORDER BY created_at DESC LIMIT 50`,
+  )
+    .bind(actor.actor_url)
+    .all<{
+      id: string;
+      text: string;
+      created_at: string;
+      fresh_count: number;
+      reload_count: number;
+      reply_count: number;
+      ap_object_id: string | null;
+    }>();
+
+  return c.json({
+    actor: {
+      actor_url: actor.actor_url,
+      preferred_username: actor.preferred_username,
+      display_name: actor.display_name,
+      icon_url: actor.icon_url,
+      domain: actor.domain,
+      inbox_url: actor.inbox_url,
+    },
+    following,
+    follow_state: followState,
+    posts: posts.results ?? [],
+  });
+});
+
 // GET /users/suggest?q=prefix - suggest usernames matching prefix
 users.get('/users/suggest', async (c) => {
   try {
@@ -433,12 +522,13 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type, name_color
-      FROM users
-      WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
+      SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+      FROM users u
+      ${USER_TITLE_JOIN}
+      WHERE u.frozen_at IS NULL AND (LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?)
       ORDER BY
-        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
-        created_at DESC
+        CASE WHEN LOWER(u.username) LIKE ? THEN 0 ELSE 1 END,
+        u.created_at DESC
       LIMIT ?
     `)
       .bind(prefix + '%', prefix + '%', prefix + '%', limit)
@@ -451,6 +541,12 @@ users.get('/users/suggest', async (c) => {
       avatar_key: u.avatar_key || '',
       badge_type: (u.badge_type as string | null) ?? null,
       name_color: (u.name_color as string | null) ?? null,
+      equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+      title_name: (u.title_name as string | null) ?? null,
+      title_name_ja: (u.title_name_ja as string | null) ?? null,
+      title_description: (u.title_description as string | null) ?? null,
+      title_description_ja: (u.title_description_ja as string | null) ?? null,
+      title_icon: (u.title_icon as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -702,9 +798,10 @@ users.get('/users/:username/followers', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.follower_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.followee_id = ?
     `;
 
@@ -816,9 +913,10 @@ users.get('/users/:username/following', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
-        u.created_at
+        u.created_at, ${USER_TITLE_COLUMNS}
       FROM follows f
       JOIN users u ON f.followee_id = u.id
+      ${USER_TITLE_JOIN}
       WHERE f.follower_id = ?
     `;
 
@@ -2171,9 +2269,10 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
+       ${USER_TITLE_JOIN}
        WHERE b.blocker_id = ?
        ORDER BY b.created_at DESC`,
     )

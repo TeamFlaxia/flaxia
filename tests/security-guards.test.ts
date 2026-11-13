@@ -384,8 +384,13 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     const queue = readFileSync(join(ROOT, 'functions/queue-worker.ts'), 'utf8');
     assert.ok(queue.includes('parsePublicHttpUrl'), 'delivery inboxes must be re-validated');
 
-    const activitypub = readFileSync(join(ROOT, 'functions/api/routes/activitypub.ts'), 'utf8');
+    const activitypub = readFileSync(join(ROOT, 'functions/lib/activitypub/actor.ts'), 'utf8');
     assert.ok(activitypub.includes('localActorUsername'), 'shared inbox targets need canonical origin checks');
+    const inbox = readFileSync(join(ROOT, 'functions/lib/activitypub/inbox.ts'), 'utf8');
+    assert.ok(
+      inbox.includes('localActorUsername'),
+      'the shared inbox must resolve the addressed accounts through the canonical origin check',
+    );
   });
 
   it('never lets a single report hide a post', () => {

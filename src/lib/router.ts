@@ -8,8 +8,10 @@ export type RouteView =
   | 'login'
   | 'register'
   | 'profile'
+  | 'remote-profile'
   | 'explore'
   | 'search'
+  | 'translate'
   | 'notifications'
   | 'bookmarks'
   | 'terms'
@@ -20,6 +22,7 @@ export type RouteView =
   | 'admin'
   | 'settings'
   | 'arcade'
+  | 'maps'
   | 'billing-success'
   | 'billing-canceled'
   | 'download'
@@ -32,10 +35,12 @@ export interface RouteInfo {
   view: RouteView;
   postId: string | null;
   username: string | null;
+  /** The instance of a remote account, for the view `remote-profile`. */
+  remoteDomain?: string | null;
   tag: string | null;
   adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
   searchQuery?: string;
-  searchType?: 'posts' | 'users' | 'arcade';
+  searchType?: 'posts' | 'users' | 'arcade' | 'web';
 }
 
 export function parseRoute(path: string, search: string): RouteInfo | null {
@@ -97,8 +102,13 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
       username: null,
       tag: null,
       searchQuery: q,
-      searchType: type as 'posts' | 'users' | 'arcade',
+      searchType: type as 'posts' | 'users' | 'arcade' | 'web',
     };
+  }
+
+  // Flaxia Maps & Weathers route - public, no auth required
+  if (cleanPath === '/maps') {
+    return { view: 'maps', postId: null, username: null, tag: null };
   }
 
   // Arcade game route - public, no auth required
@@ -116,6 +126,18 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   const threadMatch = cleanPath.match(/^\/thread\/([^/]+)$/);
   if (threadMatch) {
     return { view: 'thread', postId: threadMatch[1], username: null, tag: null };
+  }
+
+  // The profile of a remote account: /@:domain/:username
+  const remoteProfileMatch = cleanPath.match(/^\/@([^/]+)\/([^/]+)$/);
+  if (remoteProfileMatch?.[1] && remoteProfileMatch?.[2]) {
+    return {
+      view: 'remote-profile',
+      postId: null,
+      username: decodeURIComponent(remoteProfileMatch[2]),
+      remoteDomain: decodeURIComponent(remoteProfileMatch[1]),
+      tag: null,
+    };
   }
 
   // Profile routes - matches both /users/:username and /profile/:username
@@ -171,6 +193,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   // App download page - public, no auth required
   if (cleanPath === '/download') {
     return { view: 'download', postId: null, username: null, tag: null };
+  }
+
+  // Translation page - public, no auth required
+  if (cleanPath === '/translate') {
+    return { view: 'translate', postId: null, username: null, tag: null };
   }
 
   // Sandbox route - public, no auth required

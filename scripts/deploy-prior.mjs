@@ -44,7 +44,7 @@ function inlineParsePrior(raw) {
 }
 
 function inlineParseConfig(raw) {
-  if (!raw) return { enabled: false, dim: 64, alpha: 0.6, lambda: 0.6, seed: 20260701, srcDim: 1024 };
+  if (!raw) return { enabled: false, dim: 64, alpha: 0.6, lambda: 0.6, seed: 20260701, srcDim: 768 };
   try {
     const c = JSON.parse(raw);
     return { ...c, enabled: c.enabled !== false };

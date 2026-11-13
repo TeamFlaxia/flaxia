@@ -615,6 +615,78 @@ test('a guest /api/me 401 does not clear the public feed snapshot', async () => 
   assert.deepEqual(await response.json(), { posts: ['saved'] });
 });
 
+test('a single failed read does not clear a proven connection', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let networkCalls = 0;
+  let failNext = false;
+  const fetch = createOfflineFetch(
+    async () => {
+      networkCalls++;
+      if (failNext) {
+        failNext = false;
+        throw new TypeError('offline');
+      }
+      return json({ posts: [`call-${networkCalls}`] });
+    },
+    {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      // The WebView's navigator.onLine is stuck at false, but the network
+      // checks out via the probe.
+      isOnline: () => false,
+      setOffline: () => {},
+      probe: async () => true,
+    },
+  );
+  t.mock.timers.tick(1000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(await (await fetch('/api/posts')).json(), { posts: ['call-1'] });
+
+  // One transient failure: the read falls back to saved content...
+  failNext = true;
+  const cached = await fetch('/api/posts');
+  assert.equal(cached.headers.get('X-Flaxia-Offline'), '1');
+  assert.equal(networkCalls, 2);
+
+  // ...but the proven connection is not invalidated, so the next read
+  // retries the network instead of being denied from the cache.
+  const fresh = await fetch('/api/posts');
+  assert.equal(fresh.headers.has('X-Flaxia-Offline'), false);
+  assert.equal(networkCalls, 3);
+  assert.deepEqual(await fresh.json(), { posts: ['call-3'] });
+});
+
+test('probing stops after the consecutive-failure cap and resumes on explicit retry', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const win = installWindowListeners();
+  try {
+    let probes = 0;
+    createOfflineFetch(async () => json({ posts: [] }), {
+      store: createOfflineStore(new IDBFactory()),
+      baseUrl: 'https://localhost/',
+      apiOrigin: 'https://flaxia.app',
+      isOnline: () => false,
+      setOffline: () => {},
+      probe: async () => {
+        probes++;
+        return false;
+      },
+    });
+    for (let i = 0; i < 40; i++) {
+      t.mock.timers.tick(30_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(probes, 20);
+    win.fire('flaxiaRetryConnectivity');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(probes, 21);
+  } finally {
+    win.restore();
+  }
+});
+
 test('a guest 401 that lands after the feed cache does not clear it', async () => {
   let resolveMe: ((response: Response) => void) | undefined;
   const c = client(async (input) => {

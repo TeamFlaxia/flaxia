@@ -5,6 +5,7 @@ import {
   isGameToParentMessage,
   isParentToGameMessage,
   type ParentToGameMessage,
+  type PlayerIdentity,
 } from './protocol.ts';
 
 export interface FlaxiaGameOptions {
@@ -26,6 +27,28 @@ export interface ScoreSubmittedEvent {
   label: string;
 }
 
+/**
+ * An achievement a game authors for itself. `id` only has to be unique within
+ * the game — namespace it (for example `<gameId>.level1`) so it can never
+ * collide with another game's badge or a platform title.
+ */
+export interface GameTitleDefinition {
+  id: string;
+  name: string;
+  nameJa?: string;
+  description?: string;
+  descriptionJa?: string;
+  /** Same-origin image path only (for example `/icons/badge-96.png`). */
+  icon?: string;
+}
+
+/** The parent rejected a `createTitle()` or `awardTitle()` frame. */
+export interface TitleErrorEvent {
+  code: string;
+  message: string;
+  titleId?: string;
+}
+
 /** Platform events emitted by {@link FlaxiaGame}. */
 export interface FlaxiaGameEventMap {
   /** The parent answered a `requestFullscreen()` call. */
@@ -34,6 +57,14 @@ export interface FlaxiaGameEventMap {
   fresh: (granted: boolean) => void;
   /** The parent acknowledged a score submitted with `submitScore()`. */
   scoreSubmitted: (event: ScoreSubmittedEvent) => void;
+  /** The parent answered a `requestIdentity()` call. */
+  identity: (identity: PlayerIdentity) => void;
+  /** The parent stored a definition sent with `createTitle()`. */
+  titleCreated: (event: { titleId: string }) => void;
+  /** The parent granted a title sent with `awardTitle()` to the player. */
+  titleAwarded: (event: { titleId: string }) => void;
+  /** The parent rejected a title frame. */
+  titleError: (event: TitleErrorEvent) => void;
   /** Every validated frame received from the parent. */
   message: (message: ParentToGameMessage) => void;
 }
@@ -84,6 +115,34 @@ export class FlaxiaGame {
   /** Ask the parent to fresh (like) the post this game belongs to. */
   requestFresh(): void {
     this.postToParent({ type: 'REQUEST_FRESH' });
+  }
+
+  /**
+   * Ask who is playing. The parent answers with an `identity` event; every
+   * field of the identity is `null` while nobody is signed in.
+   */
+  requestIdentity(): void {
+    this.postToParent({ type: 'REQUEST_IDENTITY' });
+  }
+
+  /**
+   * Register a title definition with the game the player is running. Only the
+   * game post's author may do this, typically while previewing or testing the
+   * game. Definitions are write-once: the first version wins.
+   */
+  createTitle(definition: GameTitleDefinition): void {
+    const frame = toTitleFrame('CREATE_TITLE', definition);
+    if (frame) this.postToParent(frame);
+  }
+
+  /**
+   * Grant an already registered title to the signed-in player. A missing
+   * definition is rejected (`TITLE_NOT_FOUND`); only titles scoped to this
+   * game can be granted, never a platform title or another game's badge.
+   */
+  awardTitle(definition: GameTitleDefinition): void {
+    const frame = toTitleFrame('AWARD_TITLE', definition);
+    if (frame) this.postToParent(frame);
   }
 
   /**
@@ -151,6 +210,22 @@ export class FlaxiaGame {
       case 'SCORE_SUBMITTED':
         this.handlers.scoreSubmitted?.({ score: message.score, label: message.label });
         break;
+      case 'PLAYER_IDENTITY':
+        this.handlers.identity?.(message.identity);
+        break;
+      case 'TITLE_CREATED':
+        this.handlers.titleCreated?.({ titleId: message.titleId });
+        break;
+      case 'TITLE_AWARDED':
+        this.handlers.titleAwarded?.({ titleId: message.titleId });
+        break;
+      case 'TITLE_ERROR':
+        this.handlers.titleError?.({
+          code: message.code,
+          message: message.message,
+          titleId: message.titleId,
+        });
+        break;
       default:
         break;
     }
@@ -173,4 +248,24 @@ export class FlaxiaGame {
       // The parent may be navigating away; a dropped frame is not fatal.
     }
   }
+}
+
+/**
+ * Normalizes a definition into a wire frame. The runtime guard is the single
+ * place that enforces every length cap, so an oversized definition is dropped
+ * locally instead of being rejected by the parent with no feedback.
+ */
+function toTitleFrame(
+  type: 'CREATE_TITLE' | 'AWARD_TITLE',
+  definition: GameTitleDefinition,
+): GameToParentMessage | null {
+  if (!definition || typeof definition !== 'object') return null;
+
+  const frame: Record<string, unknown> = { type, titleId: definition.id, name: definition.name };
+  if (definition.nameJa !== undefined) frame.nameJa = definition.nameJa;
+  if (definition.description !== undefined) frame.description = definition.description;
+  if (definition.descriptionJa !== undefined) frame.descriptionJa = definition.descriptionJa;
+  if (definition.icon !== undefined) frame.icon = definition.icon;
+
+  return isGameToParentMessage(frame) ? frame : null;
 }

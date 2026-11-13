@@ -11,6 +11,7 @@
 // HF_REPO the artifact is still written to R2 (when available) and skipped.
 
 import { eventReward } from './linucb.ts';
+import { sha256Hex } from './sha256.ts';
 
 export const DATASET_CHECKPOINT_KEY = 'arcade:dataset:checkpoint';
 export const DATASET_SALT_KEY = 'arcade:dataset:salt';
@@ -51,13 +52,6 @@ export interface ExportEnv {
   EXPORT_BUCKET?: R2Bucket;
   HF_TOKEN?: string;
   HF_REPO?: string;
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 export async function anonymizeId(id: string, salt: string): Promise<string> {
@@ -151,7 +145,7 @@ including quick skips as negative feedback.
 - \`hour\` — event time truncated to the top of the hour (full precision is
   never exported: exact timestamps enable re-identification by joining
   public interaction times)
-- \`post_embedding\` — 1024-d content embedding of the game
+- \`post_embedding\` — 768-d content embedding of the game
 - \`label\` — reward used for RL (normalized dwell, or engagement boosts)
 
 ## Suggested use

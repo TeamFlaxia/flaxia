@@ -168,7 +168,10 @@ export async function getRecommendationProfile(
 
   if (inflight) return inflight;
   inflight = (async () => {
-    const stored = force ? null : await readStoredProfile();
+    let stored = force ? null : await readStoredProfile();
+    // A profile built for the previous embedding model cannot be compared with
+    // the new vectors; rebuild it instead of mixing dimensions.
+    if (stored && stored.dim !== RECOMMENDATION_VECTOR_DIM) stored = null;
     // The vault can lock while a read/rebuild is awaiting; never repopulate the
     // in-memory cache after that transition.
     if (!isVaultUnlocked()) return null;

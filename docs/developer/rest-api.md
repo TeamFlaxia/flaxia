@@ -83,13 +83,40 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 認証 | 説明 |
 |---|---|---|---|
-| GET | `/api/me` | 必須 | 現在ユーザー（`ng_words` 含む） |
+| GET | `/api/me` | 必須 | 現在ユーザー（`ng_words`、バッジ、装備中の実績を含む） |
 | PATCH | `/api/users/me` | 必須 | プロフィール更新（`equipped_title_id` 等） |
 | PATCH | `/api/users/me/email` | 必須 | メール変更（再認証必要） |
 | PATCH | `/api/users/me/password` | 必須 | パスワード変更（Vault 再ラップ必要） |
 | POST | `/api/users/me/avatar` | 必須 | アバター画像アップロード |
 | DELETE | `/api/users/me` | 必須 | アカウント削除 |
 | GET | `/api/users/me/blocked` | 必須 | ブロック一覧 |
+
+### バッジと実績（ユーザー表示項目）
+
+ユーザー・投稿・通知の actor など、ユーザーを表すオブジェクトはバッジと
+実績（称号）の表示項目を返します。アプリ側はこれらを同期して表示します。
+
+| フィールド | 型 | 説明 |
+|---|---|---|
+| `badge_type` | `string \| null` | アバターバッジ。現状 `flaxia_plus`（Flaxia+ のチェックマーク）または `null`。`null` 以外は必ず描画可能な値のみ |
+| `name_color` | `string \| null` | 表示名の色。`badge_type` が有効なときのみ意味を持つ |
+| `equipped_title_id` | `string \| null` | 装備中の実績 ID。未装備は `null` |
+| `title_name` / `title_name_ja` | `string \| null` | 実績の表示名（英 / 日） |
+| `title_description` / `title_description_ja` | `string \| null` | 実績の説明（英 / 日） |
+| `title_icon` | `string \| null` | 実績アイコンの画像 URL。非画像のレガシー値は名前のみで描画 |
+
+これらの項目は次で返ります。
+
+| エンドポイント | バッジ | 実績 |
+|---|---|---|
+| `GET /api/me` | ✓ | ✓（装備中の実績を解決済み） |
+| `GET /api/users/:username` | ✓ | ✓ |
+| `GET /api/users/suggest` / `/api/users/suggestions` | ✓ | ✓ |
+| `GET /api/users/:username/followers` / `/following` | ✓ | ✓ |
+| `GET /api/users/me/blocked` | ✓ | ✓ |
+| `GET /api/search?type=users` / 投稿検索の `users` | ✓ | ✓ |
+| `GET /api/notifications`（`actor` / `actors`） | ✓ | ✓ |
+| `GET /api/posts` 等の投稿作者 | ✓ | ✓ |
 
 ---
 
@@ -116,15 +143,32 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 | POST | `/api/users/me/credentials/retry` | 必須 | 資格情報リトライ |
 | POST | `/api/users/me/deletion/retry` | 必須 | 削除リトライ |
 
+プロフィール / 提案 / フォロワー一覧のユーザーには [バッジと実績](#バッジと実績ユーザー表示項目)
+の表示項目が含まれます。
+
 ---
 
 ## 5. タイトル
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/titles` | タイトル一覧 |
+| GET | `/api/titles` | タイトル一覧（プラットフォーム + ゲーム称号） |
 | GET | `/api/titles/me` | 所持タイトル |
 | PUT | `/api/titles/me/equipped` | 装備（`{ titleId }`、`null` で外す） |
+| POST | `/api/titles/game` | ゲーム称号を登録（要認証・ゲーム投稿の作者のみ） |
+| POST | `/api/titles/game/award` | 登録済みゲーム称号を本人に付与（要認証・冪等） |
+
+`POST /api/titles/game` のボディは
+`{ postId, titleId, name, nameJa?, description?, descriptionJa?, icon? }` です。
+`postId` は実行中のゲーム投稿で、親（`src/lib/game-badge-bridge.ts`）が
+`event.source` から解決して付与します。ゲームコードからは直接指定できません。
+`icon` は同一オリジンのパスのみ。定義は `titleId` ごとに書き込み一回限りです。
+
+`POST /api/titles/game/award` は登録済みの称号だけを本人に付与します。未登録は
+404 `TITLE_NOT_FOUND`、他ゲーム・プラットフォームの `titleId` は 409
+`TITLE_CONFLICT` で拒否されます。ゲームからは Game API の `AWARD_TITLE` を
+使ってください
+（[Game API](game-api.md#47-バッジ称号)）。
 
 ---
 
@@ -180,7 +224,7 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/search` | `q`, `type=posts|users|hashtags` |
+| GET | `/api/search` | `q`, `type=posts|users|hashtags`（ユーザー結果に[バッジと実績](#バッジと実績ユーザー表示項目)を含む） |
 | GET | `/api/tags/trending` | トレンドタグ |
 | GET | `/api/tags/suggest` | タグ補完 |
 | GET | `/api/current-topic` | 現在の話題 |
@@ -222,7 +266,7 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 
 | メソッド | パス | 説明 |
 |---|---|---|
-| GET | `/api/notifications` | 通知一覧 |
+| GET | `/api/notifications` | 通知一覧（`actor`/`actors` に[バッジと実績](#バッジと実績ユーザー表示項目)を含む） |
 | POST | `/api/notifications/read-all` | すべて既読 |
 | GET | `/api/push/vapid-key` | VAPID 公開鍵 |
 | POST | `/api/push/register` | プッシュ登録 |

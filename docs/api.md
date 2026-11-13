@@ -60,8 +60,10 @@ automatically after a successful legacy login, or on password change)
 `POST /api/auth/logout`
 
 ### Me
-`GET /api/auth/me`
-- Returns current user info
+`GET /api/me`
+- Returns current user info, including `badge_type` and the equipped title
+  (`equipped_title_id`, `title_name`, `title_name_ja`, `title_description`,
+  `title_description_ja`, `title_icon`) resolved from the title catalog
 
 ---
 
@@ -245,6 +247,24 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `GET /api/users/:username/followers`
 `GET /api/users/:username/following`
 
+### Suggestions
+`GET /api/users/suggest?q=`
+`GET /api/users/suggestions`
+- Returns user objects for typeahead / recommendations
+
+### Badge & title fields
+User objects returned by the profile, suggestions, followers/following,
+blocked list, search (`type=users` and the `users` array of post search), and
+notification `actor`/`actors` include:
+
+| Field | Type | Description |
+|---|---|---|
+| `badge_type` | `string \| null` | Avatar badge; currently `flaxia_plus` or `null` |
+| `equipped_title_id` | `string \| null` | Equipped achievement/title id, or `null` |
+| `title_name` / `title_name_ja` | `string \| null` | Title display name (en / ja) |
+| `title_description` / `title_description_ja` | `string \| null` | Title description (en / ja) |
+| `title_icon` | `string \| null` | Title icon image URL; non-image legacy values render as name only |
+
 ### Update Profile
 `PATCH /api/users/me`
 
@@ -267,13 +287,30 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 
 ## Search
 
+### Legacy (composers)
 `GET /api/search?q=<query>&type=<posts|users|hashtags>`
+
+### Federated search v2
+`GET /api/search/v2?q=<query>&tab=<all|web|posts|users|games>&limit=<n>`
+
+- `limit` defaults to 20 and is clamped to 50.
+- Supports quoted phrases, `#hashtag`, `@user`, `from:<user>`, and `site:<domain>`.
+- `all` returns posts, users (max 5), games (max 10), and web results (max 10).
+- Web results federate Wikipedia, Hacker News, Stack Overflow, GitHub, and npm.
+  They are disabled when `ENVIRONMENT=test`.
+- Responses are cached in KV for 60s with a hashed, per-viewer key.
+
+User results (both `type=users` and the `users` array returned with post
+search) include the badge and title fields described in
+[Badge & title fields](#badge--title-fields).
 
 ---
 
 ## Notifications
 
 `GET /api/notifications`
+- Each notification's `actor` / `actors` include the badge and title fields
+  described in [Badge & title fields](#badge--title-fields)
 
 ---
 

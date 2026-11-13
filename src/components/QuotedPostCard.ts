@@ -5,6 +5,7 @@ import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { parsePostColors } from '../lib/post-colors.js';
 import { renderColorizedText } from '../lib/post-colors-dom.js';
+import { parseMediaCues, stripMediaCues } from '../lib/post-cues.js';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -33,18 +34,21 @@ function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
   const wrap = document.createElement('div');
   wrap.className = 'quoted-post-attachment';
 
+  const mediaCues = parseMediaCues(quoted.text || '').cues;
+  const cues = mediaCues.length > 0 ? mediaCues : undefined;
+
   if (quoted.attachments && quoted.attachments.length > 0) {
-    wrap.appendChild(createMediaCarousel({ postId: quoted.id, attachments: quoted.attachments }));
+    wrap.appendChild(createMediaCarousel({ postId: quoted.id, attachments: quoted.attachments, cues }));
     return wrap;
   }
 
   const gifKey = quoted.gif_key || '';
   if (gifKey.startsWith('video/')) {
-    wrap.appendChild(createVideoPlayer({ gifKey, postId: quoted.id }));
+    wrap.appendChild(createVideoPlayer({ gifKey, postId: quoted.id, cues }));
     return wrap;
   }
   if (gifKey.startsWith('audio/')) {
-    wrap.appendChild(createAudioPlayer({ gifKey: gifKey, postId: quoted.id }));
+    wrap.appendChild(createAudioPlayer({ gifKey: gifKey, postId: quoted.id, cues }));
     return wrap;
   }
   if (gifKey) {
@@ -123,7 +127,11 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
 
   const avatar = document.createElement('span');
   avatar.className = 'quoted-post-avatar';
-  if (quoted.avatar_key) {
+  if (quoted.avatar_url) {
+    avatar.style.backgroundImage = `url(${quoted.avatar_url})`;
+    avatar.style.backgroundSize = 'cover';
+    avatar.style.backgroundPosition = 'center';
+  } else if (quoted.avatar_key) {
     avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${quoted.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
@@ -151,10 +159,10 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
   const body = document.createElement('div');
   body.className = 'quoted-post-text';
   if (canUsePostColors({ badge_type: quoted.badge_type })) {
-    const parsed = parsePostColors(quoted.text || '');
+    const parsed = parsePostColors(stripMediaCues(quoted.text || ''));
     body.appendChild(renderColorizedText(parsed.plain, parsed.spans));
   } else {
-    body.textContent = (quoted.text || '').replace(/\\\{/g, '{');
+    body.textContent = stripMediaCues(quoted.text || '').replace(/\\\{/g, '{');
   }
   card.appendChild(body);
 

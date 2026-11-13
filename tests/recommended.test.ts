@@ -25,7 +25,7 @@ async function sendVectorEmbed(postId: string, vector: number[]): Promise<void> 
   const raw = JSON.stringify({
     taskId: `t-${postId}`,
     status: 'done',
-    result: { output: { vector, model: 'Qwen/Qwen3-Embedding-0.6B', dimensions: 1024 } },
+    result: { output: { vector, model: 'google/embeddinggemma-2', dimensions: 768 } },
   });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomUUID();
@@ -46,7 +46,7 @@ async function sendVectorEmbed(postId: string, vector: number[]): Promise<void> 
 }
 
 function unitVector(index: number): number[] {
-  const vector = new Array(1024).fill(0);
+  const vector = new Array(768).fill(0);
   vector[index] = 1;
   return vector;
 }

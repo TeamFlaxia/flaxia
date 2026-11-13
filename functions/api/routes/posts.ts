@@ -11,7 +11,10 @@ import {
 } from '../../../src/lib/recommendation/vector-codec.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
-import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
+import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';
+import { enrichPostsWithRemoteAuthors } from '../../lib/activitypub/authors';
+import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
+import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
   type AttachmentInput,
   type AttachmentKind,
@@ -31,16 +34,23 @@ import {
 } from '../../lib/attachments';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { getUserPlan } from '../../lib/billing';
-import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
+import { embedPost, isImageKey, type PostMediaInput, screenPostImages, tagPost } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
+import { EXACT_DUPLICATE_FILTER } from '../../lib/post-visibility';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
+import { deleteGameTitlesForPosts, USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
-import { fetchWithSsrfGuard } from '../../lib/url-guard';
+import {
+  enrichPostsForFeed,
+  enrichPostsWithPolls,
+  enrichPostsWithQuotes,
+  enrichPostsWithReactions,
+} from '../feed-enrichment';
 import {
   addBusinessDays,
   batchGetFreshAndBookmarkStatus,
@@ -54,18 +64,6 @@ import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } 
 import { extractGameDescription } from './post-versions';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const EXACT_DUPLICATE_FILTER = `AND (
-  trim(p.text) = '' OR NOT EXISTS (
-    SELECT 1 FROM posts dup
-    WHERE dup.user_id = p.user_id
-      AND dup.text = p.text
-      AND dup.status = 'published'
-      AND dup.hidden = 0
-      AND dup.parent_id IS p.parent_id
-      AND (dup.created_at > p.created_at OR (dup.created_at = p.created_at AND dup.rowid > p.rowid))
-  )
-)`;
 
 /**
  * Per-post attachment ceiling for a user: Flaxia+ subscribers get the larger
@@ -111,14 +109,31 @@ async function filterBlockedAuthors(
   posts: Array<Record<string, unknown>>,
 ): Promise<Array<Record<string, unknown>>> {
   if (!currentUserId || posts.length === 0) return posts;
-  const blockedResult = await db
-    .prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?')
-    .bind(currentUserId)
-    .all<{ blocked_id: string }>();
-  if (!blockedResult.success || blockedResult.results.length === 0) return posts;
-  const blocked = new Set(blockedResult.results.map((r) => r.blocked_id));
-  return posts.filter((p) => !blocked.has(String(p.user_id)));
+  const postIds = posts.map((post) => String(post.id ?? '')).filter(Boolean);
+  const [blockedResult, actorBlockResult, actorRows] = await Promise.all([
+    db.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?').bind(currentUserId).all<{ blocked_id: string }>(),
+    db
+      .prepare('SELECT actor_url FROM ap_blocks WHERE local_user_id = ?')
+      .bind(currentUserId)
+      .all<{ actor_url: string }>(),
+    postIds.length > 0
+      ? db
+          .prepare(`SELECT id, actor_id FROM posts WHERE id IN (${postIds.map(() => '?').join(',')})`)
+          .bind(...postIds)
+          .all<{ id: string; actor_id: string | null }>()
+      : Promise.resolve({ results: [] as Array<{ id: string; actor_id: string | null }> }),
+  ]);
+  if (!blockedResult.success && !actorBlockResult.success) return posts;
+  const blocked = new Set((blockedResult.results ?? []).map((row) => row.blocked_id));
+  const blockedActors = new Set((actorBlockResult.results ?? []).map((row) => row.actor_url));
+  const actorByPost = new Map((actorRows.results ?? []).map((row) => [row.id, row.actor_id]));
+  return posts.filter((post) => {
+    if (blocked.has(String(post.user_id))) return false;
+    const actorId = actorByPost.get(String(post.id));
+    return !actorId || !blockedActors.has(actorId);
+  });
 }
+
 // POST /api/posts - one-step text post creation (kept for API compatibility;
 // the web client uses prepare + commit for attachment support).
 posts.post('/posts', requireAuth, async (c) => {
@@ -207,9 +222,10 @@ posts.get('/posts', async (c) => {
 
     // Helper: exclude posts from users blocked by current user
     const blockFilter = currentUserId
-      ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+      ? `AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)
+         AND (p.actor_id IS NULL OR p.actor_id NOT IN (SELECT actor_url FROM ap_blocks WHERE local_user_id = ?))`
       : '';
-    const blockParam = currentUserId ? [currentUserId] : [];
+    const blockParam = currentUserId ? [currentUserId, currentUserId] : [];
     const feedFilter = `${blockFilter} ${EXACT_DUPLICATE_FILTER}`;
     if (hashtag) {
       // Filter by hashtag using json_each
@@ -236,10 +252,14 @@ posts.get('/posts', async (c) => {
               SELECT followee_id FROM follows WHERE follower_id = ?
             )
             OR p.user_id = ?
+            OR (p.actor_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM ap_following f
+              WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
+            ))
           )
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
@@ -252,10 +272,14 @@ posts.get('/posts', async (c) => {
               SELECT followee_id FROM follows WHERE follower_id = ?
             )
             OR p.user_id = ?
+            OR (p.actor_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM ap_following f
+              WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
+            ))
           )
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, ...blockParam, limit];
       }
     } else if (username) {
       // Username filter - show posts from specific user
@@ -292,30 +316,9 @@ posts.get('/posts', async (c) => {
 
     const posts = result.results || [];
 
-    // Parallel: fresh/bookmark status, poll enrichment, vector embedding check
+    // Parallel: shared feed enrichment and vector embedding check
     await Promise.all([
-      // Fresh and bookmark status for current user
-      (async () => {
-        if (!currentUserId || posts.length === 0) return;
-        const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
-        const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(
-          c.env.DB,
-          currentUserId,
-          postIds,
-        );
-        posts.forEach((post: Record<string, unknown>) => {
-          post.is_freshed = freshed.has(post.id as string);
-          post.is_reloaded = reloaded.has(post.id as string);
-          post.is_bookmarked = bookmarked.has(post.id as string);
-        });
-      })(),
-      // Poll enrichment
-      enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId),
-      // Quote enrichment
-      enrichPostsWithQuotes(posts as PostRow[], c.env.DB),
-      enrichPostsWithAttachments(posts as PostRow[], c.env.DB),
-      // Reaction enrichment
-      enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId),
+      enrichPostsForFeed(posts as PostRow[], c.env.DB, currentUserId),
       // Vector embedding check for unprocessed posts
       (async () => {
         const textPosts = (posts as PostRow[]).filter((p) => p.text);
@@ -1107,6 +1110,7 @@ async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?:
     enrichPostsWithAttachments(posts, db),
     enrichPostsWithReactions(posts, db, currentUserId),
   ]);
+  await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, db);
 }
 
 async function enrichRecommendedPosts(
@@ -1128,9 +1132,9 @@ posts.get('/posts/:id/similar', async (c) => {
     const currentUserId = c.get('user')?.id;
 
     // Get the post's embedding
-    const embedRow = await c.env.DB.prepare('SELECT embedding FROM post_embeddings WHERE post_id = ?')
+    const embedRow = await c.env.DB.prepare('SELECT embedding, dimensions FROM post_embeddings WHERE post_id = ?')
       .bind(postId)
-      .first<{ embedding: string }>();
+      .first<{ embedding: string; dimensions: number | null }>();
     if (!embedRow) return c.json({ posts: [] });
 
     let vector: number[];
@@ -1141,9 +1145,9 @@ posts.get('/posts/:id/similar', async (c) => {
     }
     if (!Array.isArray(vector)) return c.json({ posts: [] });
 
-    // Query Vectorize
+    // Query Vectorize only with the index's current model dimension.
     let similarIds: string[] = [];
-    const vectorize = c.env.VECTORIZE;
+    const vectorize = vector.length === RECOMMENDATION_VECTOR_DIM ? c.env.VECTORIZE : undefined;
     if (vectorize) {
       try {
         const result = await vectorize.query(vector, { topK: limit + 1, returnValues: false, returnMetadata: false });
@@ -1169,7 +1173,8 @@ posts.get('/posts/:id/similar', async (c) => {
         if (row.post_id === postId) continue;
         try {
           const v = JSON.parse(row.embedding);
-          if (Array.isArray(v)) scored.push({ id: row.post_id, sim: cosineSimilarity(vector, v) });
+          if (Array.isArray(v) && v.length === vector.length)
+            scored.push({ id: row.post_id, sim: cosineSimilarity(vector, v) });
         } catch {
           /* skip */
         }
@@ -2044,7 +2049,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         .bind(userId)
         .first()) as { id: string; username: string; display_name: string } | null;
 
-      if (user && c.env.AP_DELIVERY_QUEUE) {
+      if (user) {
         // Get post details including mentions
         const post = (await c.env.DB.prepare('SELECT id, text, created_at, status, mentions FROM posts WHERE id = ?')
           .bind(postId)
@@ -2057,32 +2062,36 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         } | null;
 
         if (post && post.status === 'published') {
-          // Build mention actor URLs for CC
-          const mentionActorUrls: string[] = [];
+          // Build the audience of the Note: mentioned accounts are addressed
+          // directly, everybody else reaches the post through the followers
+          // collection of the author.
+          let mentions: Array<{ username: string; url: string }> = [];
           try {
             if (post.mentions) {
               const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
-              for (const m of mentionData) {
-                mentionActorUrls.push(`${c.env.BASE_URL}/api/actors/${m.username}`);
-              }
+              mentions = mentionData.map((m) => ({
+                username: m.username,
+                url: `${c.env.BASE_URL}/api/actors/${m.username}`,
+              }));
             }
           } catch {}
-          const note = buildNoteObject(post, user, c.env.BASE_URL, mentionActorUrls);
+          const note = buildNoteObject(
+            {
+              id: post.id,
+              text: post.text,
+              created_at: post.created_at,
+              visibility: 'public',
+              mentions,
+            },
+            user,
+            c.env.BASE_URL,
+            { followersUrl: `${c.env.BASE_URL}/api/actors/${user.username}/followers` },
+          );
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
-          // Get followers from ap_followers
-          const followers = (await c.env.DB.prepare('SELECT inbox_url FROM ap_followers WHERE local_user_id = ?')
-            .bind(userId)
-            .all()) as { results: Array<{ inbox_url: string }> };
-
-          // Send to queue for each follower
-          for (const follower of followers.results) {
-            await c.env.AP_DELIVERY_QUEUE.send({
-              inboxUrl: follower.inbox_url,
-              activity,
-              senderUsername: username,
-            });
-          }
+          // One delivery per remote inbox: an instance with a shared inbox
+          // expects a single activity, not one per follower.
+          await deliverToFollowers(c.env, { userId, username, activity });
         }
       }
     } catch (e) {
@@ -2128,7 +2137,29 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     await refreshUserTrustSafe(c.env.DB, userId);
 
-    runInBackground(c, () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text), 'Background embed failed');
+    // Media for multimodal embed + AI tagging: game posts contribute their
+    // thumbnail, attachments contribute image/audio/video keys.
+    const media: PostMediaInput = {
+      imageKeys: [
+        ...(isImageKey(fullPost.gif_key) ? [fullPost.gif_key] : []),
+        ...(isImageKey(fullPost.thumbnail_key) ? [fullPost.thumbnail_key] : []),
+        ...imageAttachmentKeys(fullPost.attachments),
+      ],
+      audioKey: (fullPost.attachments as Array<AttachmentRecord> | undefined)?.find((a) => a.kind === 'audio')?.r2_key,
+      videoKey: (fullPost.attachments as Array<AttachmentRecord> | undefined)?.find((a) => a.kind === 'video')?.r2_key,
+    };
+    const hasMedia = (media.imageKeys?.length ?? 0) > 0 || Boolean(media.audioKey) || Boolean(media.videoKey);
+
+    runInBackground(
+      c,
+      () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text, hasMedia ? media : undefined),
+      'Background embed failed',
+    );
+    runInBackground(
+      c,
+      () => tagPost(c.env.DB, c.env, fullPost.id, fullPost.text, hasMedia ? media : undefined),
+      'Background AI tag failed',
+    );
 
     // Screen every image the post carries, not just the first: reconcile the
     // scan rows with the current key list, then submit what the throttle allows.
@@ -2184,10 +2215,16 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
 
   // Get post to check ownership for notification and remote actor
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published'",
+    "SELECT user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
   )
     .bind(postId)
-    .first()) as { user_id: string; actor_id: string | null; username: string; text: string } | null;
+    .first()) as {
+    user_id: string;
+    actor_id: string | null;
+    username: string;
+    text: string;
+    ap_object_id: string | null;
+  } | null;
 
   if (!post) {
     return c.json({ error: 'Post not found' }, 404);
@@ -2207,6 +2244,18 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
+
+    // The like of a post of another instance is retracted there as well.
+    if (post.actor_id && currentUser) {
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
+      const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
+      await deliverToActorInbox(c.env, {
+        actorUrl: post.actor_id,
+        username: currentUser.username,
+        activity: undo,
+      });
+    }
 
     return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
@@ -2270,36 +2319,17 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
       }
     }
 
-    // If the post is from a remote actor, send Like activity
-    if (post.actor_id && currentUser && c.env.AP_DELIVERY_QUEUE) {
-      try {
-        const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
-          headers: { Accept: 'application/activity+json, application/ld+json' },
-          timeoutMs: 10_000,
-        });
-        if (actorResponse.ok) {
-          const actorData = (await actorResponse.json()) as ActorData;
-          const inboxUrl = actorData.inbox;
-          if (inboxUrl) {
-            const likeActivity = {
-              '@context': 'https://www.w3.org/ns/activitystreams',
-              id: `${c.env.BASE_URL}/activities/like-${nanoid()}`,
-              type: 'Like',
-              actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
-              object: `${c.env.BASE_URL}/notes/${postId}`,
-              to: [post.actor_id],
-            };
-            await c.env.AP_DELIVERY_QUEUE.send({
-              type: 'delivery',
-              inboxUrl,
-              activity: likeActivity,
-              senderUsername: currentUser.username,
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Failed to send Like activity for remote post:', e);
-      }
+    // A post of another instance is liked on the instance that published it:
+    // the activity has to reference the object id of that note, not a note
+    // URL of this instance.
+    if (post.actor_id && currentUser) {
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
+      await deliverToActorInbox(c.env, {
+        actorUrl: post.actor_id,
+        username: currentUser.username,
+        activity: likeActivity,
+      });
     }
 
     return c.json({ freshed: true, fresh_count: result?.fresh_count ?? 0 });
@@ -2468,6 +2498,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
+    await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
@@ -2555,6 +2586,7 @@ posts.get('/freshs', requireAuth, async (c) => {
 
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
+    await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
@@ -2742,24 +2774,15 @@ type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 async function deliverReloadActivity(
   c: PostsContext,
   post: { actor_id: string | null },
-  currentUser: { username: string },
+  currentUser: { id: string; username: string },
   activity: Record<string, unknown>,
 ): Promise<void> {
-  if (!c.env.AP_DELIVERY_QUEUE) return;
-
   try {
-    const followers = await c.env.DB.prepare('SELECT DISTINCT inbox_url FROM ap_followers WHERE local_user_id = ?')
-      .bind(c.get('user')?.id || '')
-      .all<{ inbox_url: string }>();
-
-    for (const follower of followers.results || []) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
-        inboxUrl: follower.inbox_url,
-        activity,
-        senderUsername: currentUser.username,
-      });
-    }
+    await deliverToFollowers(c.env, {
+      userId: currentUser.id,
+      username: currentUser.username,
+      activity,
+    });
   } catch (e) {
     console.error('Failed to deliver reload activity to followers:', e);
   }
@@ -2767,20 +2790,10 @@ async function deliverReloadActivity(
   if (!post.actor_id) return;
 
   try {
-    const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
-      headers: { Accept: 'application/activity+json, application/ld+json' },
-      timeoutMs: 10_000,
-    });
-    if (!actorResponse.ok) return;
-
-    const actorData = (await actorResponse.json()) as ActorData;
-    if (!actorData.inbox) return;
-
-    await c.env.AP_DELIVERY_QUEUE.send({
-      type: 'delivery',
-      inboxUrl: actorData.inbox,
+    await deliverToActorInbox(c.env, {
+      actorUrl: post.actor_id,
+      username: currentUser.username,
       activity,
-      senderUsername: currentUser.username,
     });
   } catch (e) {
     console.error('Failed to deliver reload activity to remote actor:', e);
@@ -2795,13 +2808,14 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     if (!currentUser) return c.json({ error: 'Unauthorized' }, 401);
 
     const post = (await c.env.DB.prepare(
-      "SELECT id, user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, actor_id, ap_object_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first()) as {
       id: string;
       user_id: string;
       actor_id: string | null;
+      ap_object_id: string | null;
       username: string;
       text: string;
     } | null;
@@ -2815,7 +2829,9 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
       .first()) as { id: string } | null;
 
     const actorUrl = `${c.env.BASE_URL}/api/actors/${currentUser.username}`;
-    const noteUrl = `${c.env.BASE_URL}/notes/${postId}`;
+    // A post of another instance is announced with the object id of that
+    // note: a note URL of this instance does not exist for it.
+    const noteUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
     const publicAudience = 'https://www.w3.org/ns/activitystreams#Public';
 
     if (existing) {
@@ -3035,6 +3051,10 @@ posts.get('/posts/:id/replies', async (c) => {
       }
     }
 
+    await enrichPostsWithRemoteAuthors(
+      [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
+      c.env.DB,
+    );
     return c.json({ root: parentPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);
@@ -3157,6 +3177,10 @@ posts.get('/posts/:id/thread', async (c) => {
       }
     }
 
+    await enrichPostsWithRemoteAuthors(
+      [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
+      c.env.DB,
+    );
     return c.json({ root: rootPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);
@@ -3641,6 +3665,24 @@ async function addReloadStatus(
   return rows.map((row) => ({ ...row, is_reloaded: reloaded.has(String(row.id)) }));
 }
 
+/** Map a user search row to the public shape, including badge + equipped title. */
+function mapSearchUserRow(u: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(u.id !== undefined ? { id: u.id } : {}),
+    username: u.username,
+    display_name: u.display_name || '',
+    avatar_key: u.avatar_key || '',
+    badge_type: (u.badge_type as string | null) ?? null,
+    name_color: (u.name_color as string | null) ?? null,
+    equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+    title_name: (u.title_name as string | null) ?? null,
+    title_name_ja: (u.title_name_ja as string | null) ?? null,
+    title_description: (u.title_description as string | null) ?? null,
+    title_description_ja: (u.title_description_ja as string | null) ?? null,
+    title_icon: (u.title_icon as string | null) ?? null,
+  };
+}
+
 posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
@@ -3673,10 +3715,11 @@ posts.get('/search', async (c) => {
       const cleanQuery = query.trim().replace(/^@/, '');
       const searchTerm = `%${cleanQuery}%`;
       const users = await c.env.DB.prepare(`
-        SELECT id, username, display_name, bio, avatar_key, badge_type, name_color, created_at
-        FROM users
-        WHERE username LIKE ? OR display_name LIKE ?
-        ORDER BY created_at DESC
+        SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.created_at, ${USER_TITLE_COLUMNS}
+        FROM users u
+        ${USER_TITLE_JOIN}
+        WHERE u.username LIKE ? OR u.display_name LIKE ?
+        ORDER BY u.created_at DESC
         LIMIT ?
       `)
         .bind(searchTerm, searchTerm, limit)
@@ -3719,20 +3762,15 @@ posts.get('/search', async (c) => {
       // No specific tokens, but still search users by the raw query
       if (type === 'posts') {
         const users = await c.env.DB.prepare(`
-          SELECT username, display_name, avatar_key, badge_type, name_color
-          FROM users
-          WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
-          ORDER BY created_at DESC LIMIT ?
+          SELECT u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+          FROM users u
+          ${USER_TITLE_JOIN}
+          WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+          ORDER BY u.created_at DESC LIMIT ?
         `)
           .bind(searchTerm, searchTerm, limit)
           .all();
-        usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
-          username: u.username,
-          display_name: u.display_name || '',
-          avatar_key: u.avatar_key || '',
-          badge_type: (u.badge_type as string | null) ?? null,
-          name_color: (u.name_color as string | null) ?? null,
-        }));
+        usersResult = (users.results || []).map(mapSearchUserRow);
       }
       return c.json({ type, query, results: [], users: usersResult });
     }
@@ -3757,20 +3795,15 @@ posts.get('/search', async (c) => {
     // Also fetch matching users for posts search (type=posts)
     if (type === 'posts') {
       const users = await c.env.DB.prepare(`
-        SELECT username, display_name, avatar_key, badge_type, name_color
-        FROM users
-        WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
-        ORDER BY created_at DESC LIMIT ?
+        SELECT u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, ${USER_TITLE_COLUMNS}
+        FROM users u
+        ${USER_TITLE_JOIN}
+        WHERE LOWER(u.username) LIKE ? OR LOWER(u.display_name) LIKE ?
+        ORDER BY u.created_at DESC LIMIT ?
       `)
         .bind(searchTerm, searchTerm, limit)
         .all();
-      usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
-        username: u.username,
-        display_name: u.display_name || '',
-        avatar_key: u.avatar_key || '',
-        badge_type: (u.badge_type as string | null) ?? null,
-        name_color: (u.name_color as string | null) ?? null,
-      }));
+      usersResult = (users.results || []).map(mapSearchUserRow);
     }
 
     const responseData = {
@@ -3929,6 +3962,11 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
     }
 
     const descendantIds = descendants.map((r) => r.id);
+
+    // Game achievements are scoped to their game post. Remove them with the
+    // post so the public title catalog cannot retain orphaned definitions.
+    await deleteGameTitlesForPosts(c.env.DB, [post.id, ...descendantIds]);
+
     if (descendantIds.length > 0) {
       const placeholders = descendantIds.map(() => '?').join(',');
       await c.env.DB.prepare(`DELETE FROM posts WHERE id IN (${placeholders})`)
@@ -3958,29 +3996,16 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
     if (post && post.status === 'published') {
       try {
         const user = c.get('user');
-        if (user) {
+        if (user?.username) {
           const noteId = `${c.env.BASE_URL}/notes/${postId}`;
-          const activity = buildDeleteActivity(noteId, user, c.env.BASE_URL);
+          const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown');
 
-          // Get all followers to deliver to
-          const followers = await c.env.DB.prepare(`
-            SELECT inbox_url FROM ap_followers WHERE local_user_id = ?
-          `)
-            .bind(user.id)
-            .all();
-
-          // Queue delivery to each follower
-          for (const follower of followers.results) {
-            const inboxUrl = follower.inbox_url;
-            if (inboxUrl) {
-              await c.env.AP_DELIVERY_QUEUE.send({
-                type: 'delivery',
-                inboxUrl,
-                activity,
-                senderUsername: user.username,
-              });
-            }
-          }
+          // Queue one delivery per remote inbox of the followers
+          await deliverToFollowers(c.env, {
+            userId: user.id,
+            username: user.username,
+            activity,
+          });
         }
       } catch (deliveryError) {
         console.error('Failed to queue ActivityPub delete delivery:', deliveryError);
@@ -4354,6 +4379,7 @@ posts.get('/posts/:id', async (c) => {
     await enrichPostsWithQuotes([post as PostRow], c.env.DB);
     await enrichPostsWithAttachments([post as PostRow], c.env.DB);
     await enrichPostsWithReactions([post as PostRow], c.env.DB, c.get('user')?.id);
+    await enrichPostsWithRemoteAuthors([post], c.env.DB);
 
     return c.json(post);
   } catch (error: unknown) {
@@ -4404,205 +4430,6 @@ async function autoRestoreIfEligible(db: D1Database, postId: string): Promise<vo
   }
 }
 
-async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
-  if (posts.length === 0) return;
-  const postIds = posts.map((p) => p.id);
-  const placeholders = postIds.map(() => '?').join(',');
-  const pollsResult = await db
-    .prepare(`SELECT * FROM polls WHERE post_id IN (${placeholders})`)
-    .bind(...postIds)
-    .all<PollRow>();
-
-  if (!pollsResult.success || pollsResult.results.length === 0) return;
-
-  const pollMap = new Map<string, PollRow>();
-  for (const poll of pollsResult.results) {
-    pollMap.set(poll.post_id, poll);
-  }
-
-  const pollIds = pollsResult.results.map((p: PollRow) => p.id);
-  const optPlaceholders = pollIds.map(() => '?').join(',');
-
-  // Parallelize poll options and user votes queries
-  const [optsResult, votesResult] = await Promise.all([
-    db
-      .prepare(`SELECT * FROM poll_options WHERE poll_id IN (${optPlaceholders}) ORDER BY rowid`)
-      .bind(...pollIds)
-      .all<PollOptionRow>(),
-    currentUserId
-      ? db
-          .prepare(`SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN (${optPlaceholders}) AND user_id = ?`)
-          .bind(...pollIds, currentUserId)
-          .all<{ poll_id: string; option_id: string }>()
-      : Promise.resolve({ success: true, results: [] as Array<{ poll_id: string; option_id: string }> }),
-  ]);
-
-  const optsByPoll = new Map<string, PollOptionRow[]>();
-  if (optsResult.success) {
-    for (const opt of optsResult.results) {
-      const pid = opt.poll_id;
-      if (!optsByPoll.has(pid)) optsByPoll.set(pid, []);
-      optsByPoll.get(pid)!.push(opt);
-    }
-  }
-
-  const userVotes = new Map<string, string>();
-  if (votesResult.success) {
-    for (const v of votesResult.results) {
-      userVotes.set(v.poll_id, v.option_id);
-    }
-  }
-
-  for (const post of posts) {
-    const poll = pollMap.get(post.id);
-    if (poll) {
-      const now = new Date();
-      const endsAt = poll.ends_at || null;
-      const expired = endsAt ? new Date(endsAt) <= now : false;
-      post.poll = {
-        id: poll.id,
-        question: poll.question,
-        multipleChoice: !!poll.multiple_choice,
-        endsAt,
-        options: optsByPoll.get(poll.id) || [],
-        userVote: userVotes.get(poll.id) || null,
-        expired,
-      };
-    }
-  }
-}
-
-/** Quoted post row: the SELECT shape plus an index signature for enrichment. */
-type QuotedPostRow = {
-  id: string;
-  status: string;
-  hidden: number | null;
-  [key: string]: unknown;
-};
-
-/**
- * Batch-fetch quoted posts referenced by the given posts and attach them as
- * `quoted_post`. Only embeds 1 level deep (never recurses) to avoid infinite
- * nesting. Deleted/hidden/absent quoted posts are set to null so the client can
- * render a "post unavailable" placeholder.
- */
-async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): Promise<void> {
-  if (posts.length === 0) return;
-
-  const postIds = posts.map((p) => p.id);
-  const idPlaceholders = postIds.map(() => '?').join(',');
-  const linksResult = await db
-    .prepare(`SELECT id, quoted_post_id FROM posts WHERE id IN (${idPlaceholders}) AND quoted_post_id IS NOT NULL`)
-    .bind(...postIds)
-    .all<{ id: string; quoted_post_id: string }>();
-
-  const links = linksResult.results || [];
-  const quotedIds = [...new Set(links.map((r) => r.quoted_post_id))];
-  const quotedMap = new Map<string, QuotedPostRow>();
-
-  if (quotedIds.length > 0) {
-    const placeholders = quotedIds.map(() => '?').join(',');
-    const result = await db
-      .prepare(
-        `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language,
-              p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key,
-              p.thumbnail_key, p.parent_id, p.root_id, COALESCE(p.depth, 0) AS depth,
-              COALESCE(p.status, 'published') AS status, p.hidden, p.created_at
-       FROM posts p
-       LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.id IN (${placeholders})`,
-      )
-      .bind(...quotedIds)
-      .all<QuotedPostRow>();
-
-    const visible = (result.results || []).filter((quoted) => quoted.status === 'published' && !quoted.hidden);
-    for (const quoted of visible) {
-      quotedMap.set(quoted.id, quoted);
-    }
-    // Quote cards render attachments, so the quoted post needs the same
-    // enrichment the timeline gives its own posts.
-    await enrichPostsWithAttachments(visible, db);
-  }
-
-  for (const post of posts) {
-    const link = links.find((r) => r.id === post.id);
-    post.quoted_post_id = link?.quoted_post_id ?? null;
-    post.quoted_post = link ? quotedMap.get(link.quoted_post_id) || null : null;
-  }
-}
-
-async function enrichPostsWithReactions(
-  posts: PostRow[],
-  db: D1Database,
-  currentUserId?: string | null,
-): Promise<void> {
-  if (posts.length === 0) return;
-
-  const postIds = posts.map((p) => p.id);
-  const placeholders = postIds.map(() => '?').join(',');
-
-  const summaryResult = await db
-    .prepare(
-      `SELECT post_id, emoji, COUNT(*) AS count FROM reactions
-       WHERE post_id IN (${placeholders})
-       GROUP BY post_id, emoji`,
-    )
-    .bind(...postIds)
-    .all<{ post_id: string; emoji: string; count: number }>();
-
-  const mine = new Set<string>();
-  if (currentUserId) {
-    const mineResult = await db
-      .prepare(`SELECT post_id, emoji FROM reactions WHERE user_id = ? AND post_id IN (${placeholders})`)
-      .bind(currentUserId, ...postIds)
-      .all<{ post_id: string; emoji: string }>();
-    for (const r of mineResult.results || []) {
-      mine.add(`${r.post_id}:${r.emoji}`);
-    }
-  }
-
-  // Collect unique custom stamp names used in reactions
-  const stampNames = new Set<string>();
-  for (const row of summaryResult.results || []) {
-    if (/^:.+:$/.test(row.emoji)) {
-      stampNames.add(row.emoji);
-    }
-  }
-
-  // Resolve custom stamp names to image URLs
-  const stampUrlMap = new Map<string, string>();
-  if (stampNames.size > 0) {
-    const stampRows = await db
-      .prepare(
-        `SELECT name, image_key FROM custom_stamps WHERE name IN (${Array.from(stampNames)
-          .map(() => '?')
-          .join(',')})`,
-      )
-      .bind(...stampNames)
-      .all<{ name: string; image_key: string }>();
-    for (const s of stampRows.results || []) {
-      stampUrlMap.set(s.name, `/api/images/${s.image_key}`);
-    }
-  }
-
-  const grouped = new Map<string, Array<{ emoji: string; count: number; reacted: boolean; stamp_url?: string }>>();
-  for (const row of summaryResult.results || []) {
-    if (!grouped.has(row.post_id)) grouped.set(row.post_id, []);
-    const entry: { emoji: string; count: number; reacted: boolean; stamp_url?: string } = {
-      emoji: row.emoji,
-      count: row.count,
-      reacted: mine.has(`${row.post_id}:${row.emoji}`),
-    };
-    const stampUrl = stampUrlMap.get(row.emoji);
-    if (stampUrl) entry.stamp_url = stampUrl;
-    grouped.get(row.post_id)!.push(entry);
-  }
-
-  for (const post of posts) {
-    post.reactions = grouped.get(post.id) || [];
-  }
-}
 // POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
 posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
   try {

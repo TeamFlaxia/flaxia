@@ -39,7 +39,7 @@ function fixture() {
     await enrichPostsWithAiIndex(posts, db);
     return posts[0].ai_indexed;
   }
-  async function callback(sha: string | null, result: unknown = { vector: Array(1024).fill(0.01) }, status = 'done') {
+  async function callback(sha: string | null, result: unknown = { vector: Array(768).fill(0.01) }, status = 'done') {
     const params = new URLSearchParams({ type: 'vector-embed', postId: 'p' });
     if (sha !== null) params.set('sha', sha);
     return handleCrowdWebhook(

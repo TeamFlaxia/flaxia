@@ -19,7 +19,7 @@ Usage:
 Options (mirror arcade:bandit:config):
   --dim 64             projected dimension (must match the online config)
   --seed 20260701      projection seed (must match the online config)
-  --src-dim 1024       source embedding dimension
+  --src-dim 768        source embedding dimension
   --ridge-lambda 1.0   ridge regularization for the regression
   --prior-strength 1.0 lambda0 of the deployed prior (anchoring strength)
   --val-fraction 0.2   held-out fraction for the validation split
@@ -142,7 +142,7 @@ def main() -> int:
     parser.add_argument("--dataset", required=True, help="local JSONL path or HuggingFace dataset id")
     parser.add_argument("--dim", type=int, default=64)
     parser.add_argument("--seed", type=int, default=20260701)
-    parser.add_argument("--src-dim", type=int, default=1024)
+    parser.add_argument("--src-dim", type=int, default=768)
     parser.add_argument("--ridge-lambda", type=float, default=1.0)
     parser.add_argument("--prior-strength", type=float, default=1.0)
     parser.add_argument("--val-fraction", type=float, default=0.2)

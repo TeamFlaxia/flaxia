@@ -3,9 +3,9 @@
 // The server never needs to understand a user's preference vector: it only
 // ships public post embeddings to the browser, where the decrypted profile and
 // the cosine similarity live. Embeddings are quantized to int8 with one scale
-// per vector, which keeps a 1024-d candidate under 1.4 KB of JSON.
+// per vector, which keeps a 768-d candidate under 1.1 KB of JSON.
 
-export const RECOMMENDATION_VECTOR_DIM = 1024;
+export const RECOMMENDATION_VECTOR_DIM = 768;
 export const RECOMMENDATION_VECTOR_ENCODING = 'int8';
 const MAX_VECTOR_DIM = 4096;
 

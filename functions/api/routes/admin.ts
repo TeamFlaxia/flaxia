@@ -1129,7 +1129,7 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
         AND p.parent_id IS NULL
         AND p.text IS NOT NULL
         AND p.text != ''
-        AND (e.post_id IS NULL OR e.source_sha IS NULL)
+        AND (e.post_id IS NULL OR e.source_sha IS NULL OR COALESCE(e.dimensions, 0) != 768)
       ORDER BY p.created_at DESC
       LIMIT ?
     `)
