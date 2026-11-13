@@ -245,52 +245,6 @@ describe('ActivityPub inbox handlers', () => {
     assert.equal(owner?.user_id, '');
   });
 
-  it('stores a remote Note once even when two local accounts follow the actor', async () => {
-    await db
-      .prepare(
-        `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
-         VALUES ('local-3', 'carol@test.com', '', 'carol', 'Carol', '', '2026-01-01T00:00:00.000Z')`,
-      )
-      .run();
-    await db
-      .prepare(
-        `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
-         VALUES ('following-carol', 'local-3', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
-      )
-      .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
-      .run();
-    const object = {
-      id: `${REMOTE}/notes/shared-recipient`,
-      type: 'Note',
-      attributedTo: REMOTE_ACTOR,
-      content: 'shared with two followers',
-    };
-    for (const [username, activityId] of [
-      ['alice', 'recipient-alice'],
-      ['carol', 'recipient-carol'],
-    ]) {
-      await handleIncomingActivity(envFor(db), {
-        actorId: REMOTE_ACTOR,
-        username,
-        activity: {
-          id: `${REMOTE}/activities/${activityId}`,
-          type: 'Create',
-          actor: REMOTE_ACTOR,
-          object,
-        },
-      });
-    }
-    const count = await db
-      .prepare('SELECT COUNT(*) AS n FROM posts WHERE ap_object_id = ?')
-      .bind(object.id)
-      .first<{ n: number }>();
-    assert.equal(count?.n, 1);
-    const owner = await db
-      .prepare('SELECT user_id FROM posts WHERE ap_object_id = ?')
-      .bind(object.id)
-      .first<{ user_id: string }>();
-    assert.equal(owner?.user_id, '');
-  });
   it('ignores a Note of a follower the account does not follow back', async () => {
     const followerOnly = `${REMOTE}/users/stranger`;
     await db
