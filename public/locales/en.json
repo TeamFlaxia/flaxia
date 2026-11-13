@@ -65,6 +65,7 @@
   "common.loading": "Loading...",
   "common.offline": "You are offline. Some features may be unavailable.",
   "common.online": "Back online.",
+  "auth.external_failed": "Could not open the sign-in browser. Please try again.",
   "common.error": "Error",
   "common.close": "Close",
   "common.back": "← Back",

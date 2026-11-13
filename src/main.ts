@@ -477,6 +477,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const here = `${window.location.pathname}${window.location.search}`;
         const returnTo = here === '/login' || here === '/register' ? '/home' : here;
         if (await beginNativeAuthRedirect(returnTo, view)) return;
+        if (nativeClient) {
+          // In the app WebView there is no usable /api/auth/start: the origin
+          // is capacitor://localhost or https://localhost, and navigating
+          // there strands the user outside the app shell. Stay and explain.
+          console.warn('[auth] native sign-in browser could not be opened');
+          showToast(t('auth.external_failed'), true);
+          return;
+        }
         const query = new URLSearchParams({
           return_to: returnTo,
           lang: getLocale(),
