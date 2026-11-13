@@ -152,6 +152,7 @@ export class MapsPage {
   private tileMisses = 0;
   private styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
   private packAbort: AbortController | null = null;
+  private mapFallbackReason: 'unsupported' | 'error' | null = null;
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -271,7 +272,18 @@ export class MapsPage {
     mapError.className = 'maps-libre-fallback';
     mapError.hidden = true;
     mapError.dataset.testid = 'maps-libre-fallback';
-    mapError.textContent = '地図を表示できませんでした。ブラウザのWebGLを有効にしてください。';
+    const fallbackNote = document.createElement('p');
+    fallbackNote.className = 'maps-static-note';
+    fallbackNote.textContent = '地図を表示できませんでした。ブラウザのWebGLを有効にしてください。';
+    const fallbackTiles = document.createElement('div');
+    fallbackTiles.className = 'maps-static-tiles';
+    fallbackTiles.dataset.testid = 'maps-static-tiles';
+    const fallbackMarker = document.createElement('span');
+    fallbackMarker.className = 'maps-static-marker';
+    fallbackMarker.setAttribute('aria-hidden', 'true');
+    mapError.appendChild(fallbackTiles);
+    mapError.appendChild(fallbackMarker);
+    mapError.appendChild(fallbackNote);
     viewport.appendChild(mapError);
     const cacheIndicator = document.createElement('div');
     cacheIndicator.className = 'maps-cache-indicator';
@@ -460,18 +472,68 @@ export class MapsPage {
     }
   }
 
+  /**
+   * MapLibre needs WebGL2. Some desktop/WebView builds ship with WebGL
+   * disabled, so draw a lightweight OSM raster fallback instead of leaving a
+   * blank viewport. The fallback is non-interactive but still shows the current
+   * city/search result and does not need a GPU.
+   */
+  private showMapFallback(reason: 'unsupported' | 'error', detail?: unknown): void {
+    const fallback = this.element.querySelector('.maps-libre-fallback') as HTMLElement | null;
+    if (!fallback) return;
+    this.mapFallbackReason = reason;
+    fallback.hidden = false;
+    const note = fallback.querySelector('.maps-static-note');
+    if (note) {
+      note.textContent =
+        reason === 'unsupported'
+          ? 'このブラウザではWebGLが無効のため、簡易地図を表示しています。'
+          : '地図の読み込みに失敗したため、簡易地図を表示しています。';
+    }
+    this.renderStaticMap();
+    if (detail) console.warn('Flaxia Maps fallback:', detail);
+  }
+
+  private renderStaticMap(): void {
+    const grid = this.element.querySelector('.maps-static-tiles') as HTMLElement | null;
+    if (!grid) return;
+    const z = Math.max(2, Math.min(14, Math.round(this.zoom || 12)));
+    const n = 2 ** z;
+    const latRad = (this.lat * Math.PI) / 180;
+    const x = ((this.lon + 180) / 360) * n;
+    const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+    const centerX = Math.floor(x);
+    const centerY = Math.floor(y);
+    grid.innerHTML = '';
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.referrerPolicy = 'no-referrer';
+        img.src = `https://tile.openstreetmap.org/${z}/${(((centerX + dx) % n) + n) % n}/${Math.max(0, Math.min(n - 1, centerY + dy))}.png`;
+        grid.appendChild(img);
+      }
+    }
+  }
+
   private async initMap(): Promise<void> {
     const container = this.element.querySelector('.maps-libre-container') as HTMLElement | null;
-    const fallback = this.element.querySelector('.maps-libre-fallback') as HTMLElement | null;
     if (!container) return;
+    const probe = document.createElement('canvas');
+    const probeGl = probe.getContext('webgl2');
+    if (!probeGl) {
+      this.showMapFallback('unsupported');
+      return;
+    }
+    probeGl.getExtension('WEBGL_lose_context')?.loseContext();
     try {
       const maplibre = await import('maplibre-gl');
       if (this.destroyed) return;
       this.maplibre = maplibre;
-      const workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url')).default;
+      const workerUrl = (await import('../lib/maps/maplibre-worker.ts?worker&url')).default;
       maplibre.setWorkerUrl(workerUrl);
-      const protocolUrl = (await import('../lib/maps/protocol-worker.js?url')).default;
-      await maplibre.importScriptInWorkers(protocolUrl);
       if (this.destroyed) return;
       const styleUrl: string = this.styleUrl;
       maplibre.addProtocol('flaxia-tiles', async (params, abortController) => {
@@ -512,18 +574,12 @@ export class MapsPage {
       map.on('error', (e: { error?: unknown }) => {
         const message = String((e.error as { message?: string })?.message ?? '');
         if (message.includes('WebGL') || message.includes('GPU')) {
-          if (fallback) {
-            fallback.hidden = false;
-            fallback.textContent = '地図を表示できませんでした。ブラウザのWebGLを有効にしてください。';
-          }
+          this.showMapFallback('unsupported', e.error);
         }
       });
       await this.refreshCacheStatus();
-    } catch {
-      if (fallback && !this.destroyed) {
-        fallback.hidden = false;
-        fallback.textContent = '地図を表示できませんでした。ブラウザのWebGLを有効にしてください。';
-      }
+    } catch (error) {
+      if (!this.destroyed) this.showMapFallback('error', error);
     }
   }
 
@@ -533,6 +589,8 @@ export class MapsPage {
     this.zoom = zoom;
     if (this.map) {
       this.map.flyTo({ center: [lon, lat], zoom, essential: true });
+    } else if (this.mapFallbackReason) {
+      this.renderStaticMap();
     }
   }
 

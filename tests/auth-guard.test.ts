@@ -11,6 +11,8 @@ describe('isPublicRoute', () => {
       '/index.html',
       '/explore',
       '/search',
+      '/translate',
+      '/maps',
       '/arcade',
       '/arcade/game1',
       '/users/alice',

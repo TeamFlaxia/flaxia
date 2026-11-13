@@ -106,8 +106,52 @@
   justify-content: center;
   text-align: center;
   padding: 24px;
+  overflow: hidden;
   color: var(--text-secondary);
   background: var(--bg-secondary);
+}
+
+.maps-static-tiles {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  opacity: 0.82;
+}
+
+.maps-static-tiles img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.maps-static-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  width: 14px;
+  height: 14px;
+  transform: translate(-50%, -50%);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #e11d48;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+}
+
+.maps-static-note {
+  position: relative;
+  z-index: 3;
+  max-width: 80%;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  color: var(--text-primary);
+  font-size: 13px;
 }
 
 .maps-cache-indicator {
