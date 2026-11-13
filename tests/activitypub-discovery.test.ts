@@ -78,6 +78,30 @@ describe('ActivityPub discovery endpoints', () => {
     assert.match(body, /\.well-known\/webfinger\?resource=\{uri\}/);
   });
 
+  it('serves WebFinger at the canonical root path', async () => {
+    const response = await fetch(`${BASE_URL}/.well-known/webfinger?resource=acct:${USER.username}@localhost:8788`, {
+      headers: { Accept: 'application/jrd+json' },
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /jrd\+json/);
+    const body = (await response.json()) as { subject: string };
+    assert.equal(body.subject, `acct:${USER.username}@localhost:8788`);
+  });
+
+  it('serves host-meta at the canonical root path', async () => {
+    const response = await fetch(`${BASE_URL}/host-meta`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /xrd\+xml/);
+    assert.match(await response.text(), /rel="lrdd"/);
+  });
+
+  it('serves nodeinfo discovery at the canonical root path', async () => {
+    const response = await fetch(`${BASE_URL}/.well-known/nodeinfo`);
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { links: Array<{ href: string }> };
+    assert.equal(body.links[0]?.href, `${BASE_URL}/api/nodeinfo/2.1`);
+  });
+
   it('publishes the node info discovery document', async () => {
     const response = await fetch(`${BASE_URL}/api/.well-known/nodeinfo`);
     assert.equal(response.status, 200);
