@@ -12,6 +12,7 @@ import {
   searchTextTerms,
 } from '../../lib/search-query';
 import { searchWeb, type WebSearchResult } from '../../lib/search-web';
+import { searchWebIndex } from '../../lib/web-index';
 import { enrichPostsForFeed } from '../feed-enrichment';
 import { kvCacheGet, kvCacheSet } from '../helpers';
 import type { Bindings, PostRow, Variables } from '../types';
@@ -207,6 +208,26 @@ function tabLimits(tab: SearchTab, limit: number): { posts: number; users: numbe
   }
 }
 
+function mergeWebResults(primary: WebSearchResult[], secondary: WebSearchResult[], limit: number): WebSearchResult[] {
+  const merged: WebSearchResult[] = [];
+  const seen = new Set<string>();
+  for (const item of [...primary, ...secondary]) {
+    let key = item.url.toLowerCase();
+    try {
+      const parsed = new URL(item.url);
+      parsed.hash = '';
+      key = parsed.toString().replace(/\/$/, '').toLowerCase();
+    } catch {
+      // Keep the raw URL as the dedupe key.
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+    if (merged.length >= limit) break;
+  }
+  return merged;
+}
+
 interface SearchPayload {
   query: string;
   tab: SearchTab;
@@ -261,7 +282,15 @@ search.get('/search/v2', async (c) => {
     if (cached) return c.json({ ...cached, took_ms: Date.now() - startedAt });
 
     const limits = tabLimits(tab, limit);
-    const [posts, users, games] = await Promise.all([
+    const indexedWebPromise =
+      c.env.WEB_INDEX_ENABLED === '1' && (tab === 'web' || tab === 'all') && limits.web > 0
+        ? searchWebIndex(db, parsed, limits.web).catch((error) => {
+            console.error('Web index search failed:', error);
+            return [] as WebSearchResult[];
+          })
+        : Promise.resolve([] as WebSearchResult[]);
+    const [indexedWeb, posts, users, games] = await Promise.all([
+      indexedWebPromise,
       searchPosts(db, parsed, { limit: limits.posts, gamesOnly: false, currentUserId }),
       searchUsers(db, parsed, { limit: limits.users, currentUserId }),
       searchPosts(db, parsed, { limit: limits.games, gamesOnly: true, currentUserId }),
@@ -285,6 +314,8 @@ search.get('/search/v2', async (c) => {
         }
       }
     }
+
+    web = mergeWebResults(indexedWeb, web, limits.web);
 
     const payload: SearchPayload = {
       query: parsed.raw,

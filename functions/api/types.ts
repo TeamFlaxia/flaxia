@@ -43,6 +43,8 @@ export type Bindings = {
   MATCHMAKER?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   VECTORIZE?: Vectorize;
+  /** Enable the Common Crawl lexical web index in search v2. */
+  WEB_INDEX_ENABLED?: string;
   /** GitHub App credentials used only by the public bug-report endpoint. */
   GITHUB_APP_ID?: string;
   GITHUB_APP_INSTALLATION_ID?: string;

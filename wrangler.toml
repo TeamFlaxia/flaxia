@@ -47,6 +47,12 @@ AUTH_AUTHORITY_MODE = "flaxia-auth"
 SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
+# Enable the Common Crawl-backed lexical web index in search v2.
+WEB_INDEX_ENABLED = "0"
+# Scheduled-worker settings; declared here so the prod-parity check sees them.
+CC_CRAWL = ""
+CC_DOMAINS = ""
+WEB_EMBEDDINGS_ENABLED = "0"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 MAIL_DOMAIN = "flaxia.app"
 MAPS_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
