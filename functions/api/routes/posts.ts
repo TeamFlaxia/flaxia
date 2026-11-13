@@ -12,6 +12,7 @@ import {
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';
+import { enrichPostsWithRemoteAuthors } from '../../lib/activitypub/authors';
 import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
@@ -108,14 +109,31 @@ async function filterBlockedAuthors(
   posts: Array<Record<string, unknown>>,
 ): Promise<Array<Record<string, unknown>>> {
   if (!currentUserId || posts.length === 0) return posts;
-  const blockedResult = await db
-    .prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?')
-    .bind(currentUserId)
-    .all<{ blocked_id: string }>();
-  if (!blockedResult.success || blockedResult.results.length === 0) return posts;
-  const blocked = new Set(blockedResult.results.map((r) => r.blocked_id));
-  return posts.filter((p) => !blocked.has(String(p.user_id)));
+  const postIds = posts.map((post) => String(post.id ?? '')).filter(Boolean);
+  const [blockedResult, actorBlockResult, actorRows] = await Promise.all([
+    db.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?').bind(currentUserId).all<{ blocked_id: string }>(),
+    db
+      .prepare('SELECT actor_url FROM ap_blocks WHERE local_user_id = ?')
+      .bind(currentUserId)
+      .all<{ actor_url: string }>(),
+    postIds.length > 0
+      ? db
+          .prepare(`SELECT id, actor_id FROM posts WHERE id IN (${postIds.map(() => '?').join(',')})`)
+          .bind(...postIds)
+          .all<{ id: string; actor_id: string | null }>()
+      : Promise.resolve({ results: [] as Array<{ id: string; actor_id: string | null }> }),
+  ]);
+  if (!blockedResult.success && !actorBlockResult.success) return posts;
+  const blocked = new Set((blockedResult.results ?? []).map((row) => row.blocked_id));
+  const blockedActors = new Set((actorBlockResult.results ?? []).map((row) => row.actor_url));
+  const actorByPost = new Map((actorRows.results ?? []).map((row) => [row.id, row.actor_id]));
+  return posts.filter((post) => {
+    if (blocked.has(String(post.user_id))) return false;
+    const actorId = actorByPost.get(String(post.id));
+    return !actorId || !blockedActors.has(actorId);
+  });
 }
+
 // POST /api/posts - one-step text post creation (kept for API compatibility;
 // the web client uses prepare + commit for attachment support).
 posts.post('/posts', requireAuth, async (c) => {
@@ -204,9 +222,10 @@ posts.get('/posts', async (c) => {
 
     // Helper: exclude posts from users blocked by current user
     const blockFilter = currentUserId
-      ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+      ? `AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)
+         AND (p.actor_id IS NULL OR p.actor_id NOT IN (SELECT actor_url FROM ap_blocks WHERE local_user_id = ?))`
       : '';
-    const blockParam = currentUserId ? [currentUserId] : [];
+    const blockParam = currentUserId ? [currentUserId, currentUserId] : [];
     const feedFilter = `${blockFilter} ${EXACT_DUPLICATE_FILTER}`;
     if (hashtag) {
       // Filter by hashtag using json_each
@@ -233,10 +252,14 @@ posts.get('/posts', async (c) => {
               SELECT followee_id FROM follows WHERE follower_id = ?
             )
             OR p.user_id = ?
+            OR (p.actor_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM ap_following f
+              WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
+            ))
           )
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
@@ -249,10 +272,14 @@ posts.get('/posts', async (c) => {
               SELECT followee_id FROM follows WHERE follower_id = ?
             )
             OR p.user_id = ?
+            OR (p.actor_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM ap_following f
+              WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
+            ))
           )
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, ...blockParam, limit];
       }
     } else if (username) {
       // Username filter - show posts from specific user
@@ -1083,6 +1110,7 @@ async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?:
     enrichPostsWithAttachments(posts, db),
     enrichPostsWithReactions(posts, db, currentUserId),
   ]);
+  await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, db);
 }
 
 async function enrichRecommendedPosts(
@@ -2469,6 +2497,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
+    await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
@@ -2556,6 +2585,7 @@ posts.get('/freshs', requireAuth, async (c) => {
 
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
+    await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
@@ -3020,6 +3050,10 @@ posts.get('/posts/:id/replies', async (c) => {
       }
     }
 
+    await enrichPostsWithRemoteAuthors(
+      [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
+      c.env.DB,
+    );
     return c.json({ root: parentPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);
@@ -3142,6 +3176,10 @@ posts.get('/posts/:id/thread', async (c) => {
       }
     }
 
+    await enrichPostsWithRemoteAuthors(
+      [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
+      c.env.DB,
+    );
     return c.json({ root: rootPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);
@@ -4340,6 +4378,7 @@ posts.get('/posts/:id', async (c) => {
     await enrichPostsWithQuotes([post as PostRow], c.env.DB);
     await enrichPostsWithAttachments([post as PostRow], c.env.DB);
     await enrichPostsWithReactions([post as PostRow], c.env.DB, c.get('user')?.id);
+    await enrichPostsWithRemoteAuthors([post], c.env.DB);
 
     return c.json(post);
   } catch (error: unknown) {

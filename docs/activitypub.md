@@ -140,6 +140,19 @@ no effect at all.
 | `ap_activities` | Activities that were already processed (idempotency) |
 | `posts.ap_object_id` | The ActivityPub object id of a received post |
 
+## Remote posts and authors
+
+A remote Note is stored once per instance, not once per local recipient. The
+row uses `posts.user_id = ''` because no local account owns the content; the
+author is `posts.actor_id`. This keeps remote posts out of local profiles and
+prevents a local recipient from editing or deleting them.
+
+`ap_object_id` has a unique partial index, so a Note delivered to several
+local followers is inserted only once. The feed API fills the author fields
+from `ap_actors` after the rows are fetched (`display_name`, `avatar_url`,
+`profile_path`, `is_remote`). The client renders the remote handle as
+`@user@domain` and links it to `/@domain/user`.
+
 ## Tests
 
 | Layer | Location | Needs |
