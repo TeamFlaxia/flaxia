@@ -49,6 +49,7 @@ BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 MAIL_DOMAIN = "flaxia.app"
+MAPS_STYLE_URL = "https://tiles.openfreemap.org/styles/liberty"
 
 # Keep file-source scanning disabled until the Crowd worker/node release is deployed.
 CROWD_SCAN_FILE_SOURCES = "0"

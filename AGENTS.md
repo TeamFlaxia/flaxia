@@ -50,12 +50,17 @@ CI run with npm).
 │   ├── lib/                   # Utilities (i18n, bridge, zip, settings, ...)
 │   └── types/                 # TypeScript type definitions
 ├── public/                    # Static assets + locales/{en,ja}.json
+├── packages/                  # Publishable SDKs built with Vite
+│   ├── game-sdk/              # @flaxia/game-sdk — Flaxia Game API wrapper (canonical)
+│   ├── multiplayer/           # @flaxia/multiplayer — deprecated alias of game-sdk
+│   └── capture/               # @flaxia/capture — capture bridge injected into games
 ├── sandbox/                   # Sandbox origin (fresh-bridge.js)
 ├── migrations/                # D1 migrations (SQL, applied in order)
 ├── tests/                     # Node native test suites (*.test.ts)
 ├── AGENTS.md                  # This file (OpenCode reads this)
 ├── CLAUDE.MD                  # Claude Code guidance (separate, update manually)
 └── docs/                      # Developer documentation (see docs/billing.md)
+    └── developer/             # External developer docs (Game API, SDK, REST API, publishing)
 ```
 
 ## Code Conventions

@@ -20,6 +20,7 @@ export type RouteView =
   | 'admin'
   | 'settings'
   | 'arcade'
+  | 'maps'
   | 'billing-success'
   | 'billing-canceled'
   | 'download'
@@ -99,6 +100,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
       searchQuery: q,
       searchType: type as 'posts' | 'users' | 'arcade',
     };
+  }
+
+  // Flaxia Maps & Weathers route - public, no auth required
+  if (cleanPath === '/maps') {
+    return { view: 'maps', postId: null, username: null, tag: null };
   }
 
   // Arcade game route - public, no auth required

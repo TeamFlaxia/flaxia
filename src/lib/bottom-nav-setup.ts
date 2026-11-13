@@ -26,6 +26,9 @@ function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
   } else if (item === 'arcade') {
     pushSpaHistory('/arcade');
     deps.navigate('arcade');
+  } else if (item === 'maps') {
+    pushSpaHistory('/maps');
+    deps.navigate('maps');
   } else if (item === 'notifications') {
     window.history.pushState({}, '', '/notifications');
     deps.navigate('notifications');

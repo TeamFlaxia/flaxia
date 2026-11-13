@@ -198,6 +198,7 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
@@ -210,6 +211,7 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
       ];
       items.forEach((item) => {
         navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName));
@@ -727,6 +729,7 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
@@ -765,6 +768,7 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
       ];
 
       items.forEach((item) => {
