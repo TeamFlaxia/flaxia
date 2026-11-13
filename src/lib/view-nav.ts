@@ -9,6 +9,8 @@ export function viewToBottomNavId(view: string): string {
     case 'explore':
     case 'search':
       return 'explore';
+    case 'translate':
+      return 'translate';
     case 'arcade':
       return 'arcade';
     case 'maps':

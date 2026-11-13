@@ -4,7 +4,7 @@ import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.5.1';
+export const CROWD_NODE_VERSION = '0.6.1';
 
 export const CROWD_SITE_ID = 'flaxia';
 
@@ -13,6 +13,25 @@ export const CROWD_SITE_CAPABILITIES = ['ai-inference', 'vector-embed', 'nudenet
 export const CROWD_NODE_MAX_CPU_LOAD = 0.15;
 
 export type CrowdConsentState = 'unset' | 'granted' | 'denied';
+
+/** Local `ai-inference` payload (host-side shape, same as coordinator tasks). */
+export interface LocalAiInferencePayload {
+  task: string;
+  model: string;
+  input: string | string[];
+  options?: {
+    src_lang?: string;
+    tgt_lang?: string;
+    ondeviceOnly?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+export interface OndeviceUnavailableError extends Error {
+  code?: string;
+  status?: number;
+  detail?: string;
+}
 
 /** Handed to the host when it renders its own consent UI. */
 export interface CrowdConsentControls {
@@ -33,6 +52,14 @@ export interface CrowdNodeController {
   grant(): void;
   deny(): void;
   clearConsent(): void;
+  /**
+   * Light Inference: run `ai-inference` locally without involving the
+   * orchestrator. Present on 0.6.0+ bundles; older bundles leave it undefined
+   * and callers must fall back to a coordinator routed task.
+   */
+  runLocalAiInference?: (payload: LocalAiInferencePayload) => Promise<{ output: unknown }>;
+  isAiModelPreloaded?: (model: string) => boolean;
+  preloadAiModel?: (request: { task: string; model: string; dtype?: string; device?: string }) => Promise<void>;
 }
 
 /** Consent-protected browser node configuration accepted by `@flaxia/node`. */
@@ -234,4 +261,66 @@ export function stopCrowdNode(): void {
 
 export function isCrowdNodeRunning(): boolean {
   return controller?.isRunning() ?? false;
+}
+
+/**
+ * Whether the attached node can serve a translate model instantly from this
+ * device (Light Inference warm check). Returns false on old bundles.
+ */
+export function isLocalTranslateReady(model: string): boolean {
+  if (!controller?.isRunning?.()) return false;
+  if (getCrowdConsentState() !== 'granted') return false;
+  return controller.isAiModelPreloaded?.(model) ?? false;
+}
+
+/** True when the attached node exposes the Light Inference local-run API. */
+export function hasLightInference(): boolean {
+  return typeof controller?.runLocalAiInference === 'function';
+}
+
+/**
+ * Run `ai-inference` on this device via Light Inference.
+ * With `ondeviceOnly: true` a missing model throws an error with
+ * `code === 'ONDEVICE_UNAVAILABLE'` and `status === 500`; nothing is
+ * delegated. Callers should treat that as "show download progress".
+ */
+export async function runLocalAiInference(payload: LocalAiInferencePayload): Promise<{ output: unknown }> {
+  const run = controller?.runLocalAiInference;
+  if (!run || !controller?.isRunning?.()) {
+    const err = new Error('On-device model not available') as OndeviceUnavailableError & { name: string };
+    err.name = 'OndeviceUnavailableError';
+    err.code = 'ONDEVICE_UNAVAILABLE';
+    err.status = 500;
+    err.detail = 'node_not_running';
+    throw err;
+  }
+  if (getCrowdConsentState() !== 'granted') {
+    const err = new Error('On-device model not available') as OndeviceUnavailableError & { name: string };
+    err.name = 'OndeviceUnavailableError';
+    err.code = 'ONDEVICE_UNAVAILABLE';
+    err.status = 500;
+    err.detail = 'consent_not_granted';
+    throw err;
+  }
+  return run.call(controller, payload);
+}
+
+/**
+ * Download + warm a translate model on this device (Light Inference
+ * preload). No-ops when the node cannot run; resolves once the model is
+ * ready to serve `ondeviceOnly` tasks. Safe to call while the idle
+ * preloader is already warming the same model (idempotent).
+ */
+export async function preloadLocalAiModel(request: { model: string; task: string; dtype?: string }): Promise<void> {
+  const preload = controller?.preloadAiModel;
+  if (!preload || !controller?.isRunning?.()) return;
+  if (getCrowdConsentState() !== 'granted') return;
+  await preload.call(controller, request);
+}
+
+export function isOndeviceUnavailable(error: unknown): boolean {
+  const rec = error as { code?: unknown; status?: unknown } | null;
+  return (
+    rec?.code === 'ONDEVICE_UNAVAILABLE' || (rec?.status === 500 && /ondevice/i.test((error as Error)?.message ?? ''))
+  );
 }

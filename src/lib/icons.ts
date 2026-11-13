@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Archive,
   ArrowLeft,
+  ArrowLeftRight,
   AtSign,
   BarChart3,
   Bell,
@@ -123,6 +124,7 @@ export type IconName =
   | 'refresh'
   | 'sliders'
   | 'check'
+  | 'translate'
   | 'mail-open';
 
 const ICON_NODES: Record<IconName, IconNode> = {
@@ -187,6 +189,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   refresh: RefreshCw,
   sliders: SlidersHorizontal,
   check: Check,
+  translate: ArrowLeftRight,
   'mail-open': MailOpen,
 };
 

@@ -26,6 +26,7 @@ import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
 import testsRouter from './routes/tests';
 import titlesRouter from './routes/titles';
+import translateRouter from './routes/translate';
 import usersRouter from './routes/users';
 import vaultRouter from './routes/vault';
 
@@ -164,6 +165,9 @@ app.route('/api', vaultRouter);
 
 // Mail proxy (extracted to routes/mail.ts) — see docs/mail.md
 app.route('/api/mail', mailRouter);
+
+// Public translation (extracted to routes/translate.ts) — Light Inference backend path
+app.route('/api', translateRouter);
 
 export async function onRequest(context: Record<string, unknown>) {
   const request = context.request as Request;

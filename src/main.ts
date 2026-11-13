@@ -147,6 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'billing-success'
       | 'billing-canceled'
       | 'download'
+      | 'translate'
       | 'mail'
       | 'mail-thread'
       | 'mail-compose'
@@ -169,6 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
     let downloadPage: PageComponent | null = null;
+    let translatePage: { getElement: () => HTMLElement; destroy: () => void } | null = null;
     let mailPage: PageComponent | null = null;
     let mailSettingsPage: PageComponent | null = null;
     let mailThreadPage: PageComponent | null = null;
@@ -583,6 +585,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           downloadPage.destroy();
           downloadPage = null;
         }
+        if (translatePage) {
+          translatePage.destroy();
+          translatePage = null;
+        }
         if (mailPage) {
           mailPage.destroy();
           mailPage = null;
@@ -748,6 +754,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(downloadPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle translate page (public, within the standard 3-column layout)
+        if (view === 'translate') {
+          currentView = 'translate';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'translate',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createTranslatePage } = await import('./components/TranslatePage.js');
+          translatePage = createTranslatePage();
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(translatePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1643,6 +1686,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           run: () => {
             pushSpaHistory('/maps');
             void navigateTo('maps');
+          },
+        },
+        {
+          id: 'translate',
+          label: t('nav.translate'),
+          group: navigationGroup,
+          keywords: 'translate google translate 翻訳',
+          run: () => {
+            pushSpaHistory('/translate');
+            void navigateTo('translate');
           },
         },
         {
