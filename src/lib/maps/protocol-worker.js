@@ -1,6 +1,8 @@
 // Loaded inside a MapLibre WebWorker via maplibre.importScriptInWorkers().
-// MapLibre tile requests run in the worker, so the `flaxia://` protocol
+// MapLibre tile requests run in the worker, so the `flaxia-tiles://` protocol
 // must be registered here as well as on the main thread (src/components/MapsPage.ts).
+// It uses its own scheme (not flaxia://) so tiles can never collide with the
+// native auth deep link flaxia://auth/callback registered at OS level.
 //
 // This file must stay standalone: it is shipped as-is (no bundling), so
 // it cannot import src/lib/maps/cache.ts. Keep the cache name below in
@@ -215,8 +217,8 @@ async function handleTileFetch(url, signal) {
   return task;
 }
 
-self.addProtocol('flaxia', async (params, abortController) => {
-  const url = params.url.slice('flaxia://'.length);
+self.addProtocol('flaxia-tiles', async (params, abortController) => {
+  const url = params.url.slice('flaxia-tiles://'.length);
   if (!isTileUrl(url)) throw new Error('Unsupported tile URL');
   const data = await handleTileFetch(url, abortController.signal);
   return { data };
