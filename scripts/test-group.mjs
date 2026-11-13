@@ -97,6 +97,7 @@ const groups = {
     'game-sdk',
     'game-sdk-protocol-sync',
     'game-storage-migration',
+    'game-titles',
     'game-versions',
     'image-dimensions',
     'legacy-sandbox-disabled',

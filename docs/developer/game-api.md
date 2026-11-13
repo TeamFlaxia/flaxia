@@ -206,8 +206,11 @@ type PlayerIdentity = {
 - 1ゲームあたり最大200件、`name` は64文字、`description` は200文字までです。
 - レート制限: 作成 120回/5分、付与 300回/5分（ユーザー単位）。
 - 付与してもプレイヤーの装備は変わりません。装備はプレイヤー自身が選びます。
-- `AWARD_TITLE` は称号が未登録でも作成してから付与します。実績一覧を先に
-  出したい場合は `CREATE_TITLE` を使ってください。
+- `CREATE_TITLE` は**ゲーム投稿の作者だけ**が実行できます。作者が自分のゲームを
+  プレビュー/テストプレイして実績を登録してください。
+- `AWARD_TITLE` は登録済みの称号だけを付与できます。未登録の場合は
+  `TITLE_NOT_FOUND` で拒否されます。
+- ゲーム投稿を削除すると、そのゲームの称号と付与も削除されます。
 
 ---
 
@@ -296,6 +299,8 @@ MULTIPLAYER_PEER_DATA      { data }
 | `UNAUTHENTICATED` | サインインしていない |
 | `INVALID_TITLE` | `titleId` / 名前 / 説明 / アイコンの形式が不正 |
 | `POST_NOT_FOUND` | 実行中のゲーム投稿が見つからない（非公開・削除済みなど） |
+| `FORBIDDEN` | ゲーム投稿の作者以外が `CREATE_TITLE` を送った |
+| `TITLE_NOT_FOUND` | `AWARD_TITLE` の称号がまだ登録されていない |
 | `TITLE_CONFLICT` | その `titleId` は他ゲームまたはプラットフォームの称号 |
 | `TITLE_LIMIT` | 1ゲームあたりの称号上限（200件）に達した |
 | `RATE_LIMITED` | レート制限 |

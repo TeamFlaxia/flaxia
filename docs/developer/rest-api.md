@@ -125,8 +125,8 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 | GET | `/api/titles` | タイトル一覧（プラットフォーム + ゲーム称号） |
 | GET | `/api/titles/me` | 所持タイトル |
 | PUT | `/api/titles/me/equipped` | 装備（`{ titleId }`、`null` で外す） |
-| POST | `/api/titles/game` | ゲーム称号を登録（要認証・ゲーム実行中の投稿スコープ） |
-| POST | `/api/titles/game/award` | ゲーム称号を本人に付与（要認証・冪等） |
+| POST | `/api/titles/game` | ゲーム称号を登録（要認証・ゲーム投稿の作者のみ） |
+| POST | `/api/titles/game/award` | 登録済みゲーム称号を本人に付与（要認証・冪等） |
 
 `POST /api/titles/game` のボディは
 `{ postId, titleId, name, nameJa?, description?, descriptionJa?, icon? }` です。
@@ -134,9 +134,10 @@ SRP-6a を採用し、パスワードはサーバーに送信されません。
 `event.source` から解決して付与します。ゲームコードからは直接指定できません。
 `icon` は同一オリジンのパスのみ。定義は `titleId` ごとに書き込み一回限りです。
 
-`POST /api/titles/game/award` は同じボディを受け取り、未登録なら作成してから
-本人に付与します。他ゲーム・プラットフォームの `titleId` は 409 `TITLE_CONFLICT`
-で拒否されます。ゲームからは Game API の `AWARD_TITLE` を使ってください
+`POST /api/titles/game/award` は登録済みの称号だけを本人に付与します。未登録は
+404 `TITLE_NOT_FOUND`、他ゲーム・プラットフォームの `titleId` は 409
+`TITLE_CONFLICT` で拒否されます。ゲームからは Game API の `AWARD_TITLE` を
+使ってください
 （[Game API](game-api.md#47-バッジ称号)）。
 
 ---

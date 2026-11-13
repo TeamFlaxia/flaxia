@@ -126,9 +126,9 @@ export class FlaxiaGame {
   }
 
   /**
-   * Register a title definition with the game the player is running. Use this
-   * to publish an achievement list before any of it is earned. Definitions are
-   * write-once: the first version the platform sees wins.
+   * Register a title definition with the game the player is running. Only the
+   * game post's author may do this, typically while previewing or testing the
+   * game. Definitions are write-once: the first version wins.
    */
   createTitle(definition: GameTitleDefinition): void {
     const frame = toTitleFrame('CREATE_TITLE', definition);
@@ -136,9 +136,9 @@ export class FlaxiaGame {
   }
 
   /**
-   * Create the title if needed and grant it to the signed-in player. Only
-   * titles scoped to this game can be granted — the platform rejects a frame
-   * that names another game's badge or a platform title.
+   * Grant an already registered title to the signed-in player. A missing
+   * definition is rejected (`TITLE_NOT_FOUND`); only titles scoped to this
+   * game can be granted, never a platform title or another game's badge.
    */
   awardTitle(definition: GameTitleDefinition): void {
     const frame = toTitleFrame('AWARD_TITLE', definition);

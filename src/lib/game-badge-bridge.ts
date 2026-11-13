@@ -142,6 +142,7 @@ async function replyIdentity(event: MessageEvent): Promise<void> {
 function titleErrorCode(status: number, serverCode?: string): string {
   if (serverCode) return serverCode.slice(0, 64);
   if (status === 401) return 'UNAUTHENTICATED';
+  if (status === 403) return 'FORBIDDEN';
   if (status === 404) return 'POST_NOT_FOUND';
   if (status === 409) return 'TITLE_CONFLICT';
   if (status === 429) return 'RATE_LIMITED';

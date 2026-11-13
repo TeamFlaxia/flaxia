@@ -18,7 +18,10 @@ import type { Bindings, Variables } from '../types';
 
 const titles = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-const TITLE_COLUMNS = 'id, icon, name, name_ja, description, description_ja, sort_order';
+const TITLE_COLUMNS = 't.id, t.icon, t.name, t.name_ja, t.description, t.description_ja, t.sort_order';
+const TITLE_VISIBLE = `(t.game_post_id IS NULL OR EXISTS (
+  SELECT 1 FROM posts gp WHERE gp.id = t.game_post_id AND gp.hidden = 0 AND gp.status = 'published'
+))`;
 
 /** Matches the id shape `servePublicLoader` accepts for a post. */
 const POST_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -86,18 +89,26 @@ function parseGameTitle(body: RawGameTitleBody): { ok: true; input: GameTitleInp
   };
 }
 
-/** The game post must be the published, visible payload the caller is running. */
-async function requireGamePost(db: D1Database, postId: string): Promise<boolean> {
-  const post = await db
-    .prepare('SELECT 1 FROM posts WHERE id = ? AND hidden = 0 AND status = ?')
-    .bind(postId, 'published')
-    .first();
-  return Boolean(post);
+/**
+ * The game post must be a published, visible ZIP game. A title can only be
+ * authored against a real game payload, never an arbitrary text post.
+ */
+async function requireGamePost(db: D1Database, postId: string): Promise<{ user_id: string } | null> {
+  return db
+    .prepare(
+      `SELECT user_id FROM posts
+       WHERE id = ? AND hidden = 0 AND status = 'published'
+         AND payload_key IS NOT NULL AND swf_key IS NULL`,
+    )
+    .bind(postId)
+    .first<{ user_id: string }>();
 }
 
 // GET /api/titles - the full title catalog (public).
 titles.get('/titles', async (c) => {
-  const result = await c.env.DB.prepare(`SELECT ${TITLE_COLUMNS} FROM titles ORDER BY sort_order, id`).all<TitleRow>();
+  const result = await c.env.DB.prepare(
+    `SELECT ${TITLE_COLUMNS} FROM titles t WHERE ${TITLE_VISIBLE} ORDER BY t.sort_order, t.id`,
+  ).all<TitleRow>();
   return c.json({ titles: result.results || [] });
 });
 
@@ -111,7 +122,7 @@ titles.get('/titles/me', requireAuth, async (c) => {
       `SELECT t.id, t.icon, t.name, t.name_ja, t.description, t.description_ja, t.sort_order, ut.awarded_at
        FROM user_titles ut
        JOIN titles t ON t.id = ut.title_id
-       WHERE ut.user_id = ?
+       WHERE ut.user_id = ? AND ${TITLE_VISIBLE}
        ORDER BY ut.awarded_at DESC, t.sort_order, t.id`,
     )
       .bind(user.id)
@@ -121,9 +132,12 @@ titles.get('/titles/me', requireAuth, async (c) => {
     }>(),
   ]);
 
-  const equippedTitleId = me?.equipped_title_id ?? null;
+  const titlesList = owned.results || [];
+  const equippedTitleId = titlesList.some((title) => title.id === me?.equipped_title_id)
+    ? (me?.equipped_title_id ?? null)
+    : null;
   return c.json({
-    titles: (owned.results || []).map((title) => ({
+    titles: titlesList.map((title) => ({
       ...title,
       equipped: title.id === equippedTitleId,
     })),
@@ -144,7 +158,9 @@ titles.put('/titles/me/equipped', requireAuth, async (c) => {
   }
 
   if (titleId !== null) {
-    const title = await c.env.DB.prepare('SELECT 1 FROM titles WHERE id = ?').bind(titleId).first();
+    const title = await c.env.DB.prepare(`SELECT 1 FROM titles t WHERE t.id = ? AND ${TITLE_VISIBLE}`)
+      .bind(titleId)
+      .first();
     if (!title) return c.json({ error: 'Unknown title' }, 404);
 
     const owned = await c.env.DB.prepare('SELECT 1 FROM user_titles WHERE user_id = ? AND title_id = ?')
@@ -177,8 +193,12 @@ titles.post('/titles/game', requireAuth, async (c) => {
   const parsed = parseGameTitle(body);
   if (!parsed.ok) return c.json({ error: parsed.error, code: 'INVALID_TITLE' }, 400);
 
-  if (!(await requireGamePost(c.env.DB, parsed.input.postId))) {
+  const gamePost = await requireGamePost(c.env.DB, parsed.input.postId);
+  if (!gamePost) {
     return c.json({ error: 'Unknown game post', code: 'POST_NOT_FOUND' }, 404);
+  }
+  if (gamePost.user_id !== user.id) {
+    return c.json({ error: 'Only the game author can create titles', code: 'FORBIDDEN' }, 403);
   }
 
   const created = await createGameTitle(c.env.DB, parsed.input);
@@ -189,7 +209,7 @@ titles.post('/titles/game', requireAuth, async (c) => {
     return c.json({ error: 'This game has reached its title limit', code: 'TITLE_LIMIT' }, 409);
   }
 
-  const title = await c.env.DB.prepare(`SELECT ${TITLE_COLUMNS} FROM titles WHERE id = ?`)
+  const title = await c.env.DB.prepare(`SELECT ${TITLE_COLUMNS} FROM titles t WHERE t.id = ?`)
     .bind(parsed.input.titleId)
     .first<TitleRow>();
   return c.json({ title, created: created === 'created' }, created === 'created' ? 201 : 200);
@@ -217,12 +237,12 @@ titles.post('/titles/game/award', requireAuth, async (c) => {
     return c.json({ error: 'Unknown game post', code: 'POST_NOT_FOUND' }, 404);
   }
 
-  const result = await awardGameTitle(c.env.DB, user.id, parsed.input);
+  const result = await awardGameTitle(c.env.DB, user.id, parsed.input.postId, parsed.input.titleId);
+  if (result === 'not_found') {
+    return c.json({ error: 'Title is not registered for this game', code: 'TITLE_NOT_FOUND' }, 404);
+  }
   if (result === 'conflict') {
     return c.json({ error: 'Title id already belongs to another game', code: 'TITLE_CONFLICT' }, 409);
-  }
-  if (result === 'limit') {
-    return c.json({ error: 'This game has reached its title limit', code: 'TITLE_LIMIT' }, 409);
   }
 
   return c.json({ title_id: parsed.input.titleId, awarded: true });

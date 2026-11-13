@@ -69,7 +69,7 @@ export interface GameTitleInput {
 }
 
 export type GameTitleCreation = 'created' | 'exists' | 'conflict' | 'limit';
-export type GameTitleAward = 'awarded' | 'conflict' | 'limit';
+export type GameTitleAward = 'awarded' | 'not_found' | 'conflict';
 
 /**
  * Game title icons must stay same-origin paths. A profile that rendered an
@@ -126,27 +126,54 @@ export async function createGameTitle(db: D1Database, input: GameTitleInput): Pr
 }
 
 /**
- * Grants a game-authored title to a user, authoring the definition first when
- * it does not exist yet. The scope check is the guarantee that a game can only
- * ever grant titles it authored itself — never a platform title and never
- * another game's achievement.
+ * Grants an already authored game title to a user. Only the game's own titles
+ * are awardable; a missing title is `not_found`, and a title belonging to
+ * another game (or the platform) is `conflict`. Creating a definition is a
+ * separate, author-only operation (`createGameTitle`).
  */
-export async function awardGameTitle(db: D1Database, userId: string, input: GameTitleInput): Promise<GameTitleAward> {
-  const created = await createGameTitle(db, input);
-  if (created === 'conflict') return 'conflict';
-  if (created === 'limit') return 'limit';
+export async function awardGameTitle(
+  db: D1Database,
+  userId: string,
+  postId: string,
+  titleId: string,
+): Promise<GameTitleAward> {
+  const title = await db
+    .prepare('SELECT game_post_id FROM titles WHERE id = ?')
+    .bind(titleId)
+    .first<{ game_post_id: string | null }>();
+  if (!title) return 'not_found';
+  if (title.game_post_id !== postId) return 'conflict';
 
-  const scoped = await db
-    .prepare('SELECT 1 FROM titles WHERE id = ? AND game_post_id = ?')
-    .bind(input.titleId, input.postId)
-    .first();
-  if (!scoped) return 'conflict';
+  await db.prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)').bind(userId, titleId).run();
+  return 'awarded';
+}
 
-  const granted = await db
-    .prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)')
-    .bind(userId, input.titleId)
-    .run();
-  return granted.success ? 'awarded' : 'conflict';
+/**
+ * Remove every game title authored by the given posts, its awards, and any
+ * equipped reference. Called when a game post (and its replies) are deleted so
+ * the public catalog cannot keep orphaned achievements.
+ */
+export async function deleteGameTitlesForPosts(db: D1Database, postIds: string[]): Promise<void> {
+  if (postIds.length === 0) return;
+  for (let i = 0; i < postIds.length; i += 400) {
+    const ids = postIds.slice(i, i + 400);
+    const placeholders = ids.map(() => '?').join(',');
+    await db.batch([
+      db
+        .prepare(
+          `UPDATE users SET equipped_title_id = NULL
+           WHERE equipped_title_id IN (SELECT id FROM titles WHERE game_post_id IN (${placeholders}))`,
+        )
+        .bind(...ids),
+      db
+        .prepare(
+          `DELETE FROM user_titles
+           WHERE title_id IN (SELECT id FROM titles WHERE game_post_id IN (${placeholders}))`,
+        )
+        .bind(...ids),
+      db.prepare(`DELETE FROM titles WHERE game_post_id IN (${placeholders})`).bind(...ids),
+    ]);
+  }
 }
 
 /**

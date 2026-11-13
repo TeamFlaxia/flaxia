@@ -92,8 +92,8 @@ const game = new FlaxiaGame(options);
 | `requestFullscreen()` | フルスクリーン要求。結果は `on('fullscreen')` |
 | `requestFresh()` | この投稿に Fresh する。結果は `on('fresh')` |
 | `requestIdentity()` | プレイヤー情報を要求。結果は `on('identity')` |
-| `createTitle(definition)` | ゲーム独自の称号を登録。結果は `on('titleCreated')` |
-| `awardTitle(definition)` | 称号を作成（未登録なら）して本人に付与。結果は `on('titleAwarded')` |
+| `createTitle(definition)` | 称号を登録（ゲーム作者のみ）。結果は `on('titleCreated')` |
+| `awardTitle(definition)` | 登録済みの称号を本人に付与。結果は `on('titleAwarded')` |
 | `submitScore(score, label?)` | スコア報告。`label` 既定 `''`。非有限数は破棄 |
 | `sendMessage(message)` | 任意の Game API フレームを送信（検証済み） |
 | `on(event, handler)` | プラットフォームイベント登録 |
@@ -150,7 +150,9 @@ game.awardTitle({ id: 'mygame.level1', name: 'Level 1 Clear', description: 'Clea
 ```
 
 称号はそのゲーム専用です。プラットフォームや他ゲームの称号IDを指定すると
-`TITLE_CONFLICT` で拒否されます。付与してもプレイヤーの装備は変わりません。
+`TITLE_CONFLICT` で拒否されます。`createTitle()` はゲーム投稿の作者だけが
+実行でき、プレイヤーは登録済みの称号を `awardTitle()` で付与します。
+付与してもプレイヤーの装備は変わりません。
 
 ---
 
