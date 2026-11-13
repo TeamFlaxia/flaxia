@@ -91,6 +91,9 @@ const game = new FlaxiaGame(options);
 |---|---|
 | `requestFullscreen()` | フルスクリーン要求。結果は `on('fullscreen')` |
 | `requestFresh()` | この投稿に Fresh する。結果は `on('fresh')` |
+| `requestIdentity()` | プレイヤー情報を要求。結果は `on('identity')` |
+| `createTitle(definition)` | ゲーム独自の称号を登録。結果は `on('titleCreated')` |
+| `awardTitle(definition)` | 称号を作成（未登録なら）して本人に付与。結果は `on('titleAwarded')` |
 | `submitScore(score, label?)` | スコア報告。`label` 既定 `''`。非有限数は破棄 |
 | `sendMessage(message)` | 任意の Game API フレームを送信（検証済み） |
 | `on(event, handler)` | プラットフォームイベント登録 |
@@ -112,12 +115,42 @@ interface FlaxiaGameEventMap {
   fullscreen: (granted: boolean) => void;
   fresh: (granted: boolean) => void;
   scoreSubmitted: (event: { score: number; label: string }) => void;
+  identity: (identity: PlayerIdentity) => void;
+  titleCreated: (event: { titleId: string }) => void;
+  titleAwarded: (event: { titleId: string }) => void;
+  titleError: (event: { code: string; message: string; titleId?: string }) => void;
   message: (message: ParentToGameMessage) => void; // 全フレームを受信
 }
 ```
 
 `message` は生のフレームを受け取りたい場合に使います（マルチプレイのイベントは
 `game.multiplayer.on(...)` で受け取るのが一般的です）。
+
+### 称号（バッジ）
+
+```typescript
+interface GameTitleDefinition {
+  id: string;            // ゲーム内で一意。`<gameId>.level1` を推奨
+  name: string;          // 64文字まで
+  nameJa?: string;       // 64文字まで
+  description?: string;  // 200文字まで
+  descriptionJa?: string;
+  icon?: string;         // 同一オリジンのパスのみ
+}
+
+game.on('identity', (identity) => {
+  console.log(identity.username, identity.equippedTitle?.name);
+});
+game.requestIdentity();
+
+game.on('titleAwarded', ({ titleId }) => console.log('awarded', titleId));
+game.on('titleError', ({ code, message }) => console.warn(code, message));
+
+game.awardTitle({ id: 'mygame.level1', name: 'Level 1 Clear', description: 'Cleared level 1.' });
+```
+
+称号はそのゲーム専用です。プラットフォームや他ゲームの称号IDを指定すると
+`TITLE_CONFLICT` で拒否されます。付与してもプレイヤーの装備は変わりません。
 
 ---
 
@@ -159,6 +192,10 @@ import type {
   FlaxiaGameOptions,
   FlaxiaGameEventMap,
   ScoreSubmittedEvent,
+  GameTitleDefinition,
+  TitleErrorEvent,
+  PlayerIdentity,
+  EquippedTitle,
   GameToParentMessage,
   ParentToGameMessage,
   CaptureFrame,

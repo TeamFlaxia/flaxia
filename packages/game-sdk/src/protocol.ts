@@ -37,6 +37,45 @@ export const MAX_CHAT_LENGTH = 500;
 /** Maximum length of a game/room identifier. */
 export const MAX_ID_LENGTH = 128;
 
+/** Maximum length of a title id. */
+export const MAX_TITLE_ID_LENGTH = 128;
+/** Maximum length of the display fields a game may author for a title. */
+export const MAX_TITLE_NAME_LENGTH = 64;
+export const MAX_TITLE_DESCRIPTION_LENGTH = 200;
+export const MAX_TITLE_ICON_LENGTH = 512;
+
+/** The displayable title shown after a player's username. */
+export interface EquippedTitle {
+  id: string;
+  name: string;
+  nameJa: string;
+  description: string;
+  descriptionJa: string;
+  icon: string;
+}
+
+/**
+ * Who is playing right now, resolved by the parent. Every field is `null`
+ * while nobody is signed in — a game must still handle that case.
+ */
+export interface PlayerIdentity {
+  userId: string | null;
+  username: string | null;
+  displayName: string | null;
+  avatarKey: string | null;
+  equippedTitle: EquippedTitle | null;
+}
+
+/** Definition half of a game-authored title frame. */
+export interface GameTitlePayload {
+  titleId: string;
+  name: string;
+  nameJa?: string;
+  description?: string;
+  descriptionJa?: string;
+  icon?: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -68,6 +107,9 @@ function isNumber(value: unknown): value is number {
 export type GameToParentMessage =
   | { type: 'REQUEST_FULLSCREEN' }
   | { type: 'REQUEST_FRESH' }
+  | { type: 'REQUEST_IDENTITY' }
+  | ({ type: 'CREATE_TITLE' } & GameTitlePayload)
+  | ({ type: 'AWARD_TITLE' } & GameTitlePayload)
   | { type: 'POST_SCORE'; score: number; label: string }
   | { type: 'MULTIPLAYER_CONNECT'; gameId: string; roomId?: string }
   | { type: 'MULTIPLAYER_DISCONNECT' }
@@ -88,6 +130,10 @@ export type ParentToGameMessage =
   | { type: 'FULLSCREEN_DENIED' }
   | { type: 'FRESH_GRANTED' }
   | { type: 'FRESH_DENIED' }
+  | { type: 'PLAYER_IDENTITY'; identity: PlayerIdentity }
+  | { type: 'TITLE_CREATED'; titleId: string }
+  | { type: 'TITLE_AWARDED'; titleId: string }
+  | { type: 'TITLE_ERROR'; code: string; message: string; titleId?: string }
   | { type: 'SCORE_SUBMITTED'; score: number; label: string }
   | { type: 'CAPTURE_INIT' }
   | { type: 'CAPTURE_FRAME'; requestId: string }
@@ -123,6 +169,17 @@ export function isParentToGameMessage(value: unknown): value is ParentToGameMess
     case 'FRESH_GRANTED':
     case 'FRESH_DENIED':
       return true;
+    case 'PLAYER_IDENTITY':
+      return isRecord(value.identity);
+    case 'TITLE_CREATED':
+    case 'TITLE_AWARDED':
+      return isCappedString(value.titleId, MAX_TITLE_ID_LENGTH);
+    case 'TITLE_ERROR':
+      return (
+        isCappedString(value.code, 64) &&
+        isCappedString(value.message, MAX_CHAT_LENGTH) &&
+        (value.titleId === undefined || isCappedString(value.titleId, MAX_TITLE_ID_LENGTH))
+      );
     case 'SCORE_SUBMITTED':
       return isNumber(value.score) && typeof value.label === 'string';
     case 'CAPTURE_INIT':
@@ -179,7 +236,18 @@ export function isGameToParentMessage(value: unknown): value is GameToParentMess
   switch (value.type) {
     case 'REQUEST_FULLSCREEN':
     case 'REQUEST_FRESH':
+    case 'REQUEST_IDENTITY':
       return true;
+    case 'CREATE_TITLE':
+    case 'AWARD_TITLE':
+      return (
+        isCappedString(value.titleId, MAX_TITLE_ID_LENGTH) &&
+        isCappedString(value.name, MAX_TITLE_NAME_LENGTH) &&
+        (value.nameJa === undefined || isCappedString(value.nameJa, MAX_TITLE_NAME_LENGTH)) &&
+        (value.description === undefined || isCappedString(value.description, MAX_TITLE_DESCRIPTION_LENGTH)) &&
+        (value.descriptionJa === undefined || isCappedString(value.descriptionJa, MAX_TITLE_DESCRIPTION_LENGTH)) &&
+        (value.icon === undefined || isCappedString(value.icon, MAX_TITLE_ICON_LENGTH))
+      );
     case 'POST_SCORE':
       return isNumber(value.score) && typeof value.label === 'string';
     case 'MULTIPLAYER_CONNECT':

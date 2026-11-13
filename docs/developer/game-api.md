@@ -157,6 +157,58 @@ WVFS が `localStorage` / `sessionStorage` の互換シムを注入します。
 ゲームは通常どおり `localStorage.setItem(...)` を使えます。
 保存先はブラウザローカルで、アカウント・デバイス間では同期されません。
 
+### 4.7 バッジ（称号）
+
+プレイヤーの称号（バッジ）を読み取り、ゲーム独自の称号を作成・付与できます。
+称号はユーザー名の後ろに表示され、プレイヤーは設定画面から装備します。
+
+**読み取り（誰がプレイしているか）**
+
+| 方向 | フレーム |
+|---|---|
+| ゲーム → 親 | `{ type: 'REQUEST_IDENTITY' }` |
+| 親 → ゲーム | `{ type: 'PLAYER_IDENTITY'; identity: PlayerIdentity }` |
+
+```ts
+type PlayerIdentity = {
+  userId: string | null;
+  username: string | null;
+  displayName: string | null;
+  avatarKey: string | null;
+  equippedTitle: {
+    id: string;
+    name: string;
+    nameJa: string;
+    description: string;
+    descriptionJa: string;
+    icon: string;
+  } | null;
+};
+```
+
+未ログイン時はすべて `null` です。`equippedTitle` は装備中の称号がない場合も `null` です。
+
+**作成・付与（ゲーム独自の実績）**
+
+| 方向 | フレーム |
+|---|---|
+| ゲーム → 親 | `{ type: 'CREATE_TITLE'; titleId, name, nameJa?, description?, descriptionJa?, icon? }` |
+| ゲーム → 親 | `{ type: 'AWARD_TITLE'; titleId, name, nameJa?, description?, descriptionJa?, icon? }` |
+| 親 → ゲーム | `{ type: 'TITLE_CREATED'; titleId }` / `{ type: 'TITLE_AWARDED'; titleId }` / `{ type: 'TITLE_ERROR'; code, message, titleId? }` |
+
+- 称号は **そのゲーム専用** です。ゲームは自分が作った称号だけを付与できます。
+  プラットフォームの称号や他ゲームの称号を指定すると `TITLE_CONFLICT` で拒否されます。
+- `titleId` はゲーム内で一意なら何でも構いませんが、`<gameId>.level1` のように
+  ゲームIDで名前空間を切ってください（128文字まで、`A-Za-z0-9._:-`）。
+- 定義は **書き込み一回限り** です（最初に登録された名前・説明・アイコンが採用されます）。
+- `icon` は同一オリジンのパスのみ（例: `/icons/badge-96.png`）。省略時は既定アイコンになります。
+- 付与は実行者本人に対してのみ行われ、冪等です（再付与は成功扱い）。
+- 1ゲームあたり最大200件、`name` は64文字、`description` は200文字までです。
+- レート制限: 作成 120回/5分、付与 300回/5分（ユーザー単位）。
+- 付与してもプレイヤーの装備は変わりません。装備はプレイヤー自身が選びます。
+- `AWARD_TITLE` は称号が未登録でも作成してから付与します。実績一覧を先に
+  出したい場合は `CREATE_TITLE` を使ってください。
+
 ---
 
 ## 5. フレーム一覧（一覧表）
@@ -166,6 +218,9 @@ WVFS が `localStorage` / `sessionStorage` の互換シムを注入します。
 ```
 REQUEST_FULLSCREEN
 REQUEST_FRESH
+REQUEST_IDENTITY
+CREATE_TITLE               { titleId, name, nameJa?, description?, descriptionJa?, icon? }
+AWARD_TITLE                { titleId, name, nameJa?, description?, descriptionJa?, icon? }
 POST_SCORE                 { score, label }
 MULTIPLAYER_CONNECT        { gameId, roomId? }
 MULTIPLAYER_DISCONNECT
@@ -186,6 +241,10 @@ CAPTURE_ERROR              { requestId, message }
 ```
 FULLSCREEN_GRANTED / FULLSCREEN_DENIED
 FRESH_GRANTED / FRESH_DENIED
+PLAYER_IDENTITY            { identity }
+TITLE_CREATED              { titleId }
+TITLE_AWARDED              { titleId }
+TITLE_ERROR                { code, message, titleId? }
 SCORE_SUBMITTED            { score, label }
 CAPTURE_INIT
 CAPTURE_FRAME              { requestId }
@@ -230,6 +289,19 @@ MULTIPLAYER_PEER_DATA      { data }
 | `NOT_ENOUGH_PLAYERS` | DO | 2人未満で開始しようとした |
 | `ROOM_FULL` | 旧 | ルーム定員超過（現在の DO は `ROOM_CLOSED` 等） |
 
+`TITLE_ERROR.code` に設定されます。
+
+| コード | 意味 |
+|---|---|
+| `UNAUTHENTICATED` | サインインしていない |
+| `INVALID_TITLE` | `titleId` / 名前 / 説明 / アイコンの形式が不正 |
+| `POST_NOT_FOUND` | 実行中のゲーム投稿が見つからない（非公開・削除済みなど） |
+| `TITLE_CONFLICT` | その `titleId` は他ゲームまたはプラットフォームの称号 |
+| `TITLE_LIMIT` | 1ゲームあたりの称号上限（200件）に達した |
+| `RATE_LIMITED` | レート制限 |
+| `NETWORK` | 親からサーバーへの通信に失敗 |
+| `INTERNAL` | サーバーエラー |
+
 ---
 
 ## 7. ペイロード制限
@@ -240,6 +312,12 @@ MULTIPLAYER_PEER_DATA      { data }
 | `MULTIPLAYER_CHAT.message` | 500文字 |
 | `MULTIPLAYER_INPUT.input` / `MULTIPLAYER_SEND_PEER_DATA.data` | JSON 65,536 bytes |
 | `POST_SCORE.score` | 0 〜 1,000,000,000 |
+| `titleId` | 128文字（`A-Za-z0-9._:-`） |
+| `CREATE_TITLE.name` / `AWARD_TITLE.name` | 64文字（必須） |
+| `nameJa` | 64文字 |
+| `description` / `descriptionJa` | 各 200文字 |
+| `icon` | 512文字（同一オリジンのパス） |
+| 1ゲームあたりの称号数 | 200件 |
 | プレイヤー数 | 2人（最大8人まで仕様上許容） |
 
 ---
@@ -273,6 +351,10 @@ MULTIPLAYER_PEER_DATA      { data }
 - `REQUEST_FRESH` / `POST_SCORE` はレガシー `SandboxBridge` 経由でのみハンドルされます。
   WVFS ゲームでは `sandboxRequestFresh` / `sandboxPostScore` イベントが
   dispatch されますが、現状リスナーは未接続です。
+- `REQUEST_IDENTITY` / `CREATE_TITLE` / `AWARD_TITLE` は WVFS とレガシー
+  `SandboxFrame` の両方で親側に接続済みです（`src/lib/game-badge-bridge.ts`）。
+  ただし SWF（Ruffle）で動くゲームと、オフライン（ダウンロード済み）ゲームでは
+  まだ利用できません。
 - `MULTIPLAYER_CHAT` の親 → ゲームフレームは `userId` / `username` を含みません
   （ゲーム側は `MULTIPLAYER_CHAT` に任意で含められます）。
 
