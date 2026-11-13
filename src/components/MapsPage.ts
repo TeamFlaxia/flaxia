@@ -532,8 +532,7 @@ export class MapsPage {
       const maplibre = await import('maplibre-gl');
       if (this.destroyed) return;
       this.maplibre = maplibre;
-      const workerUrl = (await import('../lib/maps/maplibre-worker.ts?worker&url')).default;
-      maplibre.setWorkerUrl(workerUrl);
+      maplibre.setWorkerUrl('/maplibre-worker.js');
       if (this.destroyed) return;
       const styleUrl: string = this.styleUrl;
       maplibre.addProtocol('flaxia-tiles', async (params, abortController) => {
@@ -571,10 +570,14 @@ export class MapsPage {
         this.zoom = Math.round(this.map.getZoom());
         this.loadWeather();
       });
+      let mapLoaded = false;
+      map.once('load', () => {
+        mapLoaded = true;
+      });
       map.on('error', (e: { error?: unknown }) => {
         const message = String((e.error as { message?: string })?.message ?? '');
-        if (message.includes('WebGL') || message.includes('GPU')) {
-          this.showMapFallback('unsupported', e.error);
+        if (!mapLoaded || message.includes('WebGL') || message.includes('GPU') || message.includes('Worker failed')) {
+          this.showMapFallback(message.includes('WebGL') || message.includes('GPU') ? 'unsupported' : 'error', e.error);
         }
       });
       await this.refreshCacheStatus();
