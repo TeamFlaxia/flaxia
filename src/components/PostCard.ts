@@ -5,6 +5,7 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { stripPostColors } from '../lib/post-colors.js';
+import { stripMediaCues } from '../lib/post-cues.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
@@ -154,6 +155,8 @@ export class PostCard {
       username: this.props.post.username,
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
+      avatar_url: this.props.post.avatar_url,
+      profile_url: this.props.post.actor_id,
       badge_type: this.props.post.badge_type,
       name_color: this.props.post.name_color,
       equipped_title_id: this.props.post.equipped_title_id,
@@ -199,7 +202,7 @@ export class PostCard {
     // raw `{red}` markers. `originalText` stays raw for editing.
     textElement.textContent = canUsePostColors({ badge_type: this.props.post.badge_type })
       ? stripPostColors(displayText)
-      : displayText;
+      : stripMediaCues(displayText);
     this.postTextContainer.appendChild(textElement);
 
     container.appendChild(this.postTextContainer);
@@ -885,6 +888,9 @@ export class PostCard {
       username: p.username,
       display_name: p.display_name,
       avatar_key: p.avatar_key,
+      avatar_url: p.avatar_url,
+      actor_id: p.actor_id,
+      is_remote: p.is_remote,
       badge_type: p.badge_type,
       name_color: p.name_color,
       text: p.text,
@@ -1039,6 +1045,7 @@ export class PostCard {
 
     const dropdown = createPostMenuDropdown({
       isOwnPost,
+      isRemote: Boolean(this.props.post.is_remote),
       showPinOption: this.props.showPinOption,
       pinned: this.props.pinned,
       payloadKey: this.props.post.payload_key,

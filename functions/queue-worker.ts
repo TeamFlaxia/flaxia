@@ -33,12 +33,28 @@ interface Env {
   MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
+  CROWD_ORCHESTRATOR_URL?: string;
+  CROWD_API_KEY?: string;
+  CROWD_WEBHOOK_SECRET?: string;
+  CC_CRAWL?: string;
+  CC_DOMAINS?: string;
+  WEB_EMBEDDINGS_ENABLED?: string;
 }
 
 export default {
   // Triggered by `triggers.crons` in wrangler.toml.worker — exports the
   // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
-  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    if (event.cron === '0 * * * *') {
+      try {
+        const { drainCcIngestion } = await import('./lib/cc-ingest');
+        await drainCcIngestion(env);
+      } catch (error) {
+        console.error('Common Crawl ingestion failed:', (error as Error).message);
+      }
+      return;
+    }
+
     try {
       const { runDatasetExport } = await import('./lib/dataset-export');
       const count = await runDatasetExport(env);

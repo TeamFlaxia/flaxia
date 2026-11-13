@@ -302,14 +302,33 @@ async function handleCreate(
 
   const postId = randomPostId();
 
+  // A remote Note belongs to the instance, not to the local account that
+  // happened to receive it. `user_id = ''` keeps the post out of every local
+  // profile and disables local edit/delete ownership, while the response
+  // decorator presents the remote actor as the author.
+  const actorProfile = await env.DB.prepare(
+    'SELECT preferred_username, domain FROM ap_actors WHERE actor_url = ? LIMIT 1',
+  )
+    .bind(actorId)
+    .first<{ preferred_username: string | null; domain: string | null }>();
+  let actorHost = actorProfile?.domain ?? '';
+  if (!actorHost) {
+    try {
+      actorHost = new URL(actorId).hostname;
+    } catch {
+      actorHost = '';
+    }
+  }
+  const remoteUsername = actorProfile?.preferred_username ? `${actorProfile.preferred_username}@${actorHost}` : actorId;
+
   await env.DB.prepare(`
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, ap_object_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    VALUES (?, '', ?, ?, ?, 'published', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(postId, userId, username, text, JSON.stringify(hashtags), parentId, rootId, depth, actorId, objectId)
+    .bind(postId, remoteUsername, text, JSON.stringify(hashtags), parentId, rootId, depth, actorId, objectId)
     .run();
 
-  await notifyMentions(env, mentionedUsernames, username, postId, actorId);
+  await notifyMentions(env, mentionedUsernames, remoteUsername, postId, actorId);
 
   console.log('Note received and stored:', postId);
 }

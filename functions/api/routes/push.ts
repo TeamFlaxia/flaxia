@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { getVapidPublicKey } from '../../lib/push';
+import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -171,7 +172,11 @@ push.get('/notifications', requireAuth, async (c) => {
         p.text as post_text_preview,
         u.username as actor_username,
         u.display_name as actor_display_name,
-        u.avatar_key as actor_avatar_key, u.badge_type as actor_badge_type
+        u.avatar_key as actor_avatar_key, u.badge_type as actor_badge_type,
+        u.equipped_title_id AS actor_equipped_title_id,
+        t.name AS actor_title_name, t.name_ja AS actor_title_name_ja,
+        t.description AS actor_title_description, t.description_ja AS actor_title_description_ja,
+        t.icon AS actor_title_icon
       FROM (
         SELECT * FROM notifications 
         WHERE user_id = ? 
@@ -180,6 +185,7 @@ push.get('/notifications', requireAuth, async (c) => {
       ) n
       LEFT JOIN posts p ON n.post_id = p.id
       LEFT JOIN users u ON n.actor_id = u.id
+      ${USER_TITLE_JOIN}
     `)
       .bind(userId)
       .all();
@@ -209,7 +215,9 @@ push.get('/notifications', requireAuth, async (c) => {
     const actorUserMap = new Map<string, Record<string, unknown>>();
     if (allActorIds.size > 0) {
       const userRows = await c.env.DB.prepare(`
-        SELECT id, username, display_name, avatar_key, badge_type FROM users WHERE id IN (${Array.from(allActorIds)
+        SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, ${USER_TITLE_COLUMNS} FROM users u
+        ${USER_TITLE_JOIN}
+        WHERE u.id IN (${Array.from(allActorIds)
           .map(() => '?')
           .join(',')})
       `)
@@ -234,6 +242,12 @@ push.get('/notifications', requireAuth, async (c) => {
               display_name: row.actor_display_name,
               avatar_key: row.actor_avatar_key,
               badge_type: (row.actor_badge_type as string | null) ?? null,
+              equipped_title_id: (row.actor_equipped_title_id as string | null) ?? null,
+              title_name: (row.actor_title_name as string | null) ?? null,
+              title_name_ja: (row.actor_title_name_ja as string | null) ?? null,
+              title_description: (row.actor_title_description as string | null) ?? null,
+              title_description_ja: (row.actor_title_description_ja as string | null) ?? null,
+              title_icon: (row.actor_title_icon as string | null) ?? null,
             }
           : undefined,
         actor_id: row.actor_id,
@@ -255,6 +269,12 @@ push.get('/notifications', requireAuth, async (c) => {
                       display_name: u.display_name,
                       avatar_key: u.avatar_key,
                       badge_type: (u.badge_type as string | null) ?? null,
+                      equipped_title_id: (u.equipped_title_id as string | null) ?? null,
+                      title_name: (u.title_name as string | null) ?? null,
+                      title_name_ja: (u.title_name_ja as string | null) ?? null,
+                      title_description: (u.title_description as string | null) ?? null,
+                      title_description_ja: (u.title_description_ja as string | null) ?? null,
+                      title_icon: (u.title_icon as string | null) ?? null,
                     }
                   : null;
               })

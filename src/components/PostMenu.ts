@@ -16,6 +16,8 @@ export interface PostMenuActions {
 
 export interface PostMenuProps {
   isOwnPost: boolean;
+  /** Remote posts have no local versions, blocks or reports target. */
+  isRemote?: boolean;
   showPinOption?: boolean;
   pinned?: boolean;
   payloadKey?: string | null;
@@ -46,7 +48,7 @@ function requireAuth(
 }
 
 export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
-  const { isOwnPost, showPinOption, pinned, payloadKey, currentUser, actions } = props;
+  const { isOwnPost, isRemote, showPinOption, pinned, payloadKey, currentUser, actions } = props;
 
   const dropdown = document.createElement('div');
   dropdown.className = 'post-menu-dropdown';
@@ -55,16 +57,18 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
     dropdown.remove();
   };
 
-  // Version history (always shown)
-  dropdown.appendChild(
-    createMenuItem({
-      label: t('game.version_history'),
-      onClick: () => {
-        closeDropdown();
-        actions.onVersionHistory();
-      },
-    }),
-  );
+  // Version history only exists for local posts.
+  if (!isRemote) {
+    dropdown.appendChild(
+      createMenuItem({
+        label: t('game.version_history'),
+        onClick: () => {
+          closeDropdown();
+          actions.onVersionHistory();
+        },
+      }),
+    );
+  }
 
   if (isOwnPost) {
     // Pin/unpin
@@ -129,18 +133,21 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
       }),
     );
   } else {
-    // Block (danger) - other user's post
-    dropdown.appendChild(
-      createMenuItem({
-        label: t('post.menu_block'),
-        danger: true,
-        onClick: () => {
-          closeDropdown();
-          if (!requireAuth('block', actions.onBlock, currentUser)) return;
-          actions.onBlock();
-        },
-      }),
-    );
+    // Blocking a remote actor is a separate ActivityPub operation; do not
+    // present the local block action for a post of another instance.
+    if (!isRemote) {
+      dropdown.appendChild(
+        createMenuItem({
+          label: t('post.menu_block'),
+          danger: true,
+          onClick: () => {
+            closeDropdown();
+            if (!requireAuth('block', actions.onBlock, currentUser)) return;
+            actions.onBlock();
+          },
+        }),
+      );
+    }
 
     // Report
     dropdown.appendChild(

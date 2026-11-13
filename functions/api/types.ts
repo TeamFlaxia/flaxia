@@ -21,6 +21,7 @@ export type Bindings = {
   CROWD_NODE_ORIGINS: string;
   /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
   CROWD_SCAN_FILE_SOURCES: string;
+  MAPS_STYLE_URL?: string;
   /** HTTPS URL of the ClamAV WASM image used by the browser container. */
   FILE_SCAN_CLAMAV_IMAGE?: string;
   /** Optional HTTPS URL of the video keyframe pHash WASM image. */
@@ -42,6 +43,8 @@ export type Bindings = {
   MATCHMAKER?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   VECTORIZE?: Vectorize;
+  /** Enable the Common Crawl lexical web index in search v2. */
+  WEB_INDEX_ENABLED?: string;
   /** GitHub App credentials used only by the public bug-report endpoint. */
   GITHUB_APP_ID?: string;
   GITHUB_APP_INSTALLATION_ID?: string;

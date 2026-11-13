@@ -1,3 +1,4 @@
+import { registerGameFrame } from './game-badge-bridge.js';
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 import { isNativeApp } from './native-api.ts';
 import { isOffline } from './offline-status.js';
@@ -32,6 +33,8 @@ export async function executeWvfsZip(
     activeHandle.destroy();
     activeHandle = null;
   }
+
+  let unregisterFrame: (() => void) | null = null;
 
   try {
     containerEl.innerHTML = '';
@@ -74,6 +77,9 @@ export async function executeWvfsZip(
       storageSnapshot,
     });
     const disconnectStorage = connectGameStorage(iframe, postId);
+    // Bind the frame to this post so the Game API can answer identity/title
+    // frames for it — the game itself never names a post.
+    unregisterFrame = registerGameFrame(iframe, postId);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
@@ -89,6 +95,8 @@ export async function executeWvfsZip(
       postId,
       destroy: () => {
         clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
+        unregisterFrame?.();
+        unregisterFrame = null;
         disconnectStorage();
         cleanup();
         const fullscreenBtn = containerEl.querySelector(`.${PREFIX}-fullscreen-btn`);
@@ -104,6 +112,7 @@ export async function executeWvfsZip(
     activeHandle = handle;
     return handle;
   } catch (error) {
+    unregisterFrame?.();
     if (activeHandle) {
       activeHandle.destroy();
       activeHandle = null;
