@@ -138,7 +138,6 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
     }, 30_000);
     assert.ok(looked, 'the peer does not know the account of the instance');
 
-    const peerAccount = await peer.account();
     // The peer may still be busy with the follow of the instance, so the
     // request is repeated for a while.
     let lastError = 'unknown';
@@ -219,6 +218,21 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
       assert.equal(delivery.signatureValid, true, 'a delivered activity carried an invalid signature');
       assert.equal(delivery.digestValid, true, 'a delivered activity carried an invalid digest');
     }
+  });
+
+  it('publishes the profile of a remote account', async () => {
+    const peerAccount = await peer.account();
+    const response = await fetch(
+      `${BASE}/api/remote/actors/${encodeURIComponent(new URL(peer.origin).hostname)}/${encodeURIComponent(peerAccount.username)}`,
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as {
+      actor?: { actor_url?: string; preferred_username?: string | null };
+      posts?: Array<{ id: string }>;
+    };
+    assert.equal(body.actor?.preferred_username, peerAccount.username);
+    assert.ok(body.actor?.actor_url?.startsWith(peer.origin), 'the profile names the actor of the peer');
+    assert.ok((body.posts ?? []).length > 0, 'the notes of the peer are listed');
   });
 
   it('publishes a note with the same shape as the note of the peer', async () => {

@@ -439,6 +439,77 @@ users.delete('/remote-follow', requireAuth, async (c) => {
   }
 });
 
+// GET /remote/actors/:domain/:username - the profile of an account of another instance
+users.get('/remote/actors/:domain/:username', async (c) => {
+  const domain = c.req.param('domain');
+  const username = c.req.param('username');
+  if (!domain || !username) {
+    return c.json({ error: 'Missing account' }, 400);
+  }
+
+  const actor = await c.env.DB.prepare(
+    `SELECT actor_url, preferred_username, display_name, icon_url, domain, inbox_url
+     FROM ap_actors WHERE domain = ? AND preferred_username = ? LIMIT 1`,
+  )
+    .bind(domain.toLowerCase(), username)
+    .first<{
+      actor_url: string;
+      preferred_username: string | null;
+      display_name: string | null;
+      icon_url: string | null;
+      domain: string | null;
+      inbox_url: string | null;
+    }>();
+
+  if (!actor) {
+    return c.json({ error: 'Remote account not found' }, 404);
+  }
+
+  // Whether the account that is signed in follows this account.
+  const user = c.get('user');
+  let following = false;
+  let followState: string | null = null;
+  if (user) {
+    const state = await c.env.DB.prepare(
+      'SELECT status FROM ap_following WHERE local_user_id = ? AND target_actor_url = ? LIMIT 1',
+    )
+      .bind(user.id, actor.actor_url)
+      .first<{ status: string }>();
+    followState = state?.status ?? null;
+    following = followState === 'accepted';
+  }
+
+  const posts = await c.env.DB.prepare(
+    `SELECT id, text, created_at, fresh_count, reload_count, reply_count, ap_object_id
+     FROM posts WHERE actor_id = ? AND status = 'published' AND hidden = 0
+     ORDER BY created_at DESC LIMIT 50`,
+  )
+    .bind(actor.actor_url)
+    .all<{
+      id: string;
+      text: string;
+      created_at: string;
+      fresh_count: number;
+      reload_count: number;
+      reply_count: number;
+      ap_object_id: string | null;
+    }>();
+
+  return c.json({
+    actor: {
+      actor_url: actor.actor_url,
+      preferred_username: actor.preferred_username,
+      display_name: actor.display_name,
+      icon_url: actor.icon_url,
+      domain: actor.domain,
+      inbox_url: actor.inbox_url,
+    },
+    following,
+    follow_state: followState,
+    posts: posts.results ?? [],
+  });
+});
+
 // GET /users/suggest?q=prefix - suggest usernames matching prefix
 users.get('/users/suggest', async (c) => {
   try {

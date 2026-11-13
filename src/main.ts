@@ -131,6 +131,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'login'
       | 'register'
       | 'profile'
+      | 'remote-profile'
       | 'explore'
       | 'search'
       | 'notifications'
@@ -1180,6 +1181,51 @@ document.addEventListener('DOMContentLoaded', async () => {
           hidePageLoader();
 
           // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle the profile of a remote account (within 3-column layout)
+        if (view === 'remote-profile' && username) {
+          currentView = 'remote-profile';
+          currentPostId = null;
+          _currentUsername = username;
+          currentTag = null;
+
+          // The instance of the account is part of the address.
+          const remoteMatch = window.location.pathname.match(/^\/@([^/]+)\/([^/]+)$/);
+          const remoteDomain = remoteMatch?.[1] ? decodeURIComponent(remoteMatch[1]) : '';
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'profile',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createRemoteProfilePage } = await import('./components/RemoteProfilePage.js');
+          const remoteProfilePage = createRemoteProfilePage({
+            domain: remoteDomain,
+            username,
+            currentUser,
+          });
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(remoteProfilePage.getElement()));
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
           setupMobileLeftNav(leftNav.getElement());
 
           return;

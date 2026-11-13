@@ -8,6 +8,7 @@ export type RouteView =
   | 'login'
   | 'register'
   | 'profile'
+  | 'remote-profile'
   | 'explore'
   | 'search'
   | 'translate'
@@ -34,6 +35,8 @@ export interface RouteInfo {
   view: RouteView;
   postId: string | null;
   username: string | null;
+  /** The instance of a remote account, for the view `remote-profile`. */
+  remoteDomain?: string | null;
   tag: string | null;
   adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
   searchQuery?: string;
@@ -123,6 +126,18 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   const threadMatch = cleanPath.match(/^\/thread\/([^/]+)$/);
   if (threadMatch) {
     return { view: 'thread', postId: threadMatch[1], username: null, tag: null };
+  }
+
+  // The profile of a remote account: /@:domain/:username
+  const remoteProfileMatch = cleanPath.match(/^\/@([^/]+)\/([^/]+)$/);
+  if (remoteProfileMatch?.[1] && remoteProfileMatch?.[2]) {
+    return {
+      view: 'remote-profile',
+      postId: null,
+      username: decodeURIComponent(remoteProfileMatch[2]),
+      remoteDomain: decodeURIComponent(remoteProfileMatch[1]),
+      tag: null,
+    };
   }
 
   // Profile routes - matches both /users/:username and /profile/:username
