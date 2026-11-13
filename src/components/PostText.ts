@@ -6,6 +6,7 @@ import {
   insertColorPlaceholders,
   restoreColorPlaceholders,
 } from '../lib/post-colors-dom.js';
+import { stripMediaCues } from '../lib/post-cues.js';
 import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
@@ -119,6 +120,27 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   return container;
 }
 
+/**
+ * Render a media cue body as inline-only Markdown + KaTeX (no blocks, links,
+ * colors or mentions). Used by the media cue overlay; the returned HTML is
+ * sanitized and still contains math placeholders — call renderMathElements()
+ * on the host element after inserting it.
+ */
+export async function renderCueInlineHtml(text: string): Promise<string> {
+  // Color markers inside a cue body are dropped, not rendered: cue text is
+  // overlay-only and has no entitlement context.
+  const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(parsePostColors(text).plain);
+  const md = await getMarkdownIt();
+  let html = md.renderInline(textWithPlaceholders);
+  html = restoreMathPlaceholders(html, mathPlaceholders);
+  const DOMPurify = await getDOMPurify();
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['strong', 'em', 'code', 's', 'del', 'span', 'br'],
+    ALLOWED_ATTR: ['class', 'data-math-content', 'data-math-display'],
+    ALLOW_DATA_ATTR: true,
+  });
+}
+
 // Export processing functions for reuse
 export {
   linkifyCustomEmoji,
@@ -132,6 +154,8 @@ export {
 
 /**
  * Unified text processing pipeline:
+ * 0. Remove media cue lines (Niconico-style timed comments) — they are not
+ *    part of the visible body
  * 1. Escape math notation → placeholders
  * 2. Escape color markers → placeholders (Flaxia+ authors only)
  * 3. Escape post references → placeholders
@@ -145,6 +169,9 @@ async function processTextInternal(
   text: string,
   enableColors: boolean,
 ): Promise<{ html: string; colorEntries: ColorPlaceholderEntry[] }> {
+  // Step 0: cue lines are routed to the media overlay, never to the body.
+  text = stripMediaCues(text);
+
   // Step 1: Escape math notation with placeholders
   const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(text);
 

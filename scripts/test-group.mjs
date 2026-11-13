@@ -104,6 +104,7 @@ const groups = {
     'game-versions',
     'image-dimensions',
     'legacy-sandbox-disabled',
+    'media-cues',
     'media-editor-args',
     'media-moderation',
     'mime-guard',

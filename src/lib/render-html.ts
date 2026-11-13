@@ -1,6 +1,7 @@
 import { canUsePostColors } from './entitlements.ts';
 import { resolveNameColor } from './name-color.ts';
 import { parsePostColors, postTextStyleClass, stripPostColors } from './post-colors.ts';
+import { stripMediaCues } from './post-cues.ts';
 import { isTitleIconImage } from './title-icon.ts';
 
 /**
@@ -648,12 +649,14 @@ function renderColorHtml(text: string, spans: ReturnType<typeof parsePostColors>
 }
 
 function renderPostContent(text: string, hashtags: string, badgeType?: string | null): string {
+  // Cue lines are routed to the media overlay; never render them as body text.
+  const stripped = stripMediaCues(text);
   // Parse before unescaping so `\{red}` stays a literal brace. The renderer
   // unescapes per text segment without disturbing span offsets.
-  const parsed = parsePostColors(text);
+  const parsed = parsePostColors(stripped);
   const html = canUsePostColors({ badge_type: badgeType })
     ? renderColorHtml(parsed.plain, parsed.spans)
-    : renderTextWithHashtags(text);
+    : renderTextWithHashtags(stripped);
 
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
 }
