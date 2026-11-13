@@ -19,6 +19,9 @@ export interface QuotedPost {
   username: string;
   display_name?: string | null;
   avatar_key?: string | null;
+  avatar_url?: string | null;
+  actor_id?: string | null;
+  is_remote?: boolean;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;
@@ -63,6 +66,9 @@ export interface Post {
   username: string;
   display_name?: string;
   avatar_key?: string;
+  avatar_url?: string | null;
+  actor_id?: string | null;
+  is_remote?: boolean;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;
@@ -142,6 +148,9 @@ export interface PostHeaderProps {
   username: string;
   display_name?: string;
   avatar_key?: string;
+  avatar_url?: string | null;
+  /** Remote actor URL; when set, the profile link opens it in a new tab. */
+  profile_url?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;

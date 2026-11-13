@@ -123,7 +123,11 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
 
   const avatar = document.createElement('span');
   avatar.className = 'quoted-post-avatar';
-  if (quoted.avatar_key) {
+  if (quoted.avatar_url) {
+    avatar.style.backgroundImage = `url(${quoted.avatar_url})`;
+    avatar.style.backgroundSize = 'cover';
+    avatar.style.backgroundPosition = 'center';
+  } else if (quoted.avatar_key) {
     avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${quoted.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';

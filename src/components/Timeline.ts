@@ -652,7 +652,7 @@ export class Timeline {
       profile: profile.vector,
       getVector: (post) => vectors.get(post.id) ?? null,
       getBaseScore: (post) => data.base_scores?.[post.id] ?? 0,
-      getAuthor: (post) => post.user_id,
+      getAuthor: (post) => post.actor_id ?? post.user_id,
       limit: posts.length,
     });
     return { queue, nextCursor: data.next_cursor || undefined };
