@@ -209,6 +209,15 @@
   margin-top: 4px;
 }
 
+.maps-location-marker {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
 .maps-cache-indicator[data-state="hit"] {
   background: var(--primary);
   color: var(--primary-fg);

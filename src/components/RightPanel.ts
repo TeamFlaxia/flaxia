@@ -119,12 +119,13 @@ export class RightPanel {
     const s = symbol.toLowerCase();
     if (s.startsWith('clearsky')) return '晴れ';
     if (s.startsWith('fair')) return '晴れ時々曇り';
+    if (s.startsWith('partlycloudy')) return '晴れ時々曇り';
     if (s.startsWith('cloudy')) return '曇り';
-    if (s.startsWith('fog')) return '霧';
+    if (s.includes('fog')) return '霧';
     if (s.includes('thunder')) return '雷雨';
-    if (s.startsWith('rain')) return '雨';
-    if (s.startsWith('snow')) return '雪';
-    if (s.startsWith('sleet')) return 'みぞれ';
+    if (s.includes('snow')) return '雪';
+    if (s.includes('sleet')) return 'みぞれ';
+    if (s.includes('rain')) return '雨';
     return symbol;
   }
 
@@ -163,6 +164,19 @@ export class RightPanel {
       const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
       meta.textContent = [hum, wind].filter(Boolean).join(' / ');
       this.weatherBody.appendChild(meta);
+
+      const nextClear = (data.points ?? []).slice(1).find((p: any) => {
+        const s = (p.symbol ?? '').toLowerCase();
+        return s.startsWith('clearsky') || s.startsWith('fair');
+      });
+      if (nextClear) {
+        const fc = document.createElement('div');
+        fc.className = 'maps-note';
+        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
+        this.weatherBody.appendChild(fc);
+      }
+
       const hourly = document.createElement('div');
       hourly.className = 'maps-hourly';
       for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {
@@ -241,6 +255,19 @@ export class RightPanel {
       const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
       meta.textContent = [hum, wind].filter(Boolean).join(' / ');
       this.weatherBody.appendChild(meta);
+
+      const nextClear = (data.points ?? []).slice(1).find((p: any) => {
+        const s = (p.symbol ?? '').toLowerCase();
+        return s.startsWith('clearsky') || s.startsWith('fair');
+      });
+      if (nextClear) {
+        const fc = document.createElement('div');
+        fc.className = 'maps-note';
+        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
+        this.weatherBody.appendChild(fc);
+      }
+
       const hourly = document.createElement('div');
       hourly.className = 'maps-hourly';
       for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {

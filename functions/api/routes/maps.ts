@@ -28,8 +28,9 @@ type MetSeries = {
   time: string;
   data: {
     instant: { details: Record<string, number> };
-    nextOneHours?: { summary: { symbolCode: string }; details?: Record<string, number> };
-    nextSixHours?: { summary: { symbolCode: string }; details?: Record<string, number> };
+    next_1_hours?: { summary: { symbol_code: string }; details?: Record<string, number> };
+    next_6_hours?: { summary: { symbol_code: string }; details?: Record<string, number> };
+    next_12_hours?: { summary: { symbol_code: string }; details?: Record<string, number> };
   };
 };
 
@@ -97,13 +98,18 @@ function toNumber(value: unknown): number | null {
 function toWeatherPoints(data: MetResponse): WeatherPoint[] {
   return (data.properties?.timeseries ?? []).slice(0, 48).map((row) => {
     const details = row.data?.instant?.details ?? {};
-    const nextOne = row.data?.nextOneHours;
-    const nextSix = row.data?.nextSixHours;
+    const nextOne = row.data?.next_1_hours;
+    const nextSix = row.data?.next_6_hours;
+    const nextTwelve = row.data?.next_12_hours;
     const tempKey = Object.keys(details).find((k) => k.includes('temperature'));
     const humKey = Object.keys(details).find((k) => k.includes('humidity'));
     const windKey = Object.keys(details).find((k) => k.includes('wind_speed'));
     const windDirKey = Object.keys(details).find((k) => k.includes('wind_from_direction'));
-    const precip = nextOne?.details?.precipitation_amount ?? nextSix?.details?.precipitation_amount ?? null;
+    const precip =
+      nextOne?.details?.precipitation_amount ??
+      nextSix?.details?.precipitation_amount ??
+      nextTwelve?.details?.precipitation_amount ??
+      null;
     return {
       time: typeof row.time === 'string' ? row.time : '',
       temperature: tempKey ? toNumber(details[tempKey]) : null,
@@ -111,7 +117,8 @@ function toWeatherPoints(data: MetResponse): WeatherPoint[] {
       windSpeed: windKey ? toNumber(details[windKey]) : null,
       windDirection: windDirKey ? toNumber(details[windDirKey]) : null,
       precipitation: toNumber(precip),
-      symbol: nextOne?.summary?.symbolCode ?? nextSix?.summary?.symbolCode ?? null,
+      symbol:
+        nextOne?.summary?.symbol_code ?? nextSix?.summary?.symbol_code ?? nextTwelve?.summary?.symbol_code ?? null,
     };
   });
 }

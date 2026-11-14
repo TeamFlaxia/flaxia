@@ -324,10 +324,22 @@ export class MapsPage {
     }
   }
 
+  private createLocationMarkerElement(): HTMLElement {
+    const el = document.createElement('div');
+    el.className = 'maps-location-marker';
+    el.innerHTML =
+      '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="M12 2 L20 20 L12 15 L4 20 Z" fill="#2563eb" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>' +
+      '</svg>';
+    return el;
+  }
+
   private placeMarker(lat: number, lon: number): void {
     if (!this.map || !this.maplibre) return;
     this.marker?.remove();
-    this.marker = new this.maplibre.Marker({ color: '#e11d48' }).setLngLat([lon, lat]).addTo(this.map);
+    this.marker = new this.maplibre.Marker({ element: this.createLocationMarkerElement(), anchor: 'center' })
+      .setLngLat([lon, lat])
+      .addTo(this.map);
   }
 
   private updateCacheIndicator(kind: 'hit' | 'miss' | 'offline'): void {
@@ -399,12 +411,13 @@ export class MapsPage {
     const s = symbol.toLowerCase();
     if (s.startsWith('clearsky')) return '晴れ';
     if (s.startsWith('fair')) return '晴れ時々曇り';
+    if (s.startsWith('partlycloudy')) return '晴れ時々曇り';
     if (s.startsWith('cloudy')) return '曇り';
-    if (s.startsWith('fog')) return '霧';
+    if (s.includes('fog')) return '霧';
     if (s.includes('thunder')) return '雷雨';
-    if (s.startsWith('rain')) return '雨';
-    if (s.startsWith('snow')) return '雪';
-    if (s.startsWith('sleet')) return 'みぞれ';
+    if (s.includes('snow')) return '雪';
+    if (s.includes('sleet')) return 'みぞれ';
+    if (s.includes('rain')) return '雨';
     return symbol;
   }
 
@@ -474,6 +487,19 @@ export class MapsPage {
       const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
       meta.textContent = [hum, wind].filter(Boolean).join(' / ');
       overlay.appendChild(meta);
+
+      // Next clear/sunny forecast
+      const nextClear = data.points.slice(1).find((p) => {
+        const s = (p.symbol ?? '').toLowerCase();
+        return s.startsWith('clearsky') || s.startsWith('fair');
+      });
+      if (nextClear) {
+        const fc = document.createElement('div');
+        fc.className = 'maps-note';
+        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
+        overlay.appendChild(fc);
+      }
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
       if (overlay) overlay.textContent = '天気を取得できませんでした';
