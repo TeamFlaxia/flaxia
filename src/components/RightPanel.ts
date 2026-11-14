@@ -10,6 +10,7 @@ export interface RightPanelProps {
   onSearch?: (query: string) => void;
   onFollowUser?: (userId: string) => void;
   mapWeather?: boolean;
+  weather?: boolean;
 }
 
 export interface UserSuggestion {
@@ -32,16 +33,21 @@ export class RightPanel {
   private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
   private userSuggestions: UserSuggestion[] = [];
   private mapWeather: boolean;
+  private weather: boolean;
   private weatherBody: HTMLElement | null = null;
 
   constructor(props: RightPanelProps = {}) {
     this.mapWeather = !!props.mapWeather;
+    this.weather = !!props.weather;
     this.element = this.createElement();
     this.setupEventListeners();
     this.loadTrendingTags();
     this.loadUserSuggestions();
     if (this.mapWeather) {
       this.setupMapWeather();
+    }
+    if (this.weather) {
+      this.setupWeather();
     }
   }
 
@@ -51,7 +57,7 @@ export class RightPanel {
     container.setAttribute('aria-label', 'Discover');
 
     container.appendChild(this.createSearchSection());
-    if (this.mapWeather) {
+    if (this.mapWeather || this.weather) {
       container.appendChild(this.createMapWeatherSection());
     }
     container.appendChild(this.createTrendingSection());
@@ -176,6 +182,85 @@ export class RightPanel {
       this.weatherBody.appendChild(hourly);
     };
     window.addEventListener('flaxia:mapweather', handler);
+  }
+
+  private async setupWeather(): Promise<void> {
+    if (!this.weatherBody) return;
+    this.weatherBody.textContent = '…';
+    // Get current location (GPS → IP fallback → Tokyo default).
+    let lat = 35.6762;
+    let lon = 139.6503;
+    if (navigator.geolocation) {
+      const pos = await new Promise<{ lat: number; lon: number } | null>((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+          () => resolve(null),
+          { timeout: 8000, maximumAge: 300000 },
+        );
+      });
+      if (pos) {
+        lat = pos.lat;
+        lon = pos.lon;
+      }
+    }
+    if (lat === 35.6762 && lon === 139.6503) {
+      try {
+        const res = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const data = (await res.json()) as { latitude?: number; longitude?: number };
+          if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+            lat = data.latitude;
+            lon = data.longitude;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      const res = await fetch(`/api/maps/weather?lat=${lat}&lon=${lon}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('weather unavailable');
+      const data = (await res.json()) as { points: any[] };
+      if (!this.weatherBody) return;
+      const current = data.points?.[0];
+      this.weatherBody.innerHTML = '';
+      const cur = document.createElement('div');
+      cur.className = 'maps-weather-current';
+      const temp = document.createElement('span');
+      temp.className = 'maps-weather-temp';
+      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
+      const symbol = document.createElement('span');
+      symbol.className = 'maps-weather-symbol';
+      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
+      cur.appendChild(temp);
+      cur.appendChild(symbol);
+      this.weatherBody.appendChild(cur);
+      const meta = document.createElement('div');
+      meta.className = 'maps-note';
+      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
+      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
+      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
+      this.weatherBody.appendChild(meta);
+      const hourly = document.createElement('div');
+      hourly.className = 'maps-hourly';
+      for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {
+        const h = document.createElement('div');
+        h.className = 'maps-hour';
+        const time = document.createElement('div');
+        time.textContent = new Date(point.time).toLocaleTimeString([], { hour: '2-digit' });
+        const tempEl = document.createElement('div');
+        tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
+        const s = document.createElement('div');
+        s.textContent = this.symbolLabel(point.symbol);
+        h.appendChild(time);
+        h.appendChild(tempEl);
+        h.appendChild(s);
+        hourly.appendChild(h);
+      }
+      this.weatherBody.appendChild(hourly);
+    } catch {
+      if (this.weatherBody) this.weatherBody.textContent = '天気を取得できませんでした';
+    }
   }
 
   private createTrendingSection(): HTMLElement {

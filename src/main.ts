@@ -1555,8 +1555,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Setup mobile left nav functionality
           setupMobileLeftNav(leftNav.getElement());
 
-          // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel();
+          // Create Right Panel (with weather for the current location)
+          const rightPanel = await lazyCreateRightPanel({ weather: true });
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
