@@ -568,18 +568,6 @@ export class MapsPage {
     { temp: number | null; cloud: number | null; precip: number | null; symbol: string | null }
   > = new Map();
 
-  private lastOverlayGrid: {
-    cells: { i: number; j: number; lat: number; lon: number; key: string }[];
-    west: number;
-    east: number;
-    north: number;
-    south: number;
-    lonStep: number;
-    latStep: number;
-    cols: number;
-    rows: number;
-  } | null = null;
-
   private async updateOverlay(): Promise<void> {
     const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
     if (!canvas) return;
@@ -593,8 +581,8 @@ export class MapsPage {
     }
     canvas.hidden = false;
     const bounds = this.map.getBounds();
-    const cols = 5;
-    const rows = 5;
+    const cols = 8;
+    const rows = 8;
     const west = bounds.getWest();
     const east = bounds.getEast();
     const north = bounds.getNorth();
@@ -611,31 +599,36 @@ export class MapsPage {
         cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
       }
     }
-    this.lastOverlayGrid = { cells, west, east, north, south, lonStep, latStep, cols, rows };
-
-    // Fetch weather for cells not cached
-    await Promise.all(
-      cells.map(async (cell) => {
-        if (this.gridWeatherCache.has(cell.key)) return;
-        try {
-          const res = await fetch(`/api/maps/weather?lat=${cell.lat}&lon=${cell.lon}`, { credentials: 'include' });
-          if (res.ok) {
-            const data = (await res.json()) as { points?: any[] };
-            const p = data.points?.[0];
-            if (p) {
-              this.gridWeatherCache.set(cell.key, {
-                temp: p.temperature ?? null,
-                cloud: p.cloudCover ?? null,
-                precip: p.precipitation ?? null,
-                symbol: p.symbol ?? null,
-              });
+    // Fetch weather for cells not cached (batched to respect rate limits)
+    const uncached = cells.filter((cell) => !this.gridWeatherCache.has(cell.key));
+    const batchSize = 50;
+    for (let i = 0; i < uncached.length; i += batchSize) {
+      const batch = uncached.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map(async (cell) => {
+          try {
+            const res = await fetch(`/api/maps/weather?lat=${cell.lat}&lon=${cell.lon}`, { credentials: 'include' });
+            if (res.ok) {
+              const data = (await res.json()) as { points?: any[] };
+              const p = data.points?.[0];
+              if (p) {
+                this.gridWeatherCache.set(cell.key, {
+                  temp: p.temperature ?? null,
+                  cloud: p.cloudCover ?? null,
+                  precip: p.precipitation ?? null,
+                  symbol: p.symbol ?? null,
+                });
+              }
             }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
-      }),
-    );
+        }),
+      );
+      if (i + batchSize < uncached.length) {
+        await new Promise((r) => setTimeout(r, 1100));
+      }
+    }
 
     if (this.destroyed) return;
 
@@ -659,8 +652,7 @@ export class MapsPage {
       if (canvas) canvas.hidden = true;
       return;
     }
-    const grid = this.lastOverlayGrid;
-    if (!grid) return;
+    if (!this.map) return;
     canvas.hidden = false;
     const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -671,7 +663,24 @@ export class MapsPage {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    const { cells, west, north, lonStep, latStep } = grid;
+    // Recompute grid from current bounds so the overlay follows panning.
+    const bounds = this.map.getBounds();
+    const cols = 8;
+    const rows = 8;
+    const west = bounds.getWest();
+    const east = bounds.getEast();
+    const north = bounds.getNorth();
+    const south = bounds.getSouth();
+    const lonStep = (east - west) / cols;
+    const latStep = (north - south) / rows;
+    const cells: { i: number; j: number; lat: number; lon: number; key: string }[] = [];
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const lon = west + lonStep * (i + 0.5);
+        const lat = north - latStep * (j + 0.5);
+        cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
+      }
+    }
     for (const cell of cells) {
       const wdata = this.gridWeatherCache.get(cell.key);
       const nw = this.map.project([west + lonStep * cell.i, north - latStep * cell.j]);
