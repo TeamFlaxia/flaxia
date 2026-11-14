@@ -66,7 +66,7 @@ describe('ActivityPub Note builder', () => {
     );
 
     assert.equal(note.type, 'Note');
-    assert.equal(note.id, `${BASE}/notes/post-1`);
+    assert.equal(note.id, `${BASE}/api/notes/post-1`);
     assert.equal(note.attributedTo, `${BASE}/api/actors/alice`);
     assert.deepEqual(note.to, [PUBLIC_COLLECTION]);
     assert.deepEqual(note.cc, [FOLLOWERS, 'https://remote.example/users/bob']);
@@ -84,7 +84,7 @@ describe('ActivityPub Note builder', () => {
       BASE,
       { followersUrl: FOLLOWERS },
     );
-    assert.equal(note.inReplyTo, `${BASE}/notes/post-1`);
+    assert.equal(note.inReplyTo, `${BASE}/api/notes/post-1`);
     assert.ok(note.replies);
   });
 

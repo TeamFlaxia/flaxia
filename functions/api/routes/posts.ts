@@ -2247,7 +2247,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
 
     // The like of a post of another instance is retracted there as well.
     if (post.actor_id && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
       const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
       const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
       await deliverToActorInbox(c.env, {
@@ -2323,7 +2323,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     // the activity has to reference the object id of that note, not a note
     // URL of this instance.
     if (post.actor_id && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
       const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
       await deliverToActorInbox(c.env, {
         actorUrl: post.actor_id,
@@ -2831,7 +2831,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     const actorUrl = `${c.env.BASE_URL}/api/actors/${currentUser.username}`;
     // A post of another instance is announced with the object id of that
     // note: a note URL of this instance does not exist for it.
-    const noteUrl = post.ap_object_id ?? `${c.env.BASE_URL}/notes/${postId}`;
+    const noteUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
     const publicAudience = 'https://www.w3.org/ns/activitystreams#Public';
 
     if (existing) {
@@ -3997,7 +3997,7 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
       try {
         const user = c.get('user');
         if (user?.username) {
-          const noteId = `${c.env.BASE_URL}/notes/${postId}`;
+          const noteId = `${c.env.BASE_URL}/api/notes/${postId}`;
           const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown');
 
           // Queue one delivery per remote inbox of the followers

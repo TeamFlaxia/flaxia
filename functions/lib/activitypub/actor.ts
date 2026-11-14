@@ -56,7 +56,7 @@ export function actorCollectionUrls(
 
 /** Canonical URL of a post as a federated Note. */
 export function noteUrl(baseUrl: string, postId: string): string {
-  return `${baseUrl}/notes/${encodeURIComponent(postId)}`;
+  return `${baseUrl}/api/notes/${encodeURIComponent(postId)}`;
 }
 
 /** Profile page of a local account. */

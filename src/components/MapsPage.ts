@@ -333,13 +333,17 @@ export class MapsPage {
       }
       map.addControl(new maplibre.NavigationControl({}), 'bottom-right');
       map.addControl(new maplibre.ScaleControl(), 'bottom-left');
+      map.on('move', () => {
+        if (!this.map || this.destroyed) return;
+        this.renderOverlayCanvas();
+      });
       map.on('moveend', () => {
         if (!this.map || this.destroyed) return;
         const center = this.map.getCenter();
         this.lat = center.lat;
         this.lon = center.lng;
         this.zoom = Math.round(this.map.getZoom());
-        this.updateOverlay();
+        void this.updateOverlay();
         this.loadWeather();
       });
       let mapLoaded = false;
@@ -564,6 +568,18 @@ export class MapsPage {
     { temp: number | null; cloud: number | null; precip: number | null; symbol: string | null }
   > = new Map();
 
+  private lastOverlayGrid: {
+    cells: { i: number; j: number; lat: number; lon: number; key: string }[];
+    west: number;
+    east: number;
+    north: number;
+    south: number;
+    lonStep: number;
+    latStep: number;
+    cols: number;
+    rows: number;
+  } | null = null;
+
   private async updateOverlay(): Promise<void> {
     const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
     if (!canvas) return;
@@ -595,6 +611,7 @@ export class MapsPage {
         cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
       }
     }
+    this.lastOverlayGrid = { cells, west, east, north, south, lonStep, latStep, cols, rows };
 
     // Fetch weather for cells not cached
     await Promise.all(
@@ -631,9 +648,32 @@ export class MapsPage {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rect.width, rect.height);
 
-    // Draw cells
+    // Drawing is handled by renderOverlayCanvas (also called on 'move' for smooth panning).
+    this.renderOverlayCanvas();
+    return;
+  }
+
+  private renderOverlayCanvas(): void {
+    const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
+    if (!canvas || !this.map || this.overlayMode === 0 || this.zoom > 10) {
+      if (canvas) canvas.hidden = true;
+      return;
+    }
+    const grid = this.lastOverlayGrid;
+    if (!grid) return;
+    canvas.hidden = false;
+    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    const { cells, west, north, lonStep, latStep } = grid;
     for (const cell of cells) {
-      const w = this.gridWeatherCache.get(cell.key);
+      const wdata = this.gridWeatherCache.get(cell.key);
       const nw = this.map.project([west + lonStep * cell.i, north - latStep * cell.j]);
       const se = this.map.project([west + lonStep * (cell.i + 1), north - latStep * (cell.j + 1)]);
       const x = Math.min(nw.x, se.x);
@@ -643,16 +683,16 @@ export class MapsPage {
       let color = 'rgba(0,0,0,0)';
       let opacity = 0.35;
       if (this.overlayMode === 1 || this.overlayMode === 2) {
-        const t = w?.temp ?? 15;
+        const t = wdata?.temp ?? 15;
         const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
         color = `hsl(${hue}, 75%, 50%)`;
         opacity = 0.35;
       } else if (this.overlayMode === 3) {
-        const c = w?.cloud ?? 0;
+        const c = wdata?.cloud ?? 0;
         opacity = Math.min(0.6, (c / 100) * 0.6);
         color = 'rgba(255, 255, 255, 1)';
       } else if (this.overlayMode === 4) {
-        const p = w?.precip ?? 0;
+        const p = wdata?.precip ?? 0;
         if (p <= 0) {
           color = 'rgba(0,0,0,0)';
           opacity = 0;
