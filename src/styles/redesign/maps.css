@@ -93,7 +93,11 @@
   padding: 0;
 }
 
-.maps-libre-container {
+/* MapLibre's own stylesheet (extracted as MapsPage-*.css and loaded after
+   main-*.css) sets `.maplibregl-map { position: relative; overflow: hidden }`.
+   With equal specificity the later rule wins, collapsing this container to
+   zero height and clipping the canvas. Raise specificity so `inset: 0` holds. */
+.maps-viewport .maps-libre-container {
   position: absolute;
   inset: 0;
 }
@@ -109,6 +113,12 @@
   overflow: hidden;
   color: var(--text-secondary);
   background: var(--bg-secondary);
+}
+
+/* [hidden] must win over the flex display above, otherwise the fallback
+   overlay permanently covers the map (same pattern as .cmd-overlay[hidden]). */
+.maps-libre-fallback[hidden] {
+  display: none;
 }
 
 .maps-static-tiles {
