@@ -93,6 +93,7 @@ export class MapsPage {
   private zoom: number = FALLBACK_CITIES[0].zoom;
   private located = false;
   private currentLocation: { lat: number; lon: number } | null = null;
+  private currentHeading: number | null = null;
   private destroyed = false;
   private weatherAbort: AbortController | null = null;
   private searchAbort: AbortController | null = null;
@@ -331,6 +332,8 @@ export class MapsPage {
       '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
       '<path d="M12 2 L20 20 L12 15 L4 20 Z" fill="#2563eb" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>' +
       '</svg>';
+    const heading = this.currentHeading ?? 0;
+    el.style.transform = `rotate(${heading}deg)`;
     return el;
   }
 
@@ -426,7 +429,11 @@ export class MapsPage {
     if (navigator.geolocation) {
       pos = await new Promise<{ lat: number; lon: number } | null>((resolve) => {
         navigator.geolocation.getCurrentPosition(
-          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+          (p) => {
+            this.currentHeading =
+              typeof p.coords.heading === 'number' && Number.isFinite(p.coords.heading) ? p.coords.heading : null;
+            resolve({ lat: p.coords.latitude, lon: p.coords.longitude });
+          },
           () => resolve(null),
           { timeout: 8000, maximumAge: 300000 },
         );
