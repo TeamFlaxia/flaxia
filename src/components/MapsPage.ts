@@ -39,6 +39,7 @@ interface WeatherPoint {
   windDirection: number | null;
   precipitation: number | null;
   symbol: string | null;
+  cloudCover: number | null;
 }
 
 interface WeatherPayload {
@@ -107,6 +108,10 @@ export class MapsPage {
   private styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
   private packAbort: AbortController | null = null;
   private mapFallbackReason: 'unsupported' | 'error' | null = null;
+  private overlayMode = 0; // 0=off, 1=気温, 2=温度, 3=雲, 4=雨
+  private currentCloudCover: number | null = null;
+  private currentTemp: number | null = null;
+  private currentPrecip: number | null = null;
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -185,6 +190,34 @@ export class MapsPage {
     weatherOverlay.dataset.testid = 'maps-weather-overlay';
     weatherOverlay.textContent = '…';
     viewport.appendChild(weatherOverlay);
+
+    const cloudOverlay = document.createElement('div');
+    cloudOverlay.className = 'maps-cloud-overlay';
+    cloudOverlay.dataset.testid = 'maps-cloud-overlay';
+    cloudOverlay.hidden = true;
+    viewport.appendChild(cloudOverlay);
+
+    const overlaySwitch = document.createElement('div');
+    overlaySwitch.className = 'maps-overlay-switch';
+    overlaySwitch.dataset.testid = 'maps-overlay-switch';
+    const modeIcons = [
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M8 6h8M8 18h8"/><circle cx="12" cy="12" r="3"/></svg>',
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>',
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18c-2 0-4-2-4-4s2-4 4-4c0-3 2-6 6-6s6 3 6 6c2 0 4 2 4 4s-2 4-4 4H6z"/></svg>',
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12a6 6 0 0 1 12 0c0 4-6 10-6 10s-6-6-6-10z"/></svg>',
+    ];
+    const modeLabels = ['オフ', '気温マップ', '温度マップ', '雲マップ', '雨マップ'];
+    for (let i = 0; i < modeIcons.length; i++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `maps-overlay-btn${i === this.overlayMode ? ' maps-overlay-btn--active' : ''}`;
+      btn.dataset.mode = String(i);
+      btn.title = modeLabels[i];
+      btn.innerHTML = modeIcons[i];
+      overlaySwitch.appendChild(btn);
+    }
+    viewport.appendChild(overlaySwitch);
     const attribution = document.createElement('div');
     attribution.className = 'maps-attribution';
     attribution.textContent = '© OpenFreeMap © OpenMapTiles Data from OpenStreetMap / © MET Norway / © GeoNames';
@@ -194,7 +227,20 @@ export class MapsPage {
   }
 
   private attachEvents(): void {
-    // Search UI removed; nothing to bind.
+    const switchEl = this.element.querySelector('[data-testid="maps-overlay-switch"]') as HTMLElement | null;
+    if (switchEl) {
+      switchEl.addEventListener('click', (e) => {
+        const target = (e.target as HTMLElement).closest('button');
+        if (!target) return;
+        const mode = Number(target.dataset.mode);
+        if (Number.isNaN(mode)) return;
+        this.overlayMode = mode;
+        switchEl.querySelectorAll('button').forEach((b) => {
+          b.classList.toggle('maps-overlay-btn--active', Number(b.dataset.mode) === mode);
+        });
+        this.updateOverlay();
+      });
+    }
   }
 
   /**
@@ -296,6 +342,7 @@ export class MapsPage {
         this.lat = center.lat;
         this.lon = center.lng;
         this.zoom = Math.round(this.map.getZoom());
+        this.updateOverlay();
         this.loadWeather();
       });
       let mapLoaded = false;
@@ -479,6 +526,10 @@ export class MapsPage {
       if (this.destroyed) return;
       if (!overlay) return;
       const current = data.points[0];
+      this.currentCloudCover = current?.cloudCover ?? null;
+      this.currentTemp = current?.temperature ?? null;
+      this.currentPrecip = current?.precipitation ?? null;
+      this.updateOverlay();
       overlay.innerHTML = '';
       const temp = document.createElement('span');
       temp.className = 'maps-weather-temp';
@@ -492,7 +543,8 @@ export class MapsPage {
       meta.className = 'maps-note';
       const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
       const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
-      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
+      const cloud = current?.cloudCover != null ? `雲量 ${Math.round(current.cloudCover)}%` : '';
+      meta.textContent = [hum, wind, cloud].filter(Boolean).join(' / ');
       overlay.appendChild(meta);
 
       // Next clear/sunny forecast
@@ -510,6 +562,46 @@ export class MapsPage {
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
       if (overlay) overlay.textContent = '天気を取得できませんでした';
+    }
+  }
+
+  private updateOverlay(): void {
+    const cloudOverlay = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLElement | null;
+    if (!cloudOverlay) return;
+    // mode: 0=off, 1=気温, 2=温度, 3=雲, 4=雨
+    if (this.overlayMode === 0) {
+      cloudOverlay.hidden = true;
+      cloudOverlay.style.background = '';
+      cloudOverlay.style.opacity = '0';
+      return;
+    }
+    // Only show cloud overlay when zoomed out (zoom <= 10, ~1km scale)
+    const showCloud = this.overlayMode === 3 && this.zoom <= 10;
+    if (this.overlayMode === 3) {
+      cloudOverlay.hidden = !showCloud;
+      if (showCloud && this.currentCloudCover != null) {
+        const opacity = Math.min(0.6, (this.currentCloudCover / 100) * 0.6);
+        cloudOverlay.style.background = 'rgba(255, 255, 255, 0.5)';
+        cloudOverlay.style.opacity = String(opacity);
+      }
+      return;
+    }
+    // Temperature / rain overlays: show when zoomed out
+    const show = this.zoom <= 10;
+    cloudOverlay.hidden = !show;
+    if (!show) return;
+    if (this.overlayMode === 1 || this.overlayMode === 2) {
+      // temperature: blue (cold) -> red (hot)
+      const t = this.currentTemp ?? 15;
+      const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
+      cloudOverlay.style.background = `hsla(${hue}, 70%, 50%, 0.25)`;
+      cloudOverlay.style.opacity = '0.4';
+    } else if (this.overlayMode === 4) {
+      // rain: blue overlay, opacity based on precipitation
+      const p = this.currentPrecip ?? 0;
+      const opacity = Math.min(0.5, (p / 5) * 0.5 + 0.1);
+      cloudOverlay.style.background = 'rgba(30, 64, 175, 0.4)';
+      cloudOverlay.style.opacity = String(opacity);
     }
   }
 }

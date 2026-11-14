@@ -46,6 +46,7 @@ type WeatherPoint = {
   windDirection: number | null;
   precipitation: number | null;
   symbol: string | null;
+  cloudCover: number | null;
 };
 
 type WeatherCache = {
@@ -105,6 +106,7 @@ function toWeatherPoints(data: MetResponse): WeatherPoint[] {
     const humKey = Object.keys(details).find((k) => k.includes('humidity'));
     const windKey = Object.keys(details).find((k) => k.includes('wind_speed'));
     const windDirKey = Object.keys(details).find((k) => k.includes('wind_from_direction'));
+    const cloudKey = Object.keys(details).find((k) => k.includes('cloud_area_fraction'));
     const precip =
       nextOne?.details?.precipitation_amount ??
       nextSix?.details?.precipitation_amount ??
@@ -119,6 +121,7 @@ function toWeatherPoints(data: MetResponse): WeatherPoint[] {
       precipitation: toNumber(precip),
       symbol:
         nextOne?.summary?.symbol_code ?? nextSix?.summary?.symbol_code ?? nextTwelve?.summary?.symbol_code ?? null,
+      cloudCover: cloudKey ? toNumber(details[cloudKey]) : null,
     };
   });
 }
