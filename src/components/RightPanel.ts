@@ -57,10 +57,10 @@ export class RightPanel {
     container.setAttribute('aria-label', 'Discover');
 
     container.appendChild(this.createSearchSection());
+    container.appendChild(this.createTrendingSection());
     if (this.mapWeather || this.weather) {
       container.appendChild(this.createMapWeatherSection());
     }
-    container.appendChild(this.createTrendingSection());
     container.appendChild(this.createFollowSection());
     container.appendChild(this.createShortcutsSection());
 
