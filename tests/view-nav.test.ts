@@ -25,6 +25,11 @@ describe('viewToBottomNavId', () => {
     assert.equal(viewToBottomNavId('bookmarks'), 'account');
   });
 
+  it('does not map retired bottom-bar views', () => {
+    assert.equal(viewToBottomNavId('maps'), '');
+    assert.equal(viewToBottomNavId('translate'), '');
+  });
+
   it('returns empty for unknown views', () => {
     assert.equal(viewToBottomNavId('nope'), '');
   });
