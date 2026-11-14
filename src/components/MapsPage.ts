@@ -109,9 +109,6 @@ export class MapsPage {
   private packAbort: AbortController | null = null;
   private mapFallbackReason: 'unsupported' | 'error' | null = null;
   private overlayMode = 0; // 0=off, 1=気温, 2=温度, 3=雲, 4=雨
-  private currentCloudCover: number | null = null;
-  private currentTemp: number | null = null;
-  private currentPrecip: number | null = null;
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -191,7 +188,7 @@ export class MapsPage {
     weatherOverlay.textContent = '…';
     viewport.appendChild(weatherOverlay);
 
-    const cloudOverlay = document.createElement('div');
+    const cloudOverlay = document.createElement('canvas');
     cloudOverlay.className = 'maps-cloud-overlay';
     cloudOverlay.dataset.testid = 'maps-cloud-overlay';
     cloudOverlay.hidden = true;
@@ -526,9 +523,6 @@ export class MapsPage {
       if (this.destroyed) return;
       if (!overlay) return;
       const current = data.points[0];
-      this.currentCloudCover = current?.cloudCover ?? null;
-      this.currentTemp = current?.temperature ?? null;
-      this.currentPrecip = current?.precipitation ?? null;
       this.updateOverlay();
       overlay.innerHTML = '';
       const temp = document.createElement('span');
@@ -565,49 +559,114 @@ export class MapsPage {
     }
   }
 
-  private updateOverlay(): void {
-    const cloudOverlay = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLElement | null;
-    if (!cloudOverlay) return;
-    // mode: 0=off, 1=気温, 2=温度, 3=雲, 4=雨
+  private gridWeatherCache: Map<
+    string,
+    { temp: number | null; cloud: number | null; precip: number | null; symbol: string | null }
+  > = new Map();
+
+  private async updateOverlay(): Promise<void> {
+    const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
+    if (!canvas) return;
     if (this.overlayMode === 0) {
-      cloudOverlay.hidden = true;
-      cloudOverlay.style.background = '';
-      cloudOverlay.style.opacity = '0';
+      canvas.hidden = true;
       return;
     }
-    // Only show cloud overlay when zoomed out (zoom <= 10, ~1km scale)
-    const showCloud = this.overlayMode === 3 && this.zoom <= 10;
-    if (this.overlayMode === 3) {
-      cloudOverlay.hidden = !showCloud;
-      if (showCloud && this.currentCloudCover != null) {
-        const opacity = Math.min(0.6, (this.currentCloudCover / 100) * 0.6);
-        cloudOverlay.style.background = 'rgba(255, 255, 255, 0.5)';
-        cloudOverlay.style.opacity = String(opacity);
-      }
+    if (!this.map || this.zoom > 10) {
+      canvas.hidden = true;
       return;
     }
-    // Temperature / rain overlays: show when zoomed out
-    const show = this.zoom <= 10;
-    cloudOverlay.hidden = !show;
-    if (!show) return;
-    if (this.overlayMode === 1 || this.overlayMode === 2) {
-      // temperature: blue (cold) -> red (hot)
-      const t = this.currentTemp ?? 15;
-      const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
-      cloudOverlay.style.background = `hsl(${hue}, 75%, 50%)`;
-      cloudOverlay.style.opacity = '0.35';
-    } else if (this.overlayMode === 4) {
-      // rain: transparent -> blue -> purple (thermal by amount)
-      const p = this.currentPrecip ?? 0;
-      if (p <= 0) {
-        cloudOverlay.hidden = true;
-        return;
+    canvas.hidden = false;
+    const bounds = this.map.getBounds();
+    const cols = 5;
+    const rows = 5;
+    const west = bounds.getWest();
+    const east = bounds.getEast();
+    const north = bounds.getNorth();
+    const south = bounds.getSouth();
+    const lonStep = (east - west) / cols;
+    const latStep = (north - south) / rows;
+
+    // Collect cell centers
+    const cells: { i: number; j: number; lat: number; lon: number; key: string }[] = [];
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const lon = west + lonStep * (i + 0.5);
+        const lat = north - latStep * (j + 0.5);
+        cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
       }
-      const hue = 240 - Math.min(40, p * 4); // blue(240) -> purple(200)
-      const opacity = Math.min(0.6, 0.2 + (p / 10) * 0.4);
-      cloudOverlay.style.background = `hsl(${hue}, 70%, 50%)`;
-      cloudOverlay.style.opacity = String(opacity);
     }
+
+    // Fetch weather for cells not cached
+    await Promise.all(
+      cells.map(async (cell) => {
+        if (this.gridWeatherCache.has(cell.key)) return;
+        try {
+          const res = await fetch(`/api/maps/weather?lat=${cell.lat}&lon=${cell.lon}`, { credentials: 'include' });
+          if (res.ok) {
+            const data = (await res.json()) as { points?: any[] };
+            const p = data.points?.[0];
+            if (p) {
+              this.gridWeatherCache.set(cell.key, {
+                temp: p.temperature ?? null,
+                cloud: p.cloudCover ?? null,
+                precip: p.precipitation ?? null,
+                symbol: p.symbol ?? null,
+              });
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }),
+    );
+
+    if (this.destroyed) return;
+
+    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width * dpr));
+    canvas.height = Math.max(1, Math.round(rect.height * dpr));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    // Draw cells
+    for (const cell of cells) {
+      const w = this.gridWeatherCache.get(cell.key);
+      const nw = this.map.project([west + lonStep * cell.i, north - latStep * cell.j]);
+      const se = this.map.project([west + lonStep * (cell.i + 1), north - latStep * (cell.j + 1)]);
+      const x = Math.min(nw.x, se.x);
+      const y = Math.min(nw.y, se.y);
+      const cw = Math.abs(se.x - nw.x);
+      const ch = Math.abs(se.y - nw.y);
+      let color = 'rgba(0,0,0,0)';
+      let opacity = 0.35;
+      if (this.overlayMode === 1 || this.overlayMode === 2) {
+        const t = w?.temp ?? 15;
+        const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
+        color = `hsl(${hue}, 75%, 50%)`;
+        opacity = 0.35;
+      } else if (this.overlayMode === 3) {
+        const c = w?.cloud ?? 0;
+        opacity = Math.min(0.6, (c / 100) * 0.6);
+        color = 'rgba(255, 255, 255, 1)';
+      } else if (this.overlayMode === 4) {
+        const p = w?.precip ?? 0;
+        if (p <= 0) {
+          color = 'rgba(0,0,0,0)';
+          opacity = 0;
+        } else {
+          const hue = 240 - Math.min(40, p * 4);
+          color = `hsl(${hue}, 70%, 50%)`;
+          opacity = Math.min(0.6, 0.2 + (p / 10) * 0.4);
+        }
+      }
+      ctx.globalAlpha = opacity;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, cw, ch);
+    }
+    ctx.globalAlpha = 1;
   }
 }
 
