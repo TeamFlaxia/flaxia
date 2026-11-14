@@ -594,13 +594,18 @@ export class MapsPage {
       // temperature: blue (cold) -> red (hot)
       const t = this.currentTemp ?? 15;
       const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
-      cloudOverlay.style.background = `hsla(${hue}, 70%, 50%, 0.25)`;
-      cloudOverlay.style.opacity = '0.4';
+      cloudOverlay.style.background = `hsl(${hue}, 75%, 50%)`;
+      cloudOverlay.style.opacity = '0.35';
     } else if (this.overlayMode === 4) {
-      // rain: blue overlay, opacity based on precipitation
+      // rain: transparent -> blue -> purple (thermal by amount)
       const p = this.currentPrecip ?? 0;
-      const opacity = Math.min(0.5, (p / 5) * 0.5 + 0.1);
-      cloudOverlay.style.background = 'rgba(30, 64, 175, 0.4)';
+      if (p <= 0) {
+        cloudOverlay.hidden = true;
+        return;
+      }
+      const hue = 240 - Math.min(40, p * 4); // blue(240) -> purple(200)
+      const opacity = Math.min(0.6, 0.2 + (p / 10) * 0.4);
+      cloudOverlay.style.background = `hsl(${hue}, 70%, 50%)`;
       cloudOverlay.style.opacity = String(opacity);
     }
   }
