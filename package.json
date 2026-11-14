@@ -87,7 +87,7 @@
     "@cloudflare/kv-asset-handler": "^0.5.0",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
-    "@flaxia/node": "0.7.2",
+    "@flaxia/node": "0.7.3",
     "@flaxia/sdk": "^0.7.1",
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.4.0",
