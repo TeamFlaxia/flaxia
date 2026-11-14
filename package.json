@@ -112,7 +112,7 @@
     "pdfjs-dist": "^6.3.289",
     "postal-mime": "^2.7.6",
     "qrcode": "^1.5.4",
-    "stripe": "^22.6.0",
+    "stripe": "^23.1.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
