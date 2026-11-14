@@ -1112,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const { createMapsPage } = await import('./components/MapsPage.js');
           mapsPage = createMapsPage();
 
-          const rightPanel = await lazyCreateRightPanel();
+          const rightPanel = await lazyCreateRightPanel({ mapWeather: true });
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(mapsPage.getElement()));

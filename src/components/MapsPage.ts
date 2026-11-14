@@ -1,13 +1,6 @@
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
 import { t } from '../lib/i18n.js';
-import {
-  clearTileCache,
-  getTileCacheStats,
-  handleTileFetch,
-  requestStoragePersistence,
-  rewriteTileUrl,
-  unwrapTileUrl,
-} from '../lib/maps/cache.js';
+import { getTileCacheStats, handleTileFetch, rewriteTileUrl, unwrapTileUrl } from '../lib/maps/cache.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -101,22 +94,6 @@ const FALLBACK_CITIES: City[] = [
     valhallaPublished: false,
   },
 ];
-
-const MAX_PACK_BYTES = 100 * 1024 * 1024;
-
-function symbolLabel(symbol: string | null): string {
-  if (!symbol) return '';
-  const s = symbol.toLowerCase();
-  if (s.startsWith('clearsky')) return '晴れ';
-  if (s.startsWith('fair')) return '晴れ時々曇り';
-  if (s.startsWith('cloudy')) return '曇り';
-  if (s.startsWith('fog')) return '霧';
-  if (s.includes('thunder')) return '雷雨';
-  if (s.startsWith('rain')) return '雨';
-  if (s.startsWith('snow')) return '雪';
-  if (s.startsWith('sleet')) return 'みぞれ';
-  return symbol;
-}
 
 function areaSlug(lat: number, lon: number): string {
   const la = Math.round(lat * 100);
@@ -214,51 +191,6 @@ export class MapsPage {
     searchWrap.appendChild(searchInput);
     searchWrap.appendChild(suggestions);
     controls.appendChild(searchWrap);
-
-    const cityBar = document.createElement('div');
-    cityBar.className = 'maps-city-bar';
-    cityBar.dataset.testid = 'maps-city-bar';
-    for (const city of FALLBACK_CITIES) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `maps-city-btn${city.id === this.activeCity.id ? ' maps-city-btn--active' : ''}`;
-      btn.textContent = city.name;
-      btn.dataset.city = city.id;
-      btn.addEventListener('click', () => {
-        this.setCity(city.id);
-      });
-      cityBar.appendChild(btn);
-    }
-    const worldBtn = document.createElement('button');
-    worldBtn.type = 'button';
-    worldBtn.className = 'maps-city-btn';
-    worldBtn.textContent = '世界';
-    worldBtn.addEventListener('click', () => {
-      this.activeCity = {
-        id: 'world',
-        name: '世界',
-        nameEn: 'World',
-        centerLat: 35,
-        centerLon: 139,
-        bbox: [-180, -90, 180, 90],
-        zoom: 3,
-        pmtilesPublished: false,
-        valhallaPublished: false,
-      };
-      this.lat = 35;
-      this.lon = 139;
-      this.zoom = 3;
-      this.removeMarker();
-      this.centerOnMap(35, 139, 3);
-      this.element.querySelectorAll('.maps-city-btn').forEach((el) => {
-        el.classList.remove('maps-city-btn--active');
-      });
-      const status = this.element.querySelector('[data-testid="maps-pack-status"]');
-      if (status) status.textContent = '世界: ライブ表示';
-      this.loadWeather();
-    });
-    cityBar.appendChild(worldBtn);
-    controls.appendChild(cityBar);
     root.appendChild(controls);
 
     const viewport = document.createElement('div');
@@ -295,167 +227,7 @@ export class MapsPage {
     attribution.textContent = '© OpenFreeMap © OpenMapTiles Data from OpenStreetMap / © MET Norway / © GeoNames';
     viewport.appendChild(attribution);
     root.appendChild(viewport);
-
-    const cachePanel = document.createElement('section');
-    cachePanel.className = 'maps-panel maps-panel--cache';
-    cachePanel.dataset.testid = 'maps-cache';
-    cachePanel.appendChild(this.panelTitle('端末キャッシュ / On-device cache'));
-    const cacheBody = document.createElement('div');
-    const cacheStatus = document.createElement('p');
-    cacheStatus.className = 'maps-pack-status';
-    cacheStatus.dataset.testid = 'maps-cache-status';
-    cacheStatus.textContent = '確認中…';
-    cacheBody.appendChild(cacheStatus);
-    const cacheDetail = document.createElement('p');
-    cacheDetail.className = 'maps-note';
-    cacheDetail.dataset.testid = 'maps-cache-detail';
-    cacheDetail.textContent = '表示したタイルは端末に保存され、再表示やオフライン時に使われます。';
-    cacheBody.appendChild(cacheDetail);
-    const cacheActions = document.createElement('div');
-    cacheActions.className = 'maps-cache-actions';
-    const persistBtn = document.createElement('button');
-    persistBtn.type = 'button';
-    persistBtn.className = 'maps-btn maps-btn--ghost';
-    persistBtn.textContent = 'オフライン保存を許可';
-    persistBtn.addEventListener('click', () => {
-      void (async () => {
-        const ok = await requestStoragePersistence();
-        cacheStatus.textContent = ok ? '保存が許可されました' : 'このブラウザでは許可できませんでした';
-      })();
-    });
-    const clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'maps-btn maps-btn--ghost';
-    clearBtn.textContent = 'キャッシュ削除';
-    clearBtn.addEventListener('click', () => {
-      void (async () => {
-        await clearTileCache();
-        this.tileHits = 0;
-        this.tileMisses = 0;
-        await this.refreshCacheStatus();
-      })();
-    });
-    cacheActions.appendChild(persistBtn);
-    cacheActions.appendChild(clearBtn);
-    cacheBody.appendChild(cacheActions);
-    cachePanel.appendChild(cacheBody);
-    root.appendChild(cachePanel);
-
-    const panels = document.createElement('div');
-    panels.className = 'maps-panels';
-
-    const weatherPanel = document.createElement('section');
-    weatherPanel.className = 'maps-panel';
-    weatherPanel.dataset.testid = 'maps-weather';
-    weatherPanel.appendChild(this.panelTitle('天気 / Weather'));
-    const weatherBody = document.createElement('div');
-    weatherBody.dataset.testid = 'maps-weather-body';
-    weatherBody.textContent = '…';
-    weatherPanel.appendChild(weatherBody);
-    panels.appendChild(weatherPanel);
-
-    const packPanel = document.createElement('section');
-    packPanel.className = 'maps-panel';
-    packPanel.dataset.testid = 'maps-pack';
-    packPanel.appendChild(this.panelTitle('都市タイル / City pack'));
-    const packBody = document.createElement('div');
-    packBody.dataset.testid = 'maps-pack-body';
-    const packStatus = document.createElement('p');
-    packStatus.className = 'maps-pack-status';
-    packStatus.dataset.testid = 'maps-pack-status';
-    packStatus.textContent = '東京: ライブ表示中';
-    packBody.appendChild(packStatus);
-    const packBtn = document.createElement('button');
-    packBtn.type = 'button';
-    packBtn.className = 'maps-btn maps-btn--ghost';
-    packBtn.textContent = '地図タイル取得 / Fetch';
-    packBtn.addEventListener('click', () => {
-      void this.downloadPack();
-    });
-    packBody.appendChild(packBtn);
-    const progress = document.createElement('div');
-    progress.className = 'maps-progress';
-    progress.hidden = true;
-    const progressBar = document.createElement('div');
-    progressBar.className = 'maps-progress-bar';
-    progress.appendChild(progressBar);
-    packBody.appendChild(progress);
-    packPanel.appendChild(packBody);
-    panels.appendChild(packPanel);
-
-    const routePanel = document.createElement('section');
-    routePanel.className = 'maps-panel';
-    routePanel.dataset.testid = 'maps-route';
-    routePanel.appendChild(this.panelTitle('経路 / Route'));
-    const routeForm = document.createElement('div');
-    const fromRow = document.createElement('div');
-    fromRow.className = 'maps-route-row';
-    const fromLabel = document.createElement('label');
-    fromLabel.textContent = '出発地';
-    const fromInput = document.createElement('input');
-    fromInput.className = 'maps-route-input';
-    fromInput.dataset.testid = 'maps-route-from';
-    fromInput.placeholder = '新宿';
-    fromRow.appendChild(fromLabel);
-    fromRow.appendChild(fromInput);
-    const toRow = document.createElement('div');
-    toRow.className = 'maps-route-row';
-    const toLabel = document.createElement('label');
-    toLabel.textContent = '目的地';
-    const toInput = document.createElement('input');
-    toInput.className = 'maps-route-input';
-    toInput.dataset.testid = 'maps-route-to';
-    toInput.placeholder = '渋谷';
-    toRow.appendChild(toLabel);
-    toRow.appendChild(toInput);
-    const modeRow = document.createElement('div');
-    modeRow.className = 'maps-route-row';
-    const modeLabel = document.createElement('label');
-    modeLabel.textContent = '移動手段';
-    const modeSelect = document.createElement('select');
-    modeSelect.className = 'maps-route-mode';
-    modeSelect.dataset.testid = 'maps-route-mode';
-    for (const [value, label] of [
-      ['auto', '車'],
-      ['pedestrian', '徒歩'],
-      ['bicycle', '自転車'],
-    ] as const) {
-      const opt = document.createElement('option');
-      opt.value = value;
-      opt.textContent = label;
-      modeSelect.appendChild(opt);
-    }
-    modeRow.appendChild(modeLabel);
-    modeRow.appendChild(modeSelect);
-    const routeBtn = document.createElement('button');
-    routeBtn.type = 'button';
-    routeBtn.className = 'maps-btn';
-    routeBtn.dataset.testid = 'maps-route-btn';
-    routeBtn.textContent = '経路案内';
-    routeBtn.addEventListener('click', () => {
-      void this.searchRoute(fromInput.value, toInput.value, modeSelect.value);
-    });
-    const routeNote = document.createElement('p');
-    routeNote.className = 'maps-note';
-    routeNote.dataset.testid = 'maps-route-note';
-    routeNote.textContent = '都市タイルが配信後に経路計算します。';
-    routeForm.appendChild(fromRow);
-    routeForm.appendChild(toRow);
-    routeForm.appendChild(modeRow);
-    routeForm.appendChild(routeBtn);
-    routeForm.appendChild(routeNote);
-    routePanel.appendChild(routeForm);
-    panels.appendChild(routePanel);
-
-    root.appendChild(panels);
     return root;
-  }
-
-  private panelTitle(text: string): HTMLHeadingElement {
-    const h = document.createElement('h2');
-    h.className = 'maps-panel-title';
-    h.textContent = text;
-    return h;
   }
 
   private attachEvents(): void {
@@ -597,11 +369,6 @@ export class MapsPage {
     }
   }
 
-  private removeMarker(): void {
-    this.marker?.remove();
-    this.marker = null;
-  }
-
   private placeMarker(lat: number, lon: number): void {
     if (!this.map || !this.maplibre) return;
     this.marker?.remove();
@@ -717,22 +484,6 @@ export class MapsPage {
     this.loadWeather();
   }
 
-  private setCity(cityId: string): void {
-    const city = this.cities.find((c) => c.id === cityId) ?? FALLBACK_CITIES.find((c) => c.id === cityId);
-    if (!city) return;
-    this.activeCity = city;
-    this.removeMarker();
-    this.centerOnMap(city.centerLat, city.centerLon, city.zoom);
-    this.element.querySelectorAll('.maps-city-btn').forEach((el) => {
-      el.classList.toggle('maps-city-btn--active', el.getAttribute('data-city') === cityId);
-    });
-    const status = this.element.querySelector('[data-testid="maps-pack-status"]');
-    if (status) {
-      status.textContent = `${city.name}: ${city.pmtilesPublished || city.valhallaPublished ? '配信済み' : 'ライブ表示中'}`;
-    }
-    this.loadWeather();
-  }
-
   private async loadCities(): Promise<void> {
     try {
       const res = await fetch('/api/maps/cities', { credentials: 'include' });
@@ -767,9 +518,6 @@ export class MapsPage {
     this.weatherAbort?.abort();
     const controller = new AbortController();
     this.weatherAbort = controller;
-    const body = this.element.querySelector('[data-testid="maps-weather-body"]');
-    if (!body) return;
-    body.textContent = '…';
     try {
       const res = await fetch(`/api/maps/weather?lat=${this.lat}&lon=${this.lon}`, {
         credentials: 'include',
@@ -778,154 +526,13 @@ export class MapsPage {
       if (!res.ok) throw new Error('weather unavailable');
       const data = (await res.json()) as WeatherPayload;
       if (this.destroyed) return;
-      const current = data.points[0];
-      body.innerHTML = '';
-      const cur = document.createElement('div');
-      cur.className = 'maps-weather-current';
-      const temp = document.createElement('span');
-      temp.className = 'maps-weather-temp';
-      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
-      const symbol = document.createElement('span');
-      symbol.className = 'maps-weather-symbol';
-      symbol.textContent = symbolLabel(current?.symbol ?? null);
-      cur.appendChild(temp);
-      cur.appendChild(symbol);
-      body.appendChild(cur);
-      const meta = document.createElement('div');
-      meta.className = 'maps-note';
-      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
-      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
-      meta.textContent = [hum, wind, new Date(data.updatedAt).toLocaleTimeString()].filter(Boolean).join(' / ');
-      body.appendChild(meta);
-      const hourly = document.createElement('div');
-      hourly.className = 'maps-hourly';
-      for (const point of data.points.filter((_, i) => i % 6 === 0).slice(0, 8)) {
-        const h = document.createElement('div');
-        h.className = 'maps-hour';
-        const time = document.createElement('div');
-        time.textContent = new Date(point.time).toLocaleTimeString([], { hour: '2-digit' });
-        const tempEl = document.createElement('div');
-        tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
-        const s = document.createElement('div');
-        s.textContent = symbolLabel(point.symbol);
-        h.appendChild(time);
-        h.appendChild(tempEl);
-        h.appendChild(s);
-        hourly.appendChild(h);
-      }
-      body.appendChild(hourly);
+      // Weather is rendered in the Right Panel; broadcast the payload.
+      window.dispatchEvent(new CustomEvent('flaxia:mapweather', { detail: { lat: this.lat, lon: this.lon, data } }));
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
-      body.textContent = '天気を取得できませんでした';
-    }
-  }
-
-  private async downloadPack(): Promise<void> {
-    const status = this.element.querySelector('[data-testid="maps-pack-status"]');
-    const progress = this.element.querySelector('.maps-progress') as HTMLElement | null;
-    const bar = this.element.querySelector('.maps-progress-bar') as HTMLElement | null;
-    if (progress) {
-      progress.hidden = false;
-    }
-    const controller = new AbortController();
-    this.packAbort?.abort();
-    this.packAbort = controller;
-    try {
-      const packPath = `/api/maps/packs/${encodeURIComponent(this.activeCity.id)}/pmtiles`;
-      const res = await fetch(packPath, {
-        signal: controller.signal,
-      });
-      if (!res.ok || !res.body) {
-        if (status) status.textContent = `${this.activeCity.name}: 未配信（ライブ表示中）`;
-        return;
-      }
-      const total = Number(res.headers.get('Content-Length') || 0);
-      if (total > MAX_PACK_BYTES) {
-        await res.body.cancel().catch(() => undefined);
-        if (status) status.textContent = `${this.activeCity.name}: パックが上限（100MB）を超えています`;
-        return;
-      }
-      let received = 0;
-      const counting = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, encoder) {
-          received += chunk.byteLength;
-          if (received > MAX_PACK_BYTES) {
-            encoder.error(new Error('pack too large'));
-            return;
-          }
-          if (bar && total > 0) {
-            bar.style.width = `${Math.round((received / total) * 100)}%`;
-          }
-          encoder.enqueue(chunk);
-        },
-      });
-      const streamed = res.body.pipeThrough(counting);
-      const cache = await caches.open('flaxia-maps-packs');
-      // Stream into Cache Storage instead of buffering the whole pack in memory.
-      await cache.put(packPath, new Response(streamed, { headers: { 'Content-Type': 'application/octet-stream' } }));
-      if (status) status.textContent = `${this.activeCity.name}: 取得済み (${Math.round(received / 1024 / 1024)}MB)`;
-    } catch (error) {
-      if ((error as { name?: string }).name === 'AbortError') return;
-      if (status) {
-        status.textContent =
-          (error as { message?: string }).message === 'pack too large'
-            ? `${this.activeCity.name}: パックが上限（100MB）を超えています`
-            : `${this.activeCity.name}: 取得に失敗しました`;
-      }
-    } finally {
-      if (this.packAbort === controller) this.packAbort = null;
-      if (progress) progress.hidden = true;
-    }
-  }
-
-  private async searchRoute(fromText: string, toText: string, mode: string): Promise<void> {
-    const note = this.element.querySelector('[data-testid="maps-route-note"]');
-    const modeLabel = mode === 'pedestrian' ? '徒歩' : mode === 'bicycle' ? '自転車' : '車';
-    if (!fromText || !toText) {
-      if (note) note.textContent = '出発地と目的地を入力してください';
-      return;
-    }
-    this.routeAbort?.abort();
-    const routeAbort = new AbortController();
-    this.routeAbort = routeAbort;
-    const [from, to] = await Promise.all([
-      this.findPlace(fromText, routeAbort.signal),
-      this.findPlace(toText, routeAbort.signal),
-    ]);
-    if (this.destroyed) return;
-    if (from) {
-      this.centerOnMap(from.lat, from.lon, 13);
-      this.placeMarker(from.lat, from.lon);
-    }
-    if (!from && !to) {
-      if (note) note.textContent = '場所が見つかりませんでした';
-      return;
-    }
-    if (!this.activeCity.valhallaPublished) {
-      if (note)
-        note.textContent = `${this.activeCity.name}の経路タイルは未配信です。配信後に${modeLabel}の経路案内をします。`;
-      return;
-    }
-    if (note) note.textContent = `経路計算（${modeLabel}）は都市タイル配布後に有効化されます`;
-  }
-
-  private async findPlace(query: string, signal?: AbortSignal): Promise<Place | null> {
-    let controller: AbortController | null = null;
-    if (!signal) {
-      this.searchAbort?.abort();
-      controller = new AbortController();
-      this.searchAbort = controller;
-    }
-    try {
-      const res = await fetch(`/api/maps/geocode?q=${encodeURIComponent(query)}`, {
-        credentials: 'include',
-        signal: signal ?? controller?.signal,
-      });
-      if (!res.ok) return null;
-      const data = (await res.json()) as { places: Place[] };
-      return data.places[0] ?? null;
-    } catch {
-      return null;
+      window.dispatchEvent(
+        new CustomEvent('flaxia:mapweather', { detail: { lat: this.lat, lon: this.lon, error: true } }),
+      );
     }
   }
 }

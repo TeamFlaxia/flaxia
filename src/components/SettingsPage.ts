@@ -22,6 +22,7 @@ import {
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
+import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '../lib/maps/cache.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -1556,6 +1557,119 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     void loadBilling();
   }
 
+  // Maps section: on-device tile cache + city tile packs.
+  const mapsSection = document.createElement('div');
+  mapsSection.className = 'settings-section';
+
+  const mapsTitle = document.createElement('h2');
+  mapsTitle.textContent = 'Maps';
+  mapsSection.appendChild(mapsTitle);
+
+  const cacheStatus = document.createElement('p');
+  cacheStatus.className = 'settings-row-label';
+  cacheStatus.textContent = '確認中…';
+  mapsSection.appendChild(cacheStatus);
+
+  const cacheActions = document.createElement('div');
+  cacheActions.className = 'settings-choice-list';
+  const persistBtn = document.createElement('button');
+  persistBtn.type = 'button';
+  persistBtn.className = 'settings-radio-card';
+  persistBtn.textContent = 'オフライン保存を許可';
+  persistBtn.addEventListener('click', () => {
+    void (async () => {
+      const ok = await requestStoragePersistence();
+      cacheStatus.textContent = ok ? '保存が許可されました' : 'このブラウザでは許可できませんでした';
+    })();
+  });
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'settings-radio-card';
+  clearBtn.textContent = 'キャッシュ削除';
+  clearBtn.addEventListener('click', () => {
+    void (async () => {
+      await clearTileCache();
+      await refreshCacheStatus();
+    })();
+  });
+  cacheActions.appendChild(persistBtn);
+  cacheActions.appendChild(clearBtn);
+  mapsSection.appendChild(cacheActions);
+
+  async function refreshCacheStatus(): Promise<void> {
+    try {
+      const stats = await getTileCacheStats();
+      cacheStatus.textContent =
+        stats.count === 0
+          ? 'キャッシュなし（表示すると保存されます）'
+          : `${stats.count}件 / ${(stats.bytes / 1024 / 1024).toFixed(1)}MB`;
+    } catch {
+      cacheStatus.textContent = 'キャッシュ状態を取得できませんでした';
+    }
+  }
+  void refreshCacheStatus();
+
+  // City tile packs
+  const packTitle = document.createElement('h3');
+  packTitle.textContent = '都市タイル / City pack';
+  mapsSection.appendChild(packTitle);
+
+  const cities: { id: string; name: string }[] = [
+    { id: 'tokyo', name: '東京' },
+    { id: 'osaka', name: '大阪' },
+    { id: 'nagoya', name: '名古屋' },
+  ];
+  const citySelect = document.createElement('select');
+  citySelect.className = 'settings-radio';
+  for (const c of cities) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    citySelect.appendChild(opt);
+  }
+  mapsSection.appendChild(citySelect);
+
+  const packStatus = document.createElement('p');
+  packStatus.className = 'settings-row-label';
+  packStatus.textContent = '未取得';
+  mapsSection.appendChild(packStatus);
+
+  const fetchBtn = document.createElement('button');
+  fetchBtn.type = 'button';
+  fetchBtn.className = 'settings-radio-card';
+  fetchBtn.textContent = '地図タイル取得 / Fetch';
+  fetchBtn.addEventListener('click', () => {
+    void (async () => {
+      const cityId = citySelect.value;
+      const packPath = `/api/maps/packs/${encodeURIComponent(cityId)}/pmtiles`;
+      try {
+        const res = await fetch(packPath);
+        if (!res.ok || !res.body) {
+          packStatus.textContent = `${cityId}: 未配信（ライブ表示中）`;
+          return;
+        }
+        let received = 0;
+        const counting = new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, encoder) {
+            received += chunk.byteLength;
+            if (received > 100 * 1024 * 1024) {
+              encoder.error(new Error('pack too large'));
+              return;
+            }
+            encoder.enqueue(chunk);
+          },
+        });
+        const streamed = res.body.pipeThrough(counting);
+        const cache = await caches.open('flaxia-maps-packs');
+        await cache.put(packPath, new Response(streamed, { headers: { 'Content-Type': 'application/octet-stream' } }));
+        packStatus.textContent = `${cityId}: 取得済み (${Math.round(received / 1024 / 1024)}MB)`;
+      } catch (_error) {
+        packStatus.textContent = `${cityId}: 取得に失敗しました`;
+      }
+    })();
+  });
+  mapsSection.appendChild(fetchBtn);
+
   if (accountSection) {
     navigation.addCategory({
       id: 'account',
@@ -1621,6 +1735,14 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     descriptionKey: 'settings.crowd_description',
     iconName: 'poll',
     sections: [crowdSection],
+  });
+  navigation.addCategory({
+    id: 'maps',
+    groupKey: 'settings.group_preferences',
+    titleKey: 'settings.maps',
+    descriptionKey: 'settings.maps_description',
+    iconName: 'maps',
+    sections: [mapsSection],
   });
   navigation.addCategory({
     id: 'bug-report',

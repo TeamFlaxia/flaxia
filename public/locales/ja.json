@@ -355,6 +355,8 @@
   "settings.titles_load_failed": "称号を読み込めませんでした。",
   "settings.billing_description": "Flaxia+のプラン、サブスクリプションとお支払い履歴",
   "settings.crowd_description": "ブラウザの計算リソースを提供してFlaxiaをサポート",
+  "settings.maps": "地図",
+  "settings.maps_description": "地図タイルのキャッシュと都市タイルの取得",
   "settings.bug_report": "バグを報告する",
   "settings.bug_report_description": "Flaxia の不具合を報告する",
   "settings.back_to_overview": "設定一覧に戻る",

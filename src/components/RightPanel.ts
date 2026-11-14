@@ -9,6 +9,7 @@ import { commandShortcutLabel } from '../lib/shortcut-label.js';
 export interface RightPanelProps {
   onSearch?: (query: string) => void;
   onFollowUser?: (userId: string) => void;
+  mapWeather?: boolean;
 }
 
 export interface UserSuggestion {
@@ -30,12 +31,18 @@ export class RightPanel {
   private element: HTMLElement;
   private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
   private userSuggestions: UserSuggestion[] = [];
+  private mapWeather: boolean;
+  private weatherBody: HTMLElement | null = null;
 
   constructor(props: RightPanelProps = {}) {
+    this.mapWeather = !!props.mapWeather;
     this.element = this.createElement();
     this.setupEventListeners();
     this.loadTrendingTags();
     this.loadUserSuggestions();
+    if (this.mapWeather) {
+      this.setupMapWeather();
+    }
   }
 
   private createElement(): HTMLElement {
@@ -44,6 +51,9 @@ export class RightPanel {
     container.setAttribute('aria-label', 'Discover');
 
     container.appendChild(this.createSearchSection());
+    if (this.mapWeather) {
+      container.appendChild(this.createMapWeatherSection());
+    }
     container.appendChild(this.createTrendingSection());
     container.appendChild(this.createFollowSection());
     container.appendChild(this.createShortcutsSection());
@@ -96,6 +106,76 @@ export class RightPanel {
     row.className = 'right-card-status';
     row.textContent = text;
     return row;
+  }
+
+  private symbolLabel(symbol: string | null): string {
+    if (!symbol) return '';
+    const s = symbol.toLowerCase();
+    if (s.startsWith('clearsky')) return '晴れ';
+    if (s.startsWith('fair')) return '晴れ時々曇り';
+    if (s.startsWith('cloudy')) return '曇り';
+    if (s.startsWith('fog')) return '霧';
+    if (s.includes('thunder')) return '雷雨';
+    if (s.startsWith('rain')) return '雨';
+    if (s.startsWith('snow')) return '雪';
+    if (s.startsWith('sleet')) return 'みぞれ';
+    return symbol;
+  }
+
+  private createMapWeatherSection(): HTMLElement {
+    const { section, list } = this.createCard('天気 / Weather', 'maps-weather-section');
+    this.weatherBody = list;
+    list.textContent = '…';
+    return section;
+  }
+
+  private setupMapWeather(): void {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { lat: number; lon: number; data?: any; error?: boolean };
+      if (!this.weatherBody) return;
+      if (detail?.error || !detail?.data) {
+        this.weatherBody.textContent = '天気を取得できませんでした';
+        return;
+      }
+      const data = detail.data;
+      const current = data.points?.[0];
+      this.weatherBody.innerHTML = '';
+      const cur = document.createElement('div');
+      cur.className = 'maps-weather-current';
+      const temp = document.createElement('span');
+      temp.className = 'maps-weather-temp';
+      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
+      const symbol = document.createElement('span');
+      symbol.className = 'maps-weather-symbol';
+      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
+      cur.appendChild(temp);
+      cur.appendChild(symbol);
+      this.weatherBody.appendChild(cur);
+      const meta = document.createElement('div');
+      meta.className = 'maps-note';
+      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
+      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
+      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
+      this.weatherBody.appendChild(meta);
+      const hourly = document.createElement('div');
+      hourly.className = 'maps-hourly';
+      for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {
+        const h = document.createElement('div');
+        h.className = 'maps-hour';
+        const time = document.createElement('div');
+        time.textContent = new Date(point.time).toLocaleTimeString([], { hour: '2-digit' });
+        const tempEl = document.createElement('div');
+        tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
+        const s = document.createElement('div');
+        s.textContent = this.symbolLabel(point.symbol);
+        h.appendChild(time);
+        h.appendChild(tempEl);
+        h.appendChild(s);
+        hourly.appendChild(h);
+      }
+      this.weatherBody.appendChild(hourly);
+    };
+    window.addEventListener('flaxia:mapweather', handler);
   }
 
   private createTrendingSection(): HTMLElement {

@@ -82,7 +82,9 @@
 
 .maps-viewport {
   position: relative;
-  height: 520px;
+  flex: 1 1 auto;
+  min-height: 480px;
+  height: calc(100vh - 140px);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
