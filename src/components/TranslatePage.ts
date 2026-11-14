@@ -149,10 +149,12 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
   targetSelect.setAttribute('aria-label', t('translate.target_lang'));
 
   for (const lang of TRANSLATE_LANGUAGES) {
-    const sourceOption = document.createElement('option');
-    sourceOption.value = lang.code;
-    sourceOption.textContent = isJa ? lang.jaName : lang.enName;
-    sourceSelect.appendChild(sourceOption);
+    if (isPlamoSupported(lang.code, 'en')) {
+      const sourceOption = document.createElement('option');
+      sourceOption.value = lang.code;
+      sourceOption.textContent = isJa ? lang.jaName : lang.enName;
+      sourceSelect.appendChild(sourceOption);
+    }
     const targetOption = document.createElement('option');
     targetOption.value = lang.code;
     targetOption.textContent = isJa ? lang.jaName : lang.enName;
@@ -170,6 +172,12 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
   swapButton.addEventListener('click', () => {
     const oldSource = sourceSelect.value;
     const oldTarget = targetSelect.value;
+    if (!isPlamoSupported(oldTarget, 'en')) {
+      status = 'error';
+      resultInput.value = t('translate.unsupported_pair');
+      updateStatus();
+      return;
+    }
     if (oldSource === 'auto') {
       sourceSelect.value = oldTarget;
       targetSelect.value = 'en';
