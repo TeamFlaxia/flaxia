@@ -179,6 +179,36 @@
   color: #fff;
 }
 
+.maps-weather-overlay {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 1;
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.maps-weather-overlay .maps-weather-temp {
+  font-size: 20px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.maps-weather-overlay .maps-weather-symbol {
+  color: #cbd5e1;
+  margin-left: 6px;
+}
+
+.maps-weather-overlay .maps-note {
+  color: #cbd5e1;
+  margin-top: 4px;
+}
+
 .maps-cache-indicator[data-state="hit"] {
   background: var(--primary);
   color: var(--primary-fg);

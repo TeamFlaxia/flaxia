@@ -116,6 +116,8 @@ export class MapsPage {
   private lat: number = FALLBACK_CITIES[0].centerLat;
   private lon: number = FALLBACK_CITIES[0].centerLon;
   private zoom: number = FALLBACK_CITIES[0].zoom;
+  private located = false;
+  private currentLocation: { lat: number; lon: number } | null = null;
   private destroyed = false;
   private weatherAbort: AbortController | null = null;
   private searchAbort: AbortController | null = null;
@@ -141,6 +143,7 @@ export class MapsPage {
     this.attachEvents();
     this.loadCities();
     void this.initMap();
+    void this.locateMe();
   }
 
   getElement(): HTMLElement {
@@ -222,6 +225,12 @@ export class MapsPage {
     cacheIndicator.dataset.testid = 'maps-cache-indicator';
     cacheIndicator.textContent = 'ライブ表示';
     viewport.appendChild(cacheIndicator);
+
+    const weatherOverlay = document.createElement('div');
+    weatherOverlay.className = 'maps-weather-overlay';
+    weatherOverlay.dataset.testid = 'maps-weather-overlay';
+    weatherOverlay.textContent = '…';
+    viewport.appendChild(weatherOverlay);
     const attribution = document.createElement('div');
     attribution.className = 'maps-attribution';
     attribution.textContent = '© OpenFreeMap © OpenMapTiles Data from OpenStreetMap / © MET Norway / © GeoNames';
@@ -332,6 +341,9 @@ export class MapsPage {
         },
       });
       this.map = map;
+      if (this.located && this.currentLocation) {
+        this.placeMarker(this.currentLocation.lat, this.currentLocation.lon);
+      }
       map.addControl(new maplibre.NavigationControl({}), 'bottom-right');
       map.addControl(new maplibre.ScaleControl(), 'bottom-left');
       map.on('moveend', () => {
@@ -498,13 +510,11 @@ export class MapsPage {
       }
       if (Array.isArray(data.cities) && data.cities.length > 0) {
         this.cities = data.cities;
-        const existing = this.cities.find((c) => c.id === this.activeCity.id);
-        if (existing) {
-          this.activeCity = existing;
-          this.centerOnMap(existing.centerLat, existing.centerLon, existing.zoom);
-          const status = this.element.querySelector('[data-testid="maps-pack-status"]');
-          if (status) {
-            status.textContent = `${existing.name}: ${existing.pmtilesPublished || existing.valhallaPublished ? '配信済み' : 'ライブ表示中'}`;
+        if (!this.located) {
+          const existing = this.cities.find((c) => c.id === this.activeCity.id);
+          if (existing) {
+            this.activeCity = existing;
+            this.centerOnMap(existing.centerLat, existing.centerLon, existing.zoom);
           }
         }
       }
@@ -514,10 +524,61 @@ export class MapsPage {
     this.loadWeather();
   }
 
+  private symbolLabel(symbol: string | null): string {
+    if (!symbol) return '';
+    const s = symbol.toLowerCase();
+    if (s.startsWith('clearsky')) return '晴れ';
+    if (s.startsWith('fair')) return '晴れ時々曇り';
+    if (s.startsWith('cloudy')) return '曇り';
+    if (s.startsWith('fog')) return '霧';
+    if (s.includes('thunder')) return '雷雨';
+    if (s.startsWith('rain')) return '雨';
+    if (s.startsWith('snow')) return '雪';
+    if (s.startsWith('sleet')) return 'みぞれ';
+    return symbol;
+  }
+
+  private async locateMe(): Promise<void> {
+    let pos: { lat: number; lon: number } | null = null;
+    if (navigator.geolocation) {
+      pos = await new Promise<{ lat: number; lon: number } | null>((resolve) => {
+        navigator.geolocation.getCurrentPosition(
+          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+          () => resolve(null),
+          { timeout: 8000, maximumAge: 300000 },
+        );
+      });
+    }
+    if (!pos) {
+      try {
+        const res = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const data = (await res.json()) as { latitude?: number; longitude?: number };
+          if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+            pos = { lat: data.latitude, lon: data.longitude };
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!pos || this.destroyed) return;
+    this.lat = pos.lat;
+    this.lon = pos.lon;
+    this.zoom = 13;
+    this.located = true;
+    this.currentLocation = pos;
+    this.centerOnMap(pos.lat, pos.lon, 13);
+    this.placeMarker(pos.lat, pos.lon);
+    this.loadWeather();
+  }
+
   private async loadWeather(): Promise<void> {
     this.weatherAbort?.abort();
     const controller = new AbortController();
     this.weatherAbort = controller;
+    const overlay = this.element.querySelector('[data-testid="maps-weather-overlay"]') as HTMLElement | null;
+    if (overlay) overlay.textContent = '…';
     try {
       const res = await fetch(`/api/maps/weather?lat=${this.lat}&lon=${this.lon}`, {
         credentials: 'include',
@@ -526,13 +587,26 @@ export class MapsPage {
       if (!res.ok) throw new Error('weather unavailable');
       const data = (await res.json()) as WeatherPayload;
       if (this.destroyed) return;
-      // Weather is rendered in the Right Panel; broadcast the payload.
-      window.dispatchEvent(new CustomEvent('flaxia:mapweather', { detail: { lat: this.lat, lon: this.lon, data } }));
+      if (!overlay) return;
+      const current = data.points[0];
+      overlay.innerHTML = '';
+      const temp = document.createElement('span');
+      temp.className = 'maps-weather-temp';
+      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
+      const symbol = document.createElement('span');
+      symbol.className = 'maps-weather-symbol';
+      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
+      overlay.appendChild(temp);
+      overlay.appendChild(symbol);
+      const meta = document.createElement('div');
+      meta.className = 'maps-note';
+      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
+      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
+      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
+      overlay.appendChild(meta);
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
-      window.dispatchEvent(
-        new CustomEvent('flaxia:mapweather', { detail: { lat: this.lat, lon: this.lon, error: true } }),
-      );
+      if (overlay) overlay.textContent = '天気を取得できませんでした';
     }
   }
 }

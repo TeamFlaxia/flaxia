@@ -1112,11 +1112,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           const { createMapsPage } = await import('./components/MapsPage.js');
           mapsPage = createMapsPage();
 
-          const rightPanel = await lazyCreateRightPanel({ mapWeather: true });
+          // Right panel is hidden on the maps page so the map can fill the
+          // viewport; weather is shown as an overlay on the map itself.
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(mapsPage.getElement()));
-          mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
           hidePageLoader();
