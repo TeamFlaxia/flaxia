@@ -1,7 +1,5 @@
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
-import { t } from '../lib/i18n.js';
 import { getTileCacheStats, handleTileFetch, rewriteTileUrl, unwrapTileUrl } from '../lib/maps/cache.js';
-import { createPageHeader } from '../lib/page-header.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -31,15 +29,6 @@ interface City {
   zoom: number;
   pmtilesPublished: boolean;
   valhallaPublished: boolean;
-}
-
-interface Place {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  kind: string;
-  cityId: string;
 }
 
 interface WeatherPoint {
@@ -95,20 +84,6 @@ const FALLBACK_CITIES: City[] = [
   },
 ];
 
-function areaSlug(lat: number, lon: number): string {
-  const la = Math.round(lat * 100);
-  const lo = Math.round(lon * 100);
-  return `area-${lo < 0 ? `n${-lo}` : lo}-${la < 0 ? `n${-la}` : la}`;
-}
-
-function normalizeSlug(value: string): string {
-  const s = value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return /^[a-z0-9][a-z0-9-]{1,63}$/.test(s) ? s : areaSlug(0, 0);
-}
-
 export class MapsPage {
   private element: HTMLElement;
   private cities: City[] = FALLBACK_CITIES;
@@ -121,7 +96,6 @@ export class MapsPage {
   private destroyed = false;
   private weatherAbort: AbortController | null = null;
   private searchAbort: AbortController | null = null;
-  private searchSeq = 0;
   private routeAbort: AbortController | null = null;
   private map: MapLibreMap | null = null;
   private marker: MapLibreMarker | null = null;
@@ -175,27 +149,6 @@ export class MapsPage {
     const root = document.createElement('div');
     root.className = 'maps-page';
 
-    const header = createPageHeader({ title: t('nav.maps') || 'Maps', subtitle: 'Maps & Weathers' });
-    root.appendChild(header);
-
-    const controls = document.createElement('div');
-    controls.className = 'maps-controls';
-
-    const searchWrap = document.createElement('div');
-    searchWrap.className = 'maps-search';
-    const searchInput = document.createElement('input');
-    searchInput.className = 'maps-search-input';
-    searchInput.type = 'search';
-    searchInput.placeholder = '地名を検索（全世界対応）';
-    searchInput.dataset.testid = 'maps-search';
-    const suggestions = document.createElement('div');
-    suggestions.className = 'maps-suggestions';
-    suggestions.hidden = true;
-    searchWrap.appendChild(searchInput);
-    searchWrap.appendChild(suggestions);
-    controls.appendChild(searchWrap);
-    root.appendChild(controls);
-
     const viewport = document.createElement('div');
     viewport.className = 'maps-viewport maps-viewport--libre';
     viewport.dataset.testid = 'maps-viewport';
@@ -240,17 +193,7 @@ export class MapsPage {
   }
 
   private attachEvents(): void {
-    const searchInput = this.element.querySelector('.maps-search-input') as HTMLInputElement | null;
-    const suggestions = this.element.querySelector('.maps-suggestions') as HTMLElement | null;
-    if (searchInput && suggestions) {
-      let timer = 0;
-      searchInput.addEventListener('input', () => {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(() => {
-          void this.onSearchInput(searchInput.value, suggestions);
-        }, 300);
-      });
-    }
+    // Search UI removed; nothing to bind.
   }
 
   /**
@@ -421,79 +364,6 @@ export class MapsPage {
     } catch {
       if (status) status.textContent = 'キャッシュ状態を取得できませんでした';
     }
-  }
-
-  private async onSearchInput(query: string, suggestions: HTMLElement): Promise<void> {
-    const q = query.trim();
-    const seq = ++this.searchSeq;
-    if (q.length < 1) {
-      this.searchAbort?.abort();
-      suggestions.hidden = true;
-      suggestions.innerHTML = '';
-      return;
-    }
-    const places = await this.searchPlaces(q);
-    if (this.destroyed || seq !== this.searchSeq) return;
-    suggestions.innerHTML = '';
-    if (places.length === 0) {
-      suggestions.hidden = true;
-      return;
-    }
-    suggestions.hidden = false;
-    for (const place of places) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'maps-suggestion';
-      btn.textContent = place.name;
-      btn.addEventListener('click', () => {
-        suggestions.hidden = true;
-        this.setPlace(place);
-      });
-      suggestions.appendChild(btn);
-    }
-  }
-
-  private async searchPlaces(query: string): Promise<Place[]> {
-    this.searchAbort?.abort();
-    const controller = new AbortController();
-    this.searchAbort = controller;
-    try {
-      const res = await fetch(`/api/maps/geocode?q=${encodeURIComponent(query)}`, {
-        credentials: 'include',
-        signal: controller.signal,
-      });
-      if (!res.ok) return [];
-      const data = (await res.json()) as { places: Place[] };
-      return data.places ?? [];
-    } catch {
-      return [];
-    }
-  }
-
-  private setPlace(place: Place): void {
-    const slug = normalizeSlug(place.cityId || '');
-    const existing = this.cities.find((c) => c.id === slug);
-    this.activeCity = existing ?? {
-      id: slug,
-      name: place.name,
-      nameEn: place.name,
-      centerLat: place.lat,
-      centerLon: place.lon,
-      bbox: [place.lon - 0.4, place.lat - 0.4, place.lon + 0.4, place.lat + 0.4],
-      zoom: 13,
-      pmtilesPublished: false,
-      valhallaPublished: false,
-    };
-    this.centerOnMap(place.lat, place.lon, 13);
-    this.placeMarker(place.lat, place.lon);
-    this.element.querySelectorAll('.maps-city-btn').forEach((el) => {
-      el.classList.toggle('maps-city-btn--active', el.getAttribute('data-city') === slug);
-    });
-    const status = this.element.querySelector('[data-testid="maps-pack-status"]');
-    if (status) {
-      status.textContent = `${this.activeCity.name}: ${this.activeCity.pmtilesPublished || this.activeCity.valhallaPublished ? '配信済み' : 'ライブ表示中'}`;
-    }
-    this.loadWeather();
   }
 
   private async loadCities(): Promise<void> {
