@@ -97,8 +97,6 @@ export class MapsPage {
   private currentHeading: number | null = null;
   private destroyed = false;
   private weatherAbort: AbortController | null = null;
-  private searchAbort: AbortController | null = null;
-  private routeAbort: AbortController | null = null;
   private map: MapLibreMap | null = null;
   private marker: MapLibreMarker | null = null;
   private maplibre: typeof import('maplibre-gl') | null = null;
@@ -106,9 +104,7 @@ export class MapsPage {
   private tileHits = 0;
   private tileMisses = 0;
   private styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
-  private packAbort: AbortController | null = null;
   private mapFallbackReason: 'unsupported' | 'error' | null = null;
-  private overlayMode = 0; // 0=off, 1=気温, 2=温度, 3=雲, 4=雨
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -130,9 +126,6 @@ export class MapsPage {
   destroy(): void {
     this.destroyed = true;
     this.weatherAbort?.abort();
-    this.searchAbort?.abort();
-    this.routeAbort?.abort();
-    this.packAbort?.abort();
     if (this.maplibre && this.protocolRegistered) {
       try {
         this.maplibre.removeProtocol('flaxia-tiles');
@@ -188,33 +181,6 @@ export class MapsPage {
     weatherOverlay.textContent = '…';
     viewport.appendChild(weatherOverlay);
 
-    const cloudOverlay = document.createElement('canvas');
-    cloudOverlay.className = 'maps-cloud-overlay';
-    cloudOverlay.dataset.testid = 'maps-cloud-overlay';
-    cloudOverlay.hidden = true;
-    viewport.appendChild(cloudOverlay);
-
-    const overlaySwitch = document.createElement('div');
-    overlaySwitch.className = 'maps-overlay-switch';
-    overlaySwitch.dataset.testid = 'maps-overlay-switch';
-    const modeIcons = [
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>',
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M8 6h8M8 18h8"/><circle cx="12" cy="12" r="3"/></svg>',
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>',
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 18c-2 0-4-2-4-4s2-4 4-4c0-3 2-6 6-6s6 3 6 6c2 0 4 2 4 4s-2 4-4 4H6z"/></svg>',
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 12a6 6 0 0 1 12 0c0 4-6 10-6 10s-6-6-6-10z"/></svg>',
-    ];
-    const modeLabels = ['オフ', '気温マップ', '温度マップ', '雲マップ', '雨マップ'];
-    for (let i = 0; i < modeIcons.length; i++) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `maps-overlay-btn${i === this.overlayMode ? ' maps-overlay-btn--active' : ''}`;
-      btn.dataset.mode = String(i);
-      btn.title = modeLabels[i];
-      btn.innerHTML = modeIcons[i];
-      overlaySwitch.appendChild(btn);
-    }
-    viewport.appendChild(overlaySwitch);
     const attribution = document.createElement('div');
     attribution.className = 'maps-attribution';
     attribution.textContent = '© OpenFreeMap © OpenMapTiles Data from OpenStreetMap / © MET Norway / © GeoNames';
@@ -224,20 +190,7 @@ export class MapsPage {
   }
 
   private attachEvents(): void {
-    const switchEl = this.element.querySelector('[data-testid="maps-overlay-switch"]') as HTMLElement | null;
-    if (switchEl) {
-      switchEl.addEventListener('click', (e) => {
-        const target = (e.target as HTMLElement).closest('button');
-        if (!target) return;
-        const mode = Number(target.dataset.mode);
-        if (Number.isNaN(mode)) return;
-        this.overlayMode = mode;
-        switchEl.querySelectorAll('button').forEach((b) => {
-          b.classList.toggle('maps-overlay-btn--active', Number(b.dataset.mode) === mode);
-        });
-        this.updateOverlay();
-      });
-    }
+    // No interactive controls on the map page (overlay removed).
   }
 
   /**
@@ -333,17 +286,12 @@ export class MapsPage {
       }
       map.addControl(new maplibre.NavigationControl({}), 'bottom-right');
       map.addControl(new maplibre.ScaleControl(), 'bottom-left');
-      map.on('move', () => {
-        if (!this.map || this.destroyed) return;
-        this.renderOverlayCanvas();
-      });
       map.on('moveend', () => {
         if (!this.map || this.destroyed) return;
         const center = this.map.getCenter();
         this.lat = center.lat;
         this.lon = center.lng;
         this.zoom = Math.round(this.map.getZoom());
-        void this.updateOverlay();
         this.loadWeather();
       });
       let mapLoaded = false;
@@ -527,7 +475,6 @@ export class MapsPage {
       if (this.destroyed) return;
       if (!overlay) return;
       const current = data.points[0];
-      this.updateOverlay();
       overlay.innerHTML = '';
       const temp = document.createElement('span');
       temp.className = 'maps-weather-temp';
@@ -561,161 +508,6 @@ export class MapsPage {
       if ((error as { name?: string }).name === 'AbortError') return;
       if (overlay) overlay.textContent = '天気を取得できませんでした';
     }
-  }
-
-  private gridWeatherCache: Map<
-    string,
-    { temp: number | null; cloud: number | null; precip: number | null; symbol: string | null }
-  > = new Map();
-
-  private async updateOverlay(): Promise<void> {
-    const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
-    if (!canvas) return;
-    if (this.overlayMode === 0) {
-      canvas.hidden = true;
-      return;
-    }
-    if (!this.map || this.zoom > 10) {
-      canvas.hidden = true;
-      return;
-    }
-    canvas.hidden = false;
-    const bounds = this.map.getBounds();
-    const cols = 8;
-    const rows = 8;
-    const west = bounds.getWest();
-    const east = bounds.getEast();
-    const north = bounds.getNorth();
-    const south = bounds.getSouth();
-    const lonStep = (east - west) / cols;
-    const latStep = (north - south) / rows;
-
-    // Collect cell centers
-    const cells: { i: number; j: number; lat: number; lon: number; key: string }[] = [];
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const lon = west + lonStep * (i + 0.5);
-        const lat = north - latStep * (j + 0.5);
-        cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
-      }
-    }
-    // Fetch weather for cells not cached (batched to respect rate limits)
-    const uncached = cells.filter((cell) => !this.gridWeatherCache.has(cell.key));
-    const batchSize = 50;
-    for (let i = 0; i < uncached.length; i += batchSize) {
-      const batch = uncached.slice(i, i + batchSize);
-      await Promise.all(
-        batch.map(async (cell) => {
-          try {
-            const res = await fetch(`/api/maps/weather?lat=${cell.lat}&lon=${cell.lon}`, { credentials: 'include' });
-            if (res.ok) {
-              const data = (await res.json()) as { points?: any[] };
-              const p = data.points?.[0];
-              if (p) {
-                this.gridWeatherCache.set(cell.key, {
-                  temp: p.temperature ?? null,
-                  cloud: p.cloudCover ?? null,
-                  precip: p.precipitation ?? null,
-                  symbol: p.symbol ?? null,
-                });
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }),
-      );
-      if (i + batchSize < uncached.length) {
-        await new Promise((r) => setTimeout(r, 1100));
-      }
-    }
-
-    if (this.destroyed) return;
-
-    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
-    // Drawing is handled by renderOverlayCanvas (also called on 'move' for smooth panning).
-    this.renderOverlayCanvas();
-    return;
-  }
-
-  private renderOverlayCanvas(): void {
-    const canvas = this.element.querySelector('[data-testid="maps-cloud-overlay"]') as HTMLCanvasElement | null;
-    if (!canvas || !this.map || this.overlayMode === 0 || this.zoom > 10) {
-      if (canvas) canvas.hidden = true;
-      return;
-    }
-    if (!this.map) return;
-    canvas.hidden = false;
-    const rect = (canvas.parentElement ?? canvas).getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, rect.width, rect.height);
-
-    // Recompute grid from current bounds so the overlay follows panning.
-    const bounds = this.map.getBounds();
-    const cols = 8;
-    const rows = 8;
-    const west = bounds.getWest();
-    const east = bounds.getEast();
-    const north = bounds.getNorth();
-    const south = bounds.getSouth();
-    const lonStep = (east - west) / cols;
-    const latStep = (north - south) / rows;
-    const cells: { i: number; j: number; lat: number; lon: number; key: string }[] = [];
-    for (let j = 0; j < rows; j++) {
-      for (let i = 0; i < cols; i++) {
-        const lon = west + lonStep * (i + 0.5);
-        const lat = north - latStep * (j + 0.5);
-        cells.push({ i, j, lat, lon, key: `${lat.toFixed(2)},${lon.toFixed(2)}` });
-      }
-    }
-    for (const cell of cells) {
-      const wdata = this.gridWeatherCache.get(cell.key);
-      const nw = this.map.project([west + lonStep * cell.i, north - latStep * cell.j]);
-      const se = this.map.project([west + lonStep * (cell.i + 1), north - latStep * (cell.j + 1)]);
-      const x = Math.min(nw.x, se.x);
-      const y = Math.min(nw.y, se.y);
-      const cw = Math.abs(se.x - nw.x);
-      const ch = Math.abs(se.y - nw.y);
-      let color = 'rgba(0,0,0,0)';
-      let opacity = 0.35;
-      if (this.overlayMode === 1 || this.overlayMode === 2) {
-        const t = wdata?.temp ?? 15;
-        const hue = Math.max(0, Math.min(240, 240 - (t + 10) * 6));
-        color = `hsl(${hue}, 75%, 50%)`;
-        opacity = 0.35;
-      } else if (this.overlayMode === 3) {
-        const c = wdata?.cloud ?? 0;
-        opacity = Math.min(0.6, (c / 100) * 0.6);
-        color = 'rgba(255, 255, 255, 1)';
-      } else if (this.overlayMode === 4) {
-        const p = wdata?.precip ?? 0;
-        if (p <= 0) {
-          color = 'rgba(0,0,0,0)';
-          opacity = 0;
-        } else {
-          const hue = 240 - Math.min(40, p * 4);
-          color = `hsl(${hue}, 70%, 50%)`;
-          opacity = Math.min(0.6, 0.2 + (p / 10) * 0.4);
-        }
-      }
-      ctx.globalAlpha = opacity;
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, cw, ch);
-    }
-    ctx.globalAlpha = 1;
   }
 }
 
