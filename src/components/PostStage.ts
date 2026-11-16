@@ -3,10 +3,10 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { parseMediaCues } from '../lib/post-cues.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
-import { executeZipAuto } from '../lib/zip-manager.js';
+import { executeZipAuto, type UniversalZipExecutorHandle } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
-import { executeFlash } from './FlashPlayer.js';
+import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createMediaCarousel } from './MediaCarousel.js';
 import { createVideoPlayer } from './VideoPlayer.js';
@@ -210,39 +210,289 @@ export function isZipGame(payloadKey?: string | null): boolean {
   );
 }
 
+interface StageState {
+  postId: string;
+  mode: PostCardMode;
+  preview: HTMLElement | null;
+  previewSignature: string | null;
+  execution: HTMLElement | null;
+  executionVersion: string | null;
+  executionToken: number;
+  executionReady: boolean;
+  zipHandle?: UniversalZipExecutorHandle;
+  flashHandle?: FlashPlayerHandle;
+  disposed: boolean;
+}
+
+const STAGE_CLASSES = [
+  'post-stage--carousel',
+  'post-stage--zip',
+  'post-stage--flash',
+  'post-stage--audio',
+  'post-stage--video',
+  'post-stage--image',
+  'post-stage--image-thumb',
+] as const;
+
+const stageStates = new WeakMap<HTMLElement, StageState>();
+
+function stageState(container: HTMLElement, props: PostStageProps): StageState {
+  let state = stageStates.get(container);
+  if (!state) {
+    state = {
+      postId: props.post.id,
+      mode: props.mode,
+      preview: null,
+      previewSignature: null,
+      execution: null,
+      executionVersion: null,
+      executionToken: 0,
+      executionReady: false,
+      disposed: false,
+    };
+    stageStates.set(container, state);
+  }
+  return state;
+}
+
+function mediaSignature(post: PostStageProps['post']): string {
+  const attachments = (post.attachments ?? []).map((attachment) => `${attachment.kind}:${attachment.r2_key}`).join(',');
+  return [post.gif_key ?? '', post.payload_key ?? '', post.swf_key ?? '', post.thumbnail_key ?? '', attachments].join(
+    '|',
+  );
+}
+
+function stageClassFor(post: PostStageProps['post']): string | null {
+  if ((post.attachments ?? []).length > 0) return 'post-stage--carousel';
+  if (isZipGame(post.payload_key)) return 'post-stage--zip';
+  if (post.swf_key?.startsWith('swf/')) return 'post-stage--flash';
+  if (post.gif_key?.startsWith('audio/')) return 'post-stage--audio';
+  if (post.gif_key?.startsWith('video/')) return 'post-stage--video';
+  if (post.gif_key) return 'post-stage--image';
+  if (post.thumbnail_key) return 'post-stage--image-thumb';
+  return null;
+}
+
+function setStageClass(container: HTMLElement, className: string | null): void {
+  container.classList.remove(...STAGE_CLASSES);
+  if (className) container.classList.add(className);
+}
+
+function buildPreviewMedia(props: PostStageProps): HTMLElement | null {
+  const post = props.post;
+  const attachments = post.attachments ?? [];
+  const cues = parseMediaCues(post.text).cues;
+  const cueList = cues.length > 0 ? cues : undefined;
+
+  if (attachments.length > 0) {
+    return createMediaCarousel({ postId: post.id, attachments, cues: cueList });
+  }
+
+  if (isZipGame(post.payload_key)) {
+    if (post.thumbnail_key) {
+      return createThumbnailWithOverlay({
+        postId: post.id,
+        thumbnailKey: post.thumbnail_key,
+        overlayLabel: t('post_stage.run_zip'),
+        aspectRatio: '56.25',
+        onClick: () => props.onModeChange(PostCardMode.EXECUTING),
+      });
+    }
+    return createExecutionButton({
+      postId: post.id,
+      label: t('post_stage.click_execute_zip'),
+      icon: '▶',
+      onClick: () => props.onModeChange(PostCardMode.EXECUTING),
+    });
+  }
+
+  if (post.swf_key?.startsWith('swf/')) {
+    if (post.thumbnail_key) {
+      return createThumbnailWithOverlay({
+        postId: post.id,
+        thumbnailKey: post.thumbnail_key,
+        overlayLabel: t('post_stage.play_flash'),
+        aspectRatio: '75',
+        onClick: () => props.onModeChange(PostCardMode.EXECUTING),
+      });
+    }
+    return createSwfExecutionButton({
+      postId: post.id,
+      label: t('post_stage.click_play_flash'),
+      icon: '▶',
+      onClick: () => props.onModeChange(PostCardMode.EXECUTING),
+    });
+  }
+
+  if (post.gif_key?.startsWith('audio/')) {
+    return createAudioPlayer({ gifKey: post.gif_key, postId: post.id, cues: cueList });
+  }
+  if (post.gif_key?.startsWith('video/')) {
+    return createVideoPlayer({ gifKey: post.gif_key, postId: post.id, cues: cueList });
+  }
+  if (post.gif_key) {
+    return createImagePreview({ gifKey: post.gif_key, postId: post.id, ratio: '16:9' });
+  }
+  if (post.thumbnail_key) {
+    return createImagePreview({ gifKey: post.thumbnail_key, postId: post.id, isThumbnail: true, ratio: '16:9' });
+  }
+  return null;
+}
+
+function showPreview(container: HTMLElement, state: StageState, props: PostStageProps): void {
+  const signature = mediaSignature(props.post);
+  if (state.preview && state.previewSignature === signature) {
+    state.preview.hidden = false;
+    return;
+  }
+
+  state.preview?.remove();
+  const layer = document.createElement('div');
+  layer.className = 'post-stage-layer post-stage-layer--preview';
+
+  const media = buildPreviewMedia(props);
+  if (media) layer.appendChild(media);
+
+  const post = props.post;
+  const attachments = post.attachments ?? [];
+  if (attachments.length === 0 && !isZipGame(post.payload_key) && !post.swf_key?.startsWith('swf/') && !post.gif_key) {
+    const hint = document.createElement('div');
+    hint.className = 'stage-hint';
+    hint.textContent = t('post_stage.click_to_run');
+    layer.appendChild(hint);
+  }
+
+  state.preview = layer;
+  state.previewSignature = signature;
+  container.appendChild(layer);
+}
+
+async function showExecution(container: HTMLElement, state: StageState, props: PostStageProps): Promise<void> {
+  const version = props.versionId ?? null;
+
+  if (state.execution && state.executionVersion === version && state.executionReady) {
+    // A different card may have taken the global executor slot and destroyed
+    // this iframe. Rebuild only when the DOM is actually gone.
+    if (state.execution.querySelector('iframe')) {
+      state.execution.hidden = false;
+      return;
+    }
+  }
+
+  // Invalidate any in-flight execution before replacing the layer.
+  state.executionToken++;
+  state.zipHandle?.destroy();
+  state.zipHandle = undefined;
+  state.flashHandle?.destroy();
+  state.flashHandle = undefined;
+  state.execution?.remove();
+
+  const execution = document.createElement('div');
+  execution.className = 'post-stage-layer post-stage-layer--execution';
+  state.execution = execution;
+  state.executionVersion = version;
+  state.executionReady = false;
+  container.appendChild(execution);
+
+  const token = state.executionToken;
+
+  try {
+    if (isZipGame(props.post.payload_key)) {
+      const handle = await executeZipAuto(props.post.id, execution, undefined, version ?? undefined);
+      if (state.disposed || token !== state.executionToken) {
+        handle.destroy();
+        return;
+      }
+      state.zipHandle = handle;
+    } else if (props.post.swf_key?.startsWith('swf/')) {
+      const handle = await executeFlash(props.post.id, execution);
+      if (state.disposed || token !== state.executionToken) {
+        handle.destroy();
+        return;
+      }
+      state.flashHandle = handle;
+    } else {
+      const { createSandboxFrame } = await import('./SandboxFrame.js');
+      if (state.disposed || token !== state.executionToken) return;
+      execution.appendChild(
+        createSandboxFrame({
+          postId: props.post.id,
+          sandboxOrigin: props.sandboxOrigin,
+          versionId: props.versionId,
+        }),
+      );
+    }
+
+    if (state.disposed || token !== state.executionToken) return;
+    state.executionReady = true;
+    execution.hidden = state.mode !== PostCardMode.EXECUTING;
+  } catch (error) {
+    if (state.disposed || token !== state.executionToken) return;
+    console.error('Failed to execute post content:', error);
+    execution.replaceChildren();
+    const message = document.createElement('div');
+    message.className = 'stage-error';
+    message.textContent = isZipGame(props.post.payload_key)
+      ? t('post_stage.zip_load_error')
+      : props.post.swf_key
+        ? t('post_stage.flash_load_error')
+        : t('common.error');
+    execution.appendChild(message);
+    state.executionReady = true;
+    execution.hidden = state.mode !== PostCardMode.EXECUTING;
+  }
+}
+
+function disposeLayers(state: StageState): void {
+  state.executionToken++;
+  state.zipHandle?.destroy();
+  state.zipHandle = undefined;
+  state.flashHandle?.destroy();
+  state.flashHandle = undefined;
+  state.execution?.remove();
+  state.execution = null;
+  state.executionReady = false;
+  state.preview?.remove();
+  state.preview = null;
+  state.previewSignature = null;
+}
+
+/** Release a stage's timers, iframe handles and layers. */
+export function destroyPostStage(container: HTMLElement): void {
+  const state = stageStates.get(container);
+  if (!state) return;
+  state.disposed = true;
+  disposeLayers(state);
+  stageStates.delete(container);
+}
+
 export function createPostStage(props: PostStageProps): HTMLElement {
   const container = document.createElement('div');
   container.className = 'post-stage';
+  const state = stageState(container, props);
 
-  // Click handler to toggle between preview and execution modes
-  // Only for post types that have execution modes (ZIP/SWF)
+  // Click toggles the stage. Use the state's current mode instead of the mode
+  // captured at creation, so the second click returns to the preview.
   container.addEventListener('click', (e) => {
-    // Media-only posts have no execution mode — never toggle away from them
-    if (props.post.attachments?.length) {
-      return;
-    }
+    if (props.post.attachments?.length) return;
+    // Only posts with executable content have a second mode.
+    if (!props.post.payload_key && !props.post.swf_key) return;
 
-    // Don't toggle mode if clicking on execution button (ZIP or SWF)
     if ((e.target as HTMLElement).closest('.zip-execution-button')) {
       return;
     }
 
-    // Don't toggle mode for media players (image, audio, video)
     if ((e.target as HTMLElement).closest('.video-player, .audio-player, .image-preview')) {
       return;
     }
 
-    // ZIP games launch in Arcade from the mode-change handler; keep the click
-    // from bubbling to PostCard's thread navigation as well.
     if (isZipGame(props.post.payload_key)) {
       e.stopPropagation();
     }
 
-    const newMode = props.mode === PostCardMode.PREVIEW ? PostCardMode.EXECUTING : PostCardMode.PREVIEW;
-    props.onModeChange(newMode);
+    props.onModeChange(state.mode === PostCardMode.PREVIEW ? PostCardMode.EXECUTING : PostCardMode.PREVIEW);
   });
 
-  // Render current mode
   updateStageContent(container, props).catch((error) => {
     console.error('Error updating stage content:', error);
   });
@@ -251,156 +501,39 @@ export function createPostStage(props: PostStageProps): HTMLElement {
 }
 
 async function updateStageContent(container: HTMLElement, props: PostStageProps): Promise<void> {
-  // Clear existing content
-  container.innerHTML = '';
+  const state = stageState(container, props);
+  if (state.disposed) return;
 
-  const attachments = props.post.attachments || [];
-  // Timed comments (Niconico-style cues) are parsed from the author's body and
-  // overlaid on the media. Cue lines themselves are not part of the visible body.
-  const parsedCues = parseMediaCues(props.post.text).cues;
-  const cues = parsedCues.length > 0 ? parsedCues : undefined;
+  state.mode = props.mode;
+  state.postId = props.post.id;
 
-  // Only show content if there are attachments or a thumbnail
-  if (
-    attachments.length === 0 &&
-    !props.post.gif_key &&
-    !props.post.payload_key &&
-    !props.post.swf_key &&
-    !props.post.thumbnail_key
-  ) {
+  const attachments = props.post.attachments ?? [];
+  const hasMedia = Boolean(
+    attachments.length > 0 ||
+      props.post.gif_key ||
+      props.post.payload_key ||
+      props.post.swf_key ||
+      props.post.thumbnail_key,
+  );
+
+  setStageClass(container, stageClassFor(props.post));
+
+  if (!hasMedia) {
+    disposeLayers(state);
     return;
   }
 
-  if (props.mode === PostCardMode.PREVIEW) {
-    let mediaElement: HTMLElement = null!;
+  // Attachments and non-executable media never have an execution mode.
+  const canExecute = attachments.length === 0 && Boolean(props.post.payload_key || props.post.swf_key);
 
-    if (attachments.length > 0) {
-      // Multi-media attachments render as a horizontal scroll carousel
-      container.classList.add('post-stage--carousel');
-      mediaElement = createMediaCarousel({ postId: props.post.id, attachments, cues });
-      container.appendChild(mediaElement);
-      return;
-    }
-
-    if (isZipGame(props.post.payload_key)) {
-      container.classList.add('post-stage--zip'); // Add zip class for 16:9
-      if (props.post.thumbnail_key) {
-        // Show thumbnail with overlay button
-        mediaElement = createThumbnailWithOverlay({
-          postId: props.post.id,
-          thumbnailKey: props.post.thumbnail_key,
-          overlayLabel: t('post_stage.run_zip'),
-          aspectRatio: '56.25', // 16:9
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-      } else {
-        // Create ZIP execution button (existing behavior)
-        mediaElement = createExecutionButton({
-          postId: props.post.id,
-          label: t('post_stage.click_execute_zip'),
-          icon: '▶',
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-      }
-    } else if (props.post.swf_key && props.post.swf_key.startsWith('swf/')) {
-      if (props.post.thumbnail_key) {
-        // Show thumbnail with overlay button
-        mediaElement = createThumbnailWithOverlay({
-          postId: props.post.id,
-          thumbnailKey: props.post.thumbnail_key,
-          overlayLabel: t('post_stage.play_flash'),
-          aspectRatio: '75', // 4:3 = 75%
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-        // Add flash class for 4:3 aspect ratio
-        container.classList.add('post-stage--flash');
-      } else {
-        // Create SWF execution button (existing behavior)
-        mediaElement = createSwfExecutionButton({
-          postId: props.post.id,
-          label: t('post_stage.click_play_flash'),
-          icon: '▶',
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-        // Add flash class for 4:3 aspect ratio
-        container.classList.add('post-stage--flash');
-      }
-    } else if (props.post.gif_key && props.post.gif_key.startsWith('audio/')) {
-      container.classList.add('post-stage--audio');
-      mediaElement = createAudioPlayer({
-        gifKey: props.post.gif_key,
-        postId: props.post.id,
-        cues,
-      });
-    } else if (props.post.gif_key && props.post.gif_key.startsWith('video/')) {
-      container.classList.add('post-stage--video');
-      mediaElement = createVideoPlayer({
-        gifKey: props.post.gif_key,
-        postId: props.post.id,
-        cues,
-      });
-    } else if (props.post.gif_key) {
-      container.classList.add('post-stage--image');
-      mediaElement = createImagePreview({
-        gifKey: props.post.gif_key,
-        postId: props.post.id,
-        ratio: '16:9',
-      });
-    } else if (props.post.thumbnail_key) {
-      // Post has only thumbnail
-      container.classList.add('post-stage--image-thumb');
-      mediaElement = createImagePreview({
-        gifKey: props.post.thumbnail_key, // createImagePreview handles both gif and thumbnail keys
-        postId: props.post.id,
-        isThumbnail: true,
-        ratio: '16:9',
-      });
-    }
-
-    container.appendChild(mediaElement);
-
-    // Add click hint only for executable content (not images or audio)
-    if (!isZipGame(props.post.payload_key) && !props.post.swf_key?.startsWith('swf/') && !props.post.gif_key) {
-      const hint = document.createElement('div');
-      hint.className = 'stage-hint';
-      hint.textContent = t('post_stage.click_to_run');
-      container.appendChild(hint);
-    }
-  } else {
-    if (attachments.length > 0) {
-      // Attachments have no execution mode — keep showing the carousel even if
-      // the stage somehow ended up in EXECUTING mode.
-      container.classList.add('post-stage--carousel');
-      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments, cues }));
-    } else if (isZipGame(props.post.payload_key)) {
-      // The executeZipAuto function will handle creating the iframe and cleanup
-      executeZipAuto(props.post.id, container, undefined, props.versionId).catch((error: Error) => {
-        console.error('Failed to execute ZIP:', error);
-        container.innerHTML =
-          '<div style="padding: 20px; text-align: center; color: var(--text-muted);">' +
-          t('post_stage.zip_load_error') +
-          '</div>';
-      });
-    } else if (props.post.swf_key && props.post.swf_key.startsWith('swf/')) {
-      // Execute Flash/SWF content using Ruffle
-      executeFlash(props.post.id, container).catch((error) => {
-        console.error('Failed to execute SWF:', error);
-        container.innerHTML =
-          '<div style="padding: 20px; text-align: center; color: var(--text-muted);">' +
-          t('post_stage.flash_load_error') +
-          '</div>';
-      });
-    } else {
-      // For non-ZIP files, use the old sandbox frame
-      const { createSandboxFrame } = await import('./SandboxFrame.js');
-      const sandboxFrame = createSandboxFrame({
-        postId: props.post.id,
-        sandboxOrigin: props.sandboxOrigin,
-        versionId: props.versionId,
-      });
-      container.appendChild(sandboxFrame);
-    }
+  if (!canExecute || props.mode === PostCardMode.PREVIEW) {
+    if (state.execution) state.execution.hidden = true;
+    showPreview(container, state, props);
+    return;
   }
+
+  if (state.preview) state.preview.hidden = true;
+  await showExecution(container, state, props);
 }
 
 // Export a function to update the stage content when mode changes

@@ -1,14 +1,14 @@
 # Rendering
 
 Flaxia's SNS UI uses a small rendering engine extracted as
-[`@flaxia/render`](../packages/render/README.md). It is deliberately not a
+[`flaxia-render`](../packages/flaxia-render/README.md). It is deliberately not a
 general-purpose framework: it provides fine-grained updates, keyed lists and
 explicit ownership so a feed can reorder without recreating the iframes, videos
 and inputs inside its cards.
 
-The implementation lives in `packages/render/`. Flaxia imports it through
+The implementation lives in `packages/flaxia-render/`. Flaxia imports it through
 `src/lib/render/index.ts`, a one-line re-export boundary; replacing that line
-with `export * from '@flaxia/render'` is the only change needed when the package
+with `export * from 'flaxia-render'` is the only change needed when the package
 is published.
 
 The game runtime is unchanged. ZIP/SWF/HTML5 content still executes in the
@@ -32,7 +32,7 @@ The engine makes three guarantees:
 ## Core API
 
 ```ts
-import { each, html, mount, signal, when } from '@flaxia/render';
+import { each, html, mount, signal, when } from 'flaxia-render';
 
 const open = signal(false);
 
@@ -173,21 +173,29 @@ flag.
 
 Implemented:
 
-- engine extracted to `packages/render/` (`@flaxia/render`), with its own build,
-  tests and README; Flaxia consumes it through `src/lib/render/index.ts`;
+- engine extracted to `packages/flaxia-render/` (`flaxia-render`), with its own
+  build, tests and README; Flaxia consumes it through `src/lib/render/index.ts`;
 - engine core, tests, keyed lists, async resources, error boundary;
 - layout primitives and the `fx-box` contract;
 - opt-in diagnostics;
 - `PollWidget` migrated; voting updates the widget in place instead of replacing
   it;
-- `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS.
+- `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
+- navigation now builds the next view in a detached staging root and swaps it in
+  one `replaceChildren()`, so the content column is not blanked and a newer
+  navigation cannot be overwritten by an older one;
+- `PostStage` keeps a preview layer and an execution layer. Switching back to the
+  preview hides the execution layer instead of clearing it, so the game iframe
+  and its blob URLs survive; `PostCard.destroy()` releases the handles;
+- `Timeline` reuses cards by post id and moves only the nodes whose position
+  changed; ads still reserve their box before loading.
 
 Next:
 
-1. Persistent shell + content `Outlet` + keep-alive panes; remove the full-page
-   blanking in `navigateTo`.
-2. `Timeline` / `PostCard` / `PostStage`: keyed cards, a stage mounted once and
-   toggled with `hidden`, reserved media and ad boxes.
+1. Keep-alive panes for cached views (today a cached element is moved through
+   the staging root, which can still recreate an iframe).
+2. Persistent shell + content `Outlet` so the left nav, right panel and mobile
+   tab bar are mounted once.
 3. Remaining pages, then delete the old helpers and add the lint guard against
    `app.innerHTML = ''` in new view code.
 
@@ -195,8 +203,8 @@ Next:
 
 ```sh
 npm run test:render      # app + package tests
-npm run build:render     # packages/render/dist (ES + IIFE + .d.ts)
-(cd packages/render && npm test)
+npm run build:render     # packages/flaxia-render/dist (ES + IIFE + .d.ts)
+(cd packages/flaxia-render && npm test)
 ```
 
 Browser visual/CLS checks are not part of the default suite yet; they follow the

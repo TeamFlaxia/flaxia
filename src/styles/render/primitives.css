@@ -91,3 +91,14 @@
     background: none;
   }
 }
+
+/* Stage layers participate in the stage's layout (absolute media children and
+   normal-flow image previews both keep working). Hidden layers are removed from
+   layout without destroying the iframe inside them. */
+.post-stage-layer {
+  display: contents;
+}
+
+.post-stage-layer[hidden] {
+  display: none;
+}

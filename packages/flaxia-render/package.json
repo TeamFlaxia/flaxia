@@ -1,5 +1,5 @@
 {
-  "name": "@flaxia/render",
+  "name": "flaxia-render",
   "version": "0.1.0",
   "description": "Fine-grained DOM renderer with keyed lists and explicit ownership",
   "type": "module",

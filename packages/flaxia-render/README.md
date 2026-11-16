@@ -1,4 +1,4 @@
-# @flaxia/render
+# flaxia-render
 
 A small fine-grained DOM renderer extracted from Flaxia's SNS UI.
 
@@ -17,7 +17,7 @@ re-rendered subtree.
 ## Install
 
 ```sh
-npm install @flaxia/render
+npm install flaxia-render
 ```
 
 During extraction, Flaxia consumes the source through
@@ -26,7 +26,7 @@ During extraction, Flaxia consumes the source through
 ## Quick start
 
 ```ts
-import { each, html, mount, signal, when } from '@flaxia/render';
+import { each, html, mount, signal, when } from 'flaxia-render';
 
 const open = signal(false);
 const posts = signal([{ id: 'a', text: 'hello' }]);

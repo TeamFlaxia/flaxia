@@ -50,7 +50,6 @@ import { fetchNotifications, invalidateNotificationsCache } from './lib/notifica
 import { createOfflineFetch } from './lib/offline-fetch.js';
 import { isOffline, setOffline } from './lib/offline-status.js';
 import { createOfflineStore } from './lib/offline-store.js';
-import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { startRenderDiagnostics } from './lib/render-diagnostics.js';
@@ -158,6 +157,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'mail-compose'
       | 'mail-settings' = 'timeline';
     let currentPostId: string | null = null;
+    // Only the newest navigation may commit its staging tree.
+    let navigationToken = 0;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
     let currentAdminTab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
@@ -611,10 +612,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           mailComposePage = null;
         }
       }
-      showPageLoader();
-      app.innerHTML = '';
+      // Build the next view in a detached staging root. The current view stays
+      // visible until the new one is ready, so navigation never blanks the
+      // content column. The swap is a single replaceChildren().
+      const navigation = ++navigationToken;
+      const staging = document.createElement('div');
+      // Scroll restoration for the synchronous branches; the deferred
+      // requestAnimationFrame paths restore after the commit themselves.
+      let pendingScrollY: number | null = null;
 
-      // Wrap rendering in try-catch so errors don't leave the loader stuck
       try {
         // Handle legal pages (public, no auth required, no layout)
         if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
@@ -628,8 +634,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             type: view,
           });
 
-          app.appendChild(legalPage.getElement());
-          hidePageLoader();
+          staging.appendChild(legalPage.getElement());
           return;
         }
 
@@ -645,8 +650,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             slug: postId || undefined,
           });
 
-          app.appendChild(docsPage.getElement());
-          hidePageLoader();
+          staging.appendChild(docsPage.getElement());
           return;
         }
 
@@ -662,8 +666,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             success: view === 'billing-success',
           });
 
-          app.appendChild(billingPage.getElement());
-          hidePageLoader();
+          staging.appendChild(billingPage.getElement());
           return;
         }
 
@@ -719,8 +722,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           mainContainer.appendChild(rightPanel.getElement());
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
           setupMobileLeftNav(leftNav.getElement());
           return;
         }
@@ -761,8 +763,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(downloadPage.getElement());
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -798,8 +799,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(translatePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -846,8 +846,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             onTabChange,
           });
 
-          app.appendChild(adminLayout.getElement());
-          hidePageLoader();
+          staging.appendChild(adminLayout.getElement());
 
           try {
             const access = await fetch('/api/admin/access', { credentials: 'include', cache: 'no-store' });
@@ -966,7 +965,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               sandboxOrigin,
               currentUser,
             });
-            window.scrollTo(0, 0);
+            pendingScrollY = 0;
           }
 
           // Create Right Panel
@@ -977,8 +976,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(explorePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1032,8 +1030,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1085,8 +1082,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(arcadePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1122,8 +1118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(mapsPage.getElement()));
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1181,8 +1176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(profilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1227,8 +1221,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(remoteProfilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1274,7 +1267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               sandboxOrigin,
               currentUser,
             });
-            window.scrollTo(0, 0);
+            pendingScrollY = 0;
           }
 
           const rightPanel = await lazyCreateRightPanel({
@@ -1285,8 +1278,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
           setupMobileLeftNav(leftNav.getElement());
           return;
         }
@@ -1363,8 +1355,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(notificationsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1448,8 +1439,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(settingsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1568,11 +1558,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(rightPanel.getElement());
         }
 
-        app.appendChild(mainContainer);
-        hidePageLoader();
+        staging.appendChild(mainContainer);
       } catch (e) {
         console.error('Navigation error:', e);
-        showPageLoaderFailure();
+        // Drop the partial tree and keep the previous view on screen.
+        staging.replaceChildren();
+        if (navigation === navigationToken) {
+          showToast(t('common.error'), true);
+        }
+      } finally {
+        if (navigation === navigationToken && staging.childNodes.length > 0) {
+          app.replaceChildren(...staging.childNodes);
+          if (pendingScrollY !== null) window.scrollTo(0, pendingScrollY);
+        }
       }
     };
 
@@ -1596,8 +1594,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await navigateTo(view, postId, username, tag, adminTab, searchQuery, searchType);
       } catch (e) {
         console.error('Navigation failed:', e);
-        // Show error on the loading overlay if it's visible, otherwise reload
-        showPageLoaderFailure();
+        showToast(t('common.error'), true);
       }
     }
 

@@ -25,7 +25,7 @@ import { createPollElement } from './PollWidget.js';
 import { type ActionPop, createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
 import { createMenuButton, createPostMenuDropdown, setupMenuCloseHandler } from './PostMenu.js';
-import { createPostStage, isZipGame, updatePostStage } from './PostStage.js';
+import { createPostStage, destroyPostStage, isZipGame, updatePostStage } from './PostStage.js';
 import { createPostText } from './PostText.js';
 import { createQuotedPostCard } from './QuotedPostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
@@ -1221,6 +1221,12 @@ export class PostCard {
       this.replyComposer = undefined;
     }
 
+    // Stop any inline game / flash player and release its blob URLs.
+    if (this.postStageElement) {
+      destroyPostStage(this.postStageElement);
+      this.postStageElement = undefined;
+    }
+
     // Cleanup menu dropdown
     if (this.menuDropdown) {
       this.menuDropdown.remove();
@@ -1702,10 +1708,13 @@ export class PostCard {
     const oldStage = this.postStageElement;
 
     if (!hasMedia) {
+      if (oldStage) destroyPostStage(oldStage);
       oldStage?.remove();
       this.postStageElement = undefined;
       return;
     }
+
+    if (oldStage) destroyPostStage(oldStage);
 
     const newStage = createPostStage({
       post,
