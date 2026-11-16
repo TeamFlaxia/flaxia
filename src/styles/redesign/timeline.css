@@ -1410,6 +1410,15 @@
   min-width: 0;
 }
 
+/* Ultra-wide: the row still spans the pane, but the prose keeps a
+   comfortable measure so lines do not run across the whole screen. */
+@media (min-width: 1600px) {
+  .post-text,
+  .post-text-wrap {
+    max-width: 980px;
+  }
+}
+
 /* ------------------------------------------------------------
    10. Responsive
    ------------------------------------------------------------ */

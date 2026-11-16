@@ -13,12 +13,14 @@
    ------------------------------------------------------------ */
 .main-container {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: flex-start;
   width: 100%;
-  max-width: 1220px;
+  /* Edge-to-edge three-pane shell: the rails pin to the viewport edges and
+     the feed column takes the remaining width. */
+  max-width: none;
   min-height: 100vh;
-  margin: 0 auto;
+  margin: 0;
   box-sizing: border-box;
 }
 
@@ -29,7 +31,7 @@
   ):not(.mail-compose-page):not(.mail-settings-page):not(.maps-page) {
   flex: 1;
   min-width: 0;
-  max-width: 640px;
+  max-width: none;
   width: 100%;
   border-right: 1px solid var(--border);
 }
@@ -52,7 +54,7 @@
 .thread-main-content {
   flex: 1;
   min-width: 0;
-  max-width: 640px;
+  max-width: none;
   width: 100%;
   border-right: 1px solid var(--border);
 }
@@ -592,8 +594,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 290px;
-  flex-shrink: 0;
+  /* Proportional rail: the wider the viewport, the more room the cards get,
+     bounded so the search field never becomes a banner. */
+  width: clamp(288px, 22vw, 380px);
+  flex: 0 0 clamp(288px, 22vw, 380px);
   padding: 16px 14px 28px;
   position: sticky;
   top: 0;
@@ -1248,9 +1252,8 @@
    ------------------------------------------------------------ */
 @media (min-width: 769px) and (max-width: 1024px) {
   .main-container {
-    max-width: 800px;
-    justify-content: center;
-    padding-right: 72px;
+    justify-content: flex-start;
+    padding-right: 0;
   }
 
   .left-nav {
@@ -1330,7 +1333,7 @@
     ):not(.mail-compose-page):not(.mail-settings-page),
   .thread-main-content {
     flex: 1;
-    max-width: 640px;
+    max-width: none;
   }
 }
 
