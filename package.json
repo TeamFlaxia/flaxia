@@ -49,6 +49,7 @@
     "test:crowd": "node --test --experimental-strip-types tests/crowd.test.ts",
     "test:unit": "node --test --experimental-strip-types tests/file-extensions.test.ts tests/zip-validation.test.ts tests/signature.test.ts",
     "test:render": "node --test --experimental-strip-types --test-concurrency=1 \"tests/render/*.test.ts\" \"packages/flaxia-render/tests/*.test.ts\"",
+    "test:render:browser": "npm run build:render && node --test tests/render.browser.mjs",
     "test:billing": "node --test --experimental-strip-types tests/billing.test.ts",
     "test:maps": "node --test --experimental-strip-types tests/maps.test.ts",
     "test:mail": "node --test --experimental-strip-types tests/mail-*.test.ts",

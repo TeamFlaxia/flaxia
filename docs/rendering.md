@@ -3,8 +3,10 @@
 Flaxia's SNS UI uses a small rendering engine extracted as
 [`flaxia-render`](../packages/flaxia-render/README.md). It is deliberately not a
 general-purpose framework: it provides fine-grained updates, keyed lists and
-explicit ownership so a feed can reorder without recreating the iframes, videos
-and inputs inside its cards.
+explicit ownership so a feed can refresh without recreating the iframes, videos
+and inputs inside its cards. Reordering moves existing elements; browsers may
+reset an iframe's browsing context when its DOM position changes, so the safe
+case is an in-place update that keeps the order.
 
 The implementation lives in `packages/flaxia-render/`. Flaxia imports it through
 `src/lib/render/index.ts`, a one-line re-export boundary; replacing that line
@@ -26,8 +28,9 @@ The engine makes three guarantees:
 
 1. The first render of a subtree is inserted in one `replaceChildren()` call.
 2. An update touches only the parts whose signals changed.
-3. A keyed item keeps its DOM (and browsing context) across reorder, insert and
-   update.
+3. A keyed item keeps its DOM node across reorder, insert and update. In-place
+   updates (no reorder) keep an iframe's browsing context; a browser may reset it
+   when the element is moved.
 
 ## Core API
 
@@ -207,10 +210,18 @@ Remaining maintenance (not part of the stabilization contract above):
 ## Tests
 
 ```sh
-npm run test:render      # app + package tests
-npm run build:render     # packages/flaxia-render/dist (ES + IIFE + .d.ts)
+npm run test:render          # app + package unit tests (happy-dom)
+npm run build:render         # packages/flaxia-render/dist (ES + IIFE + .d.ts)
 (cd packages/flaxia-render && npm test)
+
+# Optional real-browser check; install Playwright without saving it first.
+npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+npx playwright install chromium firefox
+npm run test:render:browser
+RENDER_BROWSER=firefox npm run test:render:browser
 ```
 
-Browser visual/CLS checks are not part of the default suite yet; they follow the
-optional Playwright pattern used by `tests/game-loader.browser.mjs`.
+The browser test checks keyed element identity, text-node identity, in-place
+iframe browsing-context preservation, hidden-iframe preservation and layout
+shift. Chromium and Firefox are covered; WebKit needs the host libraries listed
+by `npx playwright install webkit` (libicu, flite, gstreamer) and is optional.

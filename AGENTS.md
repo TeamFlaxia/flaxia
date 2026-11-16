@@ -131,6 +131,7 @@ npm run lint          # biome check .
 npm run migrate:local # apply D1 migrations locally
 npm test              # all test suites (needs dev:test server; see below)
 npm run test:render   # renderer/layout unit tests only
+npm run test:render:browser  # optional Playwright check (Chromium/Firefox)
 npm run build:render  # build flaxia-render (packages/flaxia-render/dist)
 npm run test:billing  # billing tests only
 ```
