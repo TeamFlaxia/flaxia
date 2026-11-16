@@ -37,113 +37,6 @@
   }
 }
 
-@scope (.right-panel) {
-  .right-card {
-    padding: 8px 12px;
-  }
-
-  .right-card + .right-card {
-    margin-top: 8px;
-  }
-
-  .search-section {
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  .search-box {
-    position: relative;
-    height: 36px;
-    border: none;
-    background: transparent;
-  }
-
-  .trending-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-
-  .trending-item {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 5px 2px;
-    text-decoration: none;
-    color: inherit;
-    border-radius: 6px;
-  }
-
-  /* The top tag is the headline of the card. */
-  .trending-item:first-child {
-    padding-bottom: 10px;
-    margin-bottom: 2px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .trending-item:first-child .trending-hashtag {
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .trending-item:first-child .trending-rank {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent-text);
-  }
-
-  .trending-rank {
-    flex: 0 0 14px;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    text-align: left;
-  }
-
-  .trending-content {
-    flex: 1 1 auto;
-    min-width: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: 6px;
-    row-gap: 1px;
-  }
-
-  .trending-hashtag {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  /* The count is a footnote to the tag, not a column of its own. */
-  .trending-count {
-    flex: 0 0 auto;
-    font-size: 11.5px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .trending-hashtag {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .trending-count {
-    color: var(--text-muted);
-  }
-}
-
-@media (hover: hover) {
-  @scope (.right-panel) {
-    .trending-item:hover {
-      background: var(--bg-hover);
-    }
-  }
-}
-
 /* Shared share-of-posts meter (right rail + Explore). */
 .trending-bar {
   width: 100%;
@@ -220,10 +113,9 @@
   }
 
   .left-nav.left-nav--icons .nav-brand-name,
-  .left-nav.left-nav--icons .nav-command-text,
-  .left-nav.left-nav--icons .nav-kbd,
   .left-nav.left-nav--icons .nav-item-label,
   .left-nav.left-nav--icons .nav-section--tags,
+  .left-nav.left-nav--icons .nav-promo,
   .left-nav.left-nav--icons .nav-post-label,
   .left-nav.left-nav--icons .nav-user-info,
   .left-nav.left-nav--icons .nav-user-kebab,
@@ -235,13 +127,6 @@
   .left-nav.left-nav--icons .nav-brand-inner {
     justify-content: center;
     padding: 6px;
-  }
-
-  .left-nav.left-nav--icons .nav-command {
-    justify-content: center;
-    width: 44px;
-    min-height: 40px;
-    padding: 8px;
   }
 
   .left-nav.left-nav--icons .nav-item {
@@ -275,25 +160,10 @@
     width: 200px;
   }
 
-  .left-nav.left-nav--icons .nav-auth-buttons {
-    width: 44px;
-    padding: 0;
-    gap: 8px;
-  }
-
-  .left-nav.left-nav--icons .nav-auth-buttons .nav-signin-button {
-    width: 44px;
-    min-height: 44px;
-    padding: 0;
-    border-radius: 50%;
-  }
-
-  .left-nav.left-nav--icons .nav-auth-label,
   .left-nav.left-nav--icons .nav-app-promo-text {
     display: none;
   }
 
-  .left-nav.left-nav--icons .nav-auth-icon svg,
   .left-nav.left-nav--icons .nav-app-promo svg {
     width: 18px;
     height: 18px;

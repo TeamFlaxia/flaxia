@@ -162,6 +162,7 @@ const groups = {
     'device-platform',
     'left-nav-handlers',
     'left-nav-layout',
+    'nav-items',
     'mail-address',
     'mail-mime-guard',
     'mail-routing',

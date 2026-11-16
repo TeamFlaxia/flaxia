@@ -80,13 +80,15 @@
   --post-color-kimwaipu: #047857;
   --post-rainbow: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #2563eb, #7c3aed, #db2777);
 
-  /* Radii — 8px base, shadcn-like */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 12px;
-  --radius-card: 12px;
+  /* Radii — 6px base. Cards are a hairline, not a bubble; only floating
+     surfaces (dialogs, popovers, pills) get more. */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --radius-card: 8px;
+  --radius-button: 6px;
   --radius-pill: 999px;
 
   /* Elevation — shadcn shadows, never blurry glow */
@@ -125,6 +127,8 @@
   /* Layout */
   --bottom-nav-h: 0px;
   --top-bar-h: 0px;
+  /* Global header height; the sticky rails and page headers offset by it. */
+  --app-header-height: 56px;
 }
 
 :root[data-theme="dark"] {
