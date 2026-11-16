@@ -475,8 +475,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const HEADERLESS_VIEWS: ReadonlySet<RouteView> = new Set<RouteView>([
       'login',
       'register',
-      // The arcade owns the whole viewport (its own header + full-bleed game).
-      'arcade',
       'terms',
       'privacy',
       'child-safety',
