@@ -181,23 +181,28 @@ Implemented:
 - `PollWidget` migrated; voting updates the widget in place instead of replacing
   it;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
-- navigation now builds the next view in a detached staging root and swaps it in
-  one `replaceChildren()`, so the content column is not blanked and a newer
+- navigation builds the next view in a detached staging root and swaps it in one
+  `replaceChildren()`, so the content column is not blanked and a newer
   navigation cannot be overwritten by an older one;
+- the whole current view is parked in a hidden in-document host when opening a
+  thread or Arcade, then restored without rebuilding. Iframes keep their
+  browsing context and the timeline scroll position is preserved;
 - `PostStage` keeps a preview layer and an execution layer. Switching back to the
   preview hides the execution layer instead of clearing it, so the game iframe
   and its blob URLs survive; `PostCard.destroy()` releases the handles;
 - `Timeline` reuses cards by post id and moves only the nodes whose position
-  changed; ads still reserve their box before loading.
+  changed; ads and link previews reserve their box before loading;
+- the full-page loader was removed; `tests/render/guards.test.ts` prevents it
+  and `#app.innerHTML = ''` from coming back;
+- font loading uses `display=optional`, and desktop scrollbars reserve their
+  gutter.
 
-Next:
+Remaining maintenance (not part of the stabilization contract above):
 
-1. Keep-alive panes for cached views (today a cached element is moved through
-   the staging root, which can still recreate an iframe).
-2. Persistent shell + content `Outlet` so the left nav, right panel and mobile
-   tab bar are mounted once.
-3. Remaining pages, then delete the old helpers and add the lint guard against
-   `app.innerHTML = ''` in new view code.
+1. Page-by-page migration of the remaining components (PostCard internals,
+   Settings, Admin, Mail, Maps, etc.) to the renderer.
+2. CSS layer consolidation and a full cross-browser visual matrix.
+3. Real-device CLS/LCP measurement using `?render-debug=1`.
 
 ## Tests
 

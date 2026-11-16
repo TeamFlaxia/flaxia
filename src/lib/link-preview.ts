@@ -321,6 +321,17 @@ export function loadLinkPreview(text: string, container: HTMLElement, isAuthenti
     return;
   }
 
+  // Reserve the text-only card height while the OG fetch is in flight. The
+  // final card may be taller when it has an image, but the post no longer grows
+  // from zero. Node unit tests pass a plain object, so only touch the DOM when
+  // a real container is available.
+  const canRender = typeof document !== 'undefined' && typeof container.appendChild === 'function';
+  const skeleton = canRender ? document.createElement('div') : null;
+  if (skeleton) {
+    skeleton.className = 'post-link-preview-skeleton';
+    container.appendChild(skeleton);
+  }
+
   fetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
     .then(async (res) => {
       if (!res.ok) {
@@ -333,10 +344,14 @@ export function loadLinkPreview(text: string, container: HTMLElement, isAuthenti
       const d = data as LinkPreviewData;
       if (d && d.url) {
         const card = createLinkPreviewCard(d);
-        container.appendChild(card);
+        if (skeleton) skeleton.replaceWith(card);
+        else container.appendChild(card);
+      } else {
+        skeleton?.remove();
       }
     })
     .catch((err) => {
+      skeleton?.remove();
       console.warn('Failed to load link preview:', err);
     });
 }

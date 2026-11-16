@@ -533,13 +533,11 @@ img {
 /* ------------------------------------------------------------
    5. Loaders
    ------------------------------------------------------------ */
-.initial-loader,
-.page-loader {
+.initial-loader {
   background: var(--bg-primary);
 }
 
-.initial-loader-spinner,
-.page-loader-spinner {
+.initial-loader-spinner {
   /* A square registration mark, not a glossy conic spinner. */
   width: 28px;
   height: 28px;
@@ -552,8 +550,7 @@ img {
   animation: fx-spin 800ms linear infinite;
 }
 
-.initial-loader-content,
-.page-loader-content {
+.initial-loader-content {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: var(--tracking-wide);
@@ -829,8 +826,7 @@ img {
 }
 
 /* Loader: a quiet neutral ring. */
-.initial-loader-spinner,
-.page-loader-spinner {
+.initial-loader-spinner {
   width: 24px;
   height: 24px;
   border: 2px solid var(--border);

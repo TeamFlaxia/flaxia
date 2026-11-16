@@ -6,6 +6,12 @@
  * load order, image dimensions or iframe timing.
  */
 
+/* Reserve the desktop scrollbar so the 3-column shell does not shift when the
+   document changes between short and tall views. */
+html {
+  scrollbar-gutter: stable;
+}
+
 .fx-box {
   position: relative;
   inline-size: 100%;
@@ -101,4 +107,15 @@
 
 .post-stage-layer[hidden] {
   display: none;
+}
+
+/* Link previews arrive after the post body. Reserve a text-card-sized slot so
+   the feed does not jump while the OG fetch is in flight. */
+.post-link-preview-skeleton {
+  min-block-size: 84px;
+  margin: 0.75rem 0 1rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: var(--bg-tertiary, #f1f5f9);
+  contain: layout paint;
 }

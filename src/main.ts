@@ -66,6 +66,22 @@ interface PageComponent {
   destroy(): void;
 }
 
+type ParkableView = 'timeline' | 'profile' | 'explore' | 'search' | 'bookmarks' | 'notifications';
+type ParkedSearchType = 'posts' | 'users' | 'arcade' | 'web';
+
+interface ParkedView {
+  key: string;
+  view: ParkableView;
+  component: PageComponent;
+  nodes: Node[];
+  scrollY: number;
+  postId: string | null;
+  username: string | null;
+  tag: string | null;
+  searchQuery?: string;
+  searchType?: ParkedSearchType;
+}
+
 // Initialize performance monitoring
 initPerformanceMonitoring();
 // Opt-in layout diagnostics (`?render-debug=1`); no-op otherwise.
@@ -124,6 +140,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app');
   if (app) {
     history.scrollRestoration = 'manual';
+    const appRoot = app;
+
+    // A hidden parking element keeps a cached view in the document. `display:
+    // none` does not destroy an iframe's browsing context, unlike removing it.
+    const parkedHost = document.createElement('div');
+    parkedHost.id = 'app-parking';
+    parkedHost.style.display = 'none';
+    document.body.appendChild(parkedHost);
 
     await initI18n();
 
@@ -161,6 +185,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let navigationToken = 0;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
+    let currentSearchQuery: string | undefined;
+    let currentSearchType: ParkedSearchType | undefined;
     let currentAdminTab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
@@ -181,7 +207,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let mailSettingsPage: PageComponent | null = null;
     let mailThreadPage: PageComponent | null = null;
     let mailComposePage: PageComponent | null = null;
-    let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
+    let parkedView: ParkedView | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
       | null = null;
@@ -189,6 +215,95 @@ document.addEventListener('DOMContentLoaded', async () => {
     let adminHiddenTab: PageComponent | null = null;
     let adminUsersTab: PageComponent | null = null;
     let adminAdsTab: PageComponent | null = null;
+
+    function parkingKey(
+      view: string,
+      postId?: string | null,
+      username?: string | null,
+      tag?: string | null,
+      searchQuery?: string,
+      searchType?: ParkedSearchType,
+    ): string {
+      switch (view) {
+        case 'timeline':
+          return 'timeline';
+        case 'profile':
+          return `profile:${username ?? ''}`;
+        case 'explore':
+          return `explore:${tag ?? ''}`;
+        case 'search':
+          return `search:${searchQuery ?? ''}:${searchType ?? ''}`;
+        case 'bookmarks':
+          return 'bookmarks';
+        case 'notifications':
+          return 'notifications';
+        default:
+          return `${view}:${postId ?? ''}:${username ?? ''}:${tag ?? ''}`;
+      }
+    }
+
+    function restoreParkedComponent(parked: ParkedView): void {
+      switch (parked.view) {
+        case 'timeline':
+          timeline = parked.component as Timeline;
+          break;
+        case 'profile':
+          profilePage = parked.component;
+          break;
+        case 'explore':
+          explorePage = parked.component as ExplorePage;
+          break;
+        case 'search':
+          searchPage = parked.component;
+          break;
+        case 'bookmarks':
+          bookmarksPage = parked.component as BookmarksPage;
+          break;
+        case 'notifications':
+          notificationsPage = parked.component as NotificationsPage;
+          break;
+      }
+    }
+
+    function disposeParkedView(): void {
+      if (!parkedView) return;
+      parkedView.component.destroy();
+      parkedView = null;
+      parkedHost.replaceChildren();
+    }
+
+    function parkCurrentView(view: ParkableView, component: PageComponent, scrollY: number): void {
+      if (parkedView) disposeParkedView();
+      const nodes = [...appRoot.childNodes];
+      parkedView = {
+        key: parkingKey(view, currentPostId, _currentUsername, currentTag, currentSearchQuery, currentSearchType),
+        view,
+        component,
+        nodes,
+        scrollY,
+        postId: currentPostId,
+        username: _currentUsername,
+        tag: currentTag,
+        searchQuery: currentSearchQuery,
+        searchType: currentSearchType,
+      };
+      parkedHost.replaceChildren(...nodes);
+    }
+
+    function restoreParkedView(parked: ParkedView): void {
+      appRoot.replaceChildren(...parked.nodes);
+      parkedHost.replaceChildren();
+      currentView = parked.view;
+      currentPostId = parked.postId;
+      _currentUsername = parked.username;
+      currentTag = parked.tag;
+      currentSearchQuery = parked.searchQuery;
+      currentSearchType = parked.searchType;
+      restoreParkedComponent(parked);
+      const leftNavElement = appRoot.querySelector<HTMLElement>('.left-nav');
+      if (leftNavElement) setupMobileLeftNav(leftNavElement);
+      window.scrollTo(0, parked.scrollY);
+    }
     const leftNavInstances: Set<LeftNav> = new Set();
 
     /** Deps for the mobile bottom bar (see src/lib/bottom-nav-setup.ts). */
@@ -520,25 +635,32 @@ document.addEventListener('DOMContentLoaded', async () => {
           return; // Auth guard will redirect to login
         }
 
-        // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
+        if (view === 'search') {
+          currentSearchQuery = searchQuery;
+          currentSearchType = searchType;
+        }
+
+        // Park the current view when opening a detail view. The whole app DOM
+        // is kept hidden instead of being rebuilt, so iframes and scroll state
+        // survive the round trip.
         if ((view === 'thread' || view === 'arcade') && currentView !== view) {
           if (currentView === 'timeline' && timeline) {
-            cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
+            parkCurrentView('timeline', timeline, window.scrollY);
             timeline = null;
           } else if (currentView === 'profile' && profilePage) {
-            cachedContentComponent = { view: 'profile', component: profilePage, scrollY: window.scrollY };
+            parkCurrentView('profile', profilePage, window.scrollY);
             profilePage = null;
           } else if (currentView === 'explore' && explorePage) {
-            cachedContentComponent = { view: 'explore', component: explorePage, scrollY: window.scrollY };
+            parkCurrentView('explore', explorePage, window.scrollY);
             explorePage = null;
           } else if (currentView === 'search' && searchPage) {
-            cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
+            parkCurrentView('search', searchPage, window.scrollY);
             searchPage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
-            cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
+            parkCurrentView('bookmarks', bookmarksPage, window.scrollY);
             bookmarksPage = null;
           } else if (currentView === 'notifications' && notificationsPage) {
-            cachedContentComponent = { view: 'notifications', component: notificationsPage, scrollY: window.scrollY };
+            parkCurrentView('notifications', notificationsPage, window.scrollY);
             notificationsPage = null;
           }
         }
@@ -612,6 +734,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           mailComposePage = null;
         }
       }
+      // A previously parked view is restored without rebuilding it. Its DOM
+      // stayed in the document (hidden), so iframes did not reload.
+      const targetKey = parkingKey(view, postId, username, tag, searchQuery, searchType);
+      if (parkedView && parkedView.key === targetKey) {
+        const parked = parkedView;
+        parkedView = null;
+        restoreParkedView(parked);
+        return;
+      }
+      if (parkedView && view !== 'thread' && view !== 'arcade') {
+        disposeParkedView();
+      }
+
       // Build the next view in a detached staging root. The current view stays
       // visible until the new one is ready, so navigation never blanks the
       // content column. The swap is a single replaceChildren().
@@ -949,15 +1084,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'explore') {
-            explorePage = cachedContentComponent.component as ExplorePage;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh explore page
             const { createExplorePage } = await import('./components/ExplorePage.js');
             explorePage = createExplorePage({
@@ -1006,15 +1133,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'search') {
-            searchPage = cachedContentComponent.component as PageComponent;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             const { createSearchPage } = await import('./components/SearchPage.js');
             searchPage = createSearchPage({
               query: searchQuery || '',
@@ -1149,15 +1268,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'profile') {
-            profilePage = cachedContentComponent.component as PageComponent;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh profile page
             const { createProfilePage } = await import('./components/ProfilePage.js');
             profilePage = createProfilePage({
@@ -1253,14 +1364,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
           leftNavInstances.add(leftNav);
 
-          if (cachedContentComponent?.view === 'bookmarks') {
-            bookmarksPage = cachedContentComponent.component as BookmarksPage;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
             const { createBookmarksPage } = await import('./components/BookmarksPage.js');
             bookmarksPage = createBookmarksPage({
@@ -1312,12 +1416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Create Notifications Page. Always rebuild from the freshly fetched
           // data (only the scroll position is restored) so notifications that
           // arrived while a thread/Arcade was open are not lost.
-          let notificationsScrollY = 0;
-          if (cachedContentComponent?.view === 'notifications') {
-            notificationsScrollY = cachedContentComponent.scrollY;
-            (cachedContentComponent.component as NotificationsPage).destroy();
-            cachedContentComponent = null;
-          }
+          const notificationsScrollY = 0;
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -1505,15 +1604,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'timeline') {
-            timeline = cachedContentComponent.component as Timeline;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh timeline
             const { createTimeline } = await import('./components/Timeline.js');
             timeline = createTimeline({
@@ -1568,8 +1659,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } finally {
         if (navigation === navigationToken && staging.childNodes.length > 0) {
-          app.replaceChildren(...staging.childNodes);
+          appRoot.replaceChildren(...staging.childNodes);
           if (pendingScrollY !== null) window.scrollTo(0, pendingScrollY);
+        } else if (navigation === navigationToken && appRoot.childNodes.length === 0 && parkedView) {
+          const parked = parkedView;
+          parkedView = null;
+          restoreParkedView(parked);
         }
       }
     };
