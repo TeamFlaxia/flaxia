@@ -687,7 +687,10 @@ export class ChildPart implements Part {
     if (this.disposed) return;
     this.disposed = true;
     this.disposeAccessor();
-    this.clearContent(false);
+    // Disposing a part must also dispose the directive that owns its content
+    // (`each`, `when`, `boundary`, ...). `clearContent(false)` is only for
+    // content replacement where the directive itself stays alive.
+    this.clearContent(true);
     this.start.remove();
     this.end.remove();
   }

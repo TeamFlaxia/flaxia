@@ -8,6 +8,7 @@ import { createPageHeader } from '../lib/page-header.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createOfflineDownloads } from './OfflineDownloads.ts';
@@ -33,9 +34,12 @@ export class BookmarksPage {
   private postUpdatedHandler?: (e: Event) => void;
   private arcadeSection: HTMLElement | null = null;
   private downloads?: ReturnType<typeof createOfflineDownloads>;
+  private postsSignal: Signal<Post[]>;
+  private listMount?: Mounted;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
+    this.postsSignal = signal<Post[]>([]);
     this.infiniteScroll = createInfiniteScroll({
       onLoadMore: () => this.loadContent(),
       canLoadMore: () => !this.loading && this.hasMore,
@@ -70,6 +74,32 @@ export class BookmarksPage {
     postsContainer.className = 'bookmarks-posts';
     postsContainer.style.width = '100%';
     container.appendChild(postsContainer);
+
+    this.listMount = mount(postsContainer, () =>
+      each(
+        () => this.postsSignal(),
+        (post) => post.id,
+        (post) => {
+          const value = post();
+          try {
+            const postCard = createPostCard({
+              post: value,
+              sandboxOrigin: this.props.sandboxOrigin,
+              currentUser: this.props.currentUser || undefined,
+              depth: value.depth,
+            });
+            this.postCards.set(value.id, postCard);
+            return legacy(postCard.getElement(), () => {
+              postCard.destroy();
+              this.postCards.delete(value.id);
+            });
+          } catch (error) {
+            console.error('Failed to render bookmark post:', error);
+            return document.createComment('bookmark-render-failed');
+          }
+        },
+      ),
+    );
 
     const loadingContainer = document.createElement('div');
     loadingContainer.className = 'bookmarks-loading';
@@ -134,27 +164,8 @@ export class BookmarksPage {
 
   private renderPosts(): void {
     const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement;
-    if (!postsContainer) return;
-
-    const fragment = document.createDocumentFragment();
-    const startIndex = postsContainer.children.length;
-
-    for (let i = startIndex; i < this.posts.length; i++) {
-      try {
-        const postCard = createPostCard({
-          post: this.posts[i],
-          sandboxOrigin: this.props.sandboxOrigin,
-          currentUser: this.props.currentUser || undefined,
-          depth: this.posts[i].depth,
-        });
-        this.postCards.set(this.posts[i].id, postCard);
-        fragment.appendChild(postCard.getElement());
-      } catch (err) {
-        console.error('Failed to render bookmark post:', err);
-      }
-    }
-
-    postsContainer.appendChild(fragment);
+    postsContainer?.querySelector('.page-empty')?.remove();
+    this.postsSignal.set([...this.posts]);
     this.updateArcadeSection();
   }
 
@@ -299,8 +310,9 @@ export class BookmarksPage {
       this.posts = [];
       this.cursor = undefined;
       this.hasMore = true;
-      const postsContainer = this.element.querySelector('.bookmarks-posts');
-      if (postsContainer) postsContainer.innerHTML = '';
+      this.postsSignal.set([]);
+      this.element.querySelector('.page-empty')?.remove();
+      this.hideError();
       this.loadContent();
     });
 
@@ -334,7 +346,9 @@ export class BookmarksPage {
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
-    this.postCards.forEach((card) => void card.destroy());
+    // The mount disposer calls each legacy card's destroy via its cleanup.
+    this.listMount?.dispose();
+    this.listMount = undefined;
     this.postCards.clear();
     this.infiniteScroll.disconnect();
   }

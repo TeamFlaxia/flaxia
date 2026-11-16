@@ -183,6 +183,9 @@ Implemented:
 - opt-in diagnostics;
 - `PollWidget` migrated; voting updates the widget in place instead of replacing
   it;
+- `BookmarksPage` uses a keyed `each()` for its post list. Existing `PostCard`
+  instances are wrapped with `legacy()`; appending a page reuses the current
+  cards, and removing/unmounting disposes them through the engine owner;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
