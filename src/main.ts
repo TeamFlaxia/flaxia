@@ -10,6 +10,7 @@ import './styles/redesign/mail.css';
 import './styles/redesign/command.css';
 import './styles/redesign/rail.css';
 import './styles/redesign/motion.css';
+import './styles/render/primitives.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
 import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
@@ -52,6 +53,7 @@ import { createOfflineStore } from './lib/offline-store.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
+import { startRenderDiagnostics } from './lib/render-diagnostics.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
@@ -67,6 +69,8 @@ interface PageComponent {
 
 // Initialize performance monitoring
 initPerformanceMonitoring();
+// Opt-in layout diagnostics (`?render-debug=1`); no-op otherwise.
+startRenderDiagnostics();
 
 // Capture Capacitor's patched fetch; local assets stay in the bundle.
 const nativeClient = isNativeApp();

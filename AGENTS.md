@@ -47,6 +47,8 @@ CI run with npm).
 │   └── lib/                   # Server-side helpers (auth, billing, crowd, ...)
 ├── src/                       # Client-side SPA
 │   ├── components/            # UI components (PostCard, Timeline, SettingsPage, ...)
+│   ├── lib/render/            # UI renderer: signals, templates, keyed lists
+│   ├── lib/layout/            # Reserved layout boxes (.fx-box)
 │   ├── lib/                   # Utilities (i18n, bridge, zip, settings, ...)
 │   └── types/                 # TypeScript type definitions
 ├── public/                    # Static assets + locales/{en,ja}.json
@@ -70,6 +72,7 @@ CI run with npm).
 - Prepared statements always for D1 queries
 - Shared modules for sandbox rendering, R2 uploads, billing — no duplication
 - New API routes go in `functions/api/routes/*.ts` and are mounted in `functions/api/[[route]].ts`
+- New SNS UI code uses `src/lib/render/` and `src/lib/layout/`; `innerHTML` is not a rendering primitive for dynamic content (see `docs/rendering.md`)
 
 ## Important Constraints
 - Post text: ≤ 200 characters
@@ -126,6 +129,7 @@ npm run typecheck     # tsc --noEmit
 npm run lint          # biome check .
 npm run migrate:local # apply D1 migrations locally
 npm test              # all test suites (needs dev:test server; see below)
+npm run test:render   # renderer/layout unit tests only
 npm run test:billing  # billing tests only
 ```
 
@@ -137,4 +141,4 @@ npm run test:billing  # in another shell
 ```
 
 ## Detailed Specifications
-See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The Flaxia Mail design (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md` — design only until implementation starts.
+See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The client renderer, template rules, ownership model, and reserved layout boxes are specified in `docs/rendering.md`. The Flaxia Mail design (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md` — design only until implementation starts.

@@ -1,0 +1,93 @@
+/**
+ * Resolved layout primitives.
+ *
+ * These classes are the contract between a component and the feed: the outer
+ * size is owned by the box, and the child fills it. Nothing here depends on
+ * load order, image dimensions or iframe timing.
+ */
+
+.fx-box {
+  position: relative;
+  inline-size: 100%;
+  aspect-ratio: var(--fx-ratio, auto);
+  min-block-size: var(--fx-min, 0px);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-tertiary, #f1f5f9);
+  contain: layout paint;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.fx-box__inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.fx-box__inner > img,
+.fx-box__inner > video,
+.fx-box__inner > canvas,
+.fx-box__inner > svg,
+.fx-box > img,
+.fx-box > video {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.fx-box__inner > iframe {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border: 0;
+}
+
+.fx-ad-slot {
+  min-block-size: 250px;
+}
+
+.fx-reserve {
+  min-block-size: var(--fx-min, 0px);
+  contain: layout;
+}
+
+.fx-skeleton {
+  background: var(--bg-tertiary, #f1f5f9);
+}
+
+.fx-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--bg-hover, rgba(15, 23, 42, 0.045)) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: fx-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes fx-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-skeleton::after {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .fx-box,
+  .fx-skeleton {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .fx-skeleton::after {
+    background: none;
+  }
+}
