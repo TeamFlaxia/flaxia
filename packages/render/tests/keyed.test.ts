@@ -2,7 +2,7 @@ import './setup.ts';
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { each, flushEffects, html, mount, signal } from '../../src/lib/render/index.ts';
+import { each, flushEffects, html, mount, signal } from '../src/index.ts';
 
 interface Row {
   id: string;

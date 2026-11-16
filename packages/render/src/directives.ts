@@ -8,7 +8,7 @@
 
 import { createOwner, disposeOwner, type Owner, onCleanup, runInOwner } from './owner.ts';
 import { type Accessor, effect, type Signal, signal, untrack } from './signal.ts';
-import { ChildPart, type Directive, isTemplateResult, moveRangeBefore, type Renderable } from './template.ts';
+import { ChildPart, type Directive, moveRangeBefore, type Renderable } from './template.ts';
 
 export interface ItemRecord<T> {
   key: string | number;
@@ -43,7 +43,6 @@ export function when(condition: Accessor<boolean>, onTrue: () => Renderable, onF
 
 function reconcile<T>(
   part: ChildPart,
-  start: Comment,
   end: Comment,
   records: Map<string | number, ItemRecord<T>>,
   list: readonly T[],
@@ -129,7 +128,7 @@ export function each<T>(
 
       disposeEffect = effect(() => {
         const list = items();
-        untrack(() => reconcile(part, start, end, records, list, keyOf, render));
+        untrack(() => reconcile(part, end, records, list, keyOf, render));
       });
     },
     dispose() {
@@ -139,5 +138,3 @@ export function each<T>(
     },
   };
 }
-
-export { isTemplateResult };

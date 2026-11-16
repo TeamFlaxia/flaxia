@@ -2,9 +2,9 @@ import './setup.ts';
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { boundary, resource } from '../../src/lib/render/async.ts';
-import { html, mount } from '../../src/lib/render/index.ts';
-import { createOwner, disposeOwner, runInOwner } from '../../src/lib/render/owner.ts';
+import { boundary, resource } from '../src/async.ts';
+import { html, mount } from '../src/index.ts';
+import { createOwner, disposeOwner, runInOwner } from '../src/owner.ts';
 
 function createRoot(): HTMLElement {
   return document.createElement('div');

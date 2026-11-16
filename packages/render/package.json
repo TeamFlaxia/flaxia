@@ -1,0 +1,46 @@
+{
+  "name": "@flaxia/render",
+  "version": "0.1.0",
+  "description": "Fine-grained DOM renderer with keyed lists and explicit ownership",
+  "type": "module",
+  "sideEffects": false,
+  "main": "dist/render.js",
+  "module": "dist/render.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/render.js",
+      "default": "./dist/render.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist && node scripts/fix-declarations.mjs",
+    "dev": "vite build --watch",
+    "test": "node --test --experimental-strip-types --test-concurrency=1 \"tests/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TeamFlaxia/flaxia.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "happy-dom": "^21.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2"
+  }
+}

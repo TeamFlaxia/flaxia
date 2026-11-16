@@ -2,7 +2,7 @@ import './setup.ts';
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { each, effect, flushEffects, html, legacy, mount, onMount, signal, when } from '../../src/lib/render/index.ts';
+import { each, effect, flushEffects, html, legacy, mount, onMount, signal, when } from '../src/index.ts';
 
 function createRoot(): HTMLElement {
   return document.createElement('div');

@@ -2,7 +2,7 @@ import './setup.ts';
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { batch, computed, effect, flushEffects, signal, untrack } from '../../src/lib/render/signal.ts';
+import { batch, computed, effect, flushEffects, signal, untrack } from '../src/signal.ts';
 
 describe('render/signal', () => {
   it('reads, writes and peeks a signal', () => {

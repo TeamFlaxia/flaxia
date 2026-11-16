@@ -1,9 +1,15 @@
 # Rendering
 
-Flaxia's SNS UI uses a small in-repo rendering engine (`src/lib/render/`). It is
-deliberately not a general-purpose framework: it provides fine-grained updates,
-keyed lists and explicit ownership so a feed can reorder without recreating the
-iframes, videos and inputs inside its cards.
+Flaxia's SNS UI uses a small rendering engine extracted as
+[`@flaxia/render`](../packages/render/README.md). It is deliberately not a
+general-purpose framework: it provides fine-grained updates, keyed lists and
+explicit ownership so a feed can reorder without recreating the iframes, videos
+and inputs inside its cards.
+
+The implementation lives in `packages/render/`. Flaxia imports it through
+`src/lib/render/index.ts`, a one-line re-export boundary; replacing that line
+with `export * from '@flaxia/render'` is the only change needed when the package
+is published.
 
 The game runtime is unchanged. ZIP/SWF/HTML5 content still executes in the
 sandbox origin under the rules in [`docs/sandbox.md`](sandbox.md); this engine
@@ -26,7 +32,7 @@ The engine makes three guarantees:
 ## Core API
 
 ```ts
-import { each, html, mount, signal, when } from '../lib/render/index.ts';
+import { each, html, mount, signal, when } from '@flaxia/render';
 
 const open = signal(false);
 
@@ -167,6 +173,8 @@ flag.
 
 Implemented:
 
+- engine extracted to `packages/render/` (`@flaxia/render`), with its own build,
+  tests and README; Flaxia consumes it through `src/lib/render/index.ts`;
 - engine core, tests, keyed lists, async resources, error boundary;
 - layout primitives and the `fx-box` contract;
 - opt-in diagnostics;
@@ -186,7 +194,9 @@ Next:
 ## Tests
 
 ```sh
-npm run test:render
+npm run test:render      # app + package tests
+npm run build:render     # packages/render/dist (ES + IIFE + .d.ts)
+(cd packages/render && npm test)
 ```
 
 Browser visual/CLS checks are not part of the default suite yet; they follow the

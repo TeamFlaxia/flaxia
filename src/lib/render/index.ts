@@ -1,14 +1,13 @@
-export type { Resource } from './async.ts';
-export { boundary, resource } from './async.ts';
-export type { ItemRecord } from './directives.ts';
-export { each, when } from './directives.ts';
-export { legacy } from './legacy.ts';
-export type { Mounted } from './mount.ts';
-
-export { mount, onMount } from './mount.ts';
-export { onCleanup } from './owner.ts';
-export { afterPaint, scheduleIdle, waitForPaint } from './scheduler.ts';
-export type { Accessor, Signal } from './signal.ts';
-export { batch, computed, effect, flushEffects, signal, untrack } from './signal.ts';
-export type { Directive, Renderable, TemplateResult } from './template.ts';
-export { ChildPart, html, instantiate, isDirective, isTemplateResult } from './template.ts';
+/**
+ * App-side boundary for `@flaxia/render`.
+ *
+ * The implementation lives in `packages/render/src` so it can be built, tested
+ * and published on its own. Flaxia imports through this file to keep the
+ * dependency boundary explicit.
+ *
+ * When the package is published (or installed from a separate repository),
+ * replace the re-export below with:
+ *
+ *   export * from '@flaxia/render';
+ */
+export * from '../../../packages/render/src/index.ts';
