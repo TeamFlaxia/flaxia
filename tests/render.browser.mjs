@@ -14,6 +14,7 @@ import { test } from 'node:test';
 const playwrightModule = process.env.PLAYWRIGHT_MODULE ?? 'playwright';
 const { chromium, firefox, webkit } = await import(playwrightModule);
 const browserName = process.env.RENDER_BROWSER ?? 'chromium';
+const chromiumExecutable = process.env.RENDER_CHROMIUM_EXECUTABLE;
 const engine = { chromium, firefox, webkit }[browserName];
 assert.ok(engine, `unknown RENDER_BROWSER: ${browserName}`);
 
