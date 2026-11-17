@@ -215,6 +215,9 @@ Implemented:
   both flat and tree modes. New root replies append to the source list and
   re-render keyed entries; child replies stay in the source list for later tree
   rebuilds;
+- MapsPage keeps its MapLibre canvas, but the WebGL fallback tile grid is keyed by
+  z/x/y and the weather overlay is driven by loading/error/ready signals instead
+  of `innerHTML`;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
