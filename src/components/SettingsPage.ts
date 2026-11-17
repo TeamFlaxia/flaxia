@@ -76,6 +76,12 @@ interface SettingsTitle {
   equipped?: boolean;
 }
 
+interface BillingHistoryRow {
+  key: string;
+  left: string;
+  right: string;
+}
+
 type TitleEntry = { kind: 'title'; title: SettingsTitle } | { kind: 'empty' } | { kind: 'error' };
 
 interface SettingsStamp {
@@ -220,6 +226,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   let billingSection: HTMLDivElement | undefined;
   let titlesMount: Mounted | undefined;
   let stampsMount: Mounted | undefined;
+  let historyMount: Mounted | undefined;
+  const displayMounts: Mounted[] = [];
 
   // Account Section
   if (currentUser) {
@@ -358,15 +366,22 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     { value: '2ch', labelKey: 'settings.reply_style_2ch', descKey: 'settings.reply_style_2ch_desc' },
   ];
 
-  styles.forEach((s) => {
+  const createChoiceCard = (options: {
+    name: string;
+    value: string;
+    checked: boolean;
+    labelKey: string;
+    descKey: string;
+    onChange: () => void;
+  }): HTMLElement => {
     const label = document.createElement('label');
     label.className = 'settings-radio-card';
 
     const radio = document.createElement('input');
     radio.type = 'radio';
-    radio.name = 'reply-style';
-    radio.value = s.value;
-    radio.checked = currentStyle === s.value;
+    radio.name = options.name;
+    radio.value = options.value;
+    radio.checked = options.checked;
     radio.className = 'settings-radio';
 
     const textDiv = document.createElement('div');
@@ -374,24 +389,43 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'settings-radio-name';
-    nameSpan.textContent = t(s.labelKey);
+    nameSpan.textContent = t(options.labelKey);
 
     const descSpan = document.createElement('span');
     descSpan.className = 'settings-radio-desc';
-    descSpan.textContent = t(s.descKey);
+    descSpan.textContent = t(options.descKey);
 
     textDiv.appendChild(nameSpan);
     textDiv.appendChild(descSpan);
     label.appendChild(radio);
     label.appendChild(textDiv);
-    radioGroup.appendChild(label);
+    radio.addEventListener('change', options.onChange);
+    return label;
+  };
 
-    radio.addEventListener('change', () => {
-      setReplyStyle(s.value);
-      displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--accent-text)';
-    });
-  });
+  displayMounts.push(
+    mount(radioGroup, () =>
+      each(
+        () => styles,
+        (style) => style.value,
+        (style) =>
+          legacy(
+            createChoiceCard({
+              name: 'reply-style',
+              value: style().value,
+              checked: currentStyle === style().value,
+              labelKey: style().labelKey,
+              descKey: style().descKey,
+              onChange: () => {
+                setReplyStyle(style().value);
+                displayMessage.textContent = t('settings.display_saved');
+                displayMessage.style.color = 'var(--accent-text)';
+              },
+            }),
+          ),
+      ),
+    ),
+  );
 
   // NSFW toggle
   const nsfwLabel = document.createElement('label');
@@ -472,40 +506,29 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     { value: 'system', labelKey: 'settings.theme_system', descKey: 'settings.theme_system_desc' },
   ];
 
-  themes.forEach((st) => {
-    const label = document.createElement('label');
-    label.className = 'settings-radio-card';
-
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = 'theme';
-    radio.value = st.value;
-    radio.checked = currentTheme === st.value;
-    radio.className = 'settings-radio';
-
-    const textDiv = document.createElement('div');
-    textDiv.className = 'settings-radio-text';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'settings-radio-name';
-    nameSpan.textContent = t(st.labelKey);
-
-    const descSpan = document.createElement('span');
-    descSpan.className = 'settings-radio-desc';
-    descSpan.textContent = t(st.descKey);
-
-    textDiv.appendChild(nameSpan);
-    textDiv.appendChild(descSpan);
-    label.appendChild(radio);
-    label.appendChild(textDiv);
-    themeRadioGroup.appendChild(label);
-
-    radio.addEventListener('change', () => {
-      setTheme(st.value);
-      displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--accent-text)';
-    });
-  });
+  displayMounts.push(
+    mount(themeRadioGroup, () =>
+      each(
+        () => themes,
+        (theme) => theme.value,
+        (theme) =>
+          legacy(
+            createChoiceCard({
+              name: 'theme',
+              value: theme().value,
+              checked: currentTheme === theme().value,
+              labelKey: theme().labelKey,
+              descKey: theme().descKey,
+              onChange: () => {
+                setTheme(theme().value);
+                displayMessage.textContent = t('settings.display_saved');
+                displayMessage.style.color = 'var(--accent-text)';
+              },
+            }),
+          ),
+      ),
+    ),
+  );
 
   const displayMessage = document.createElement('div');
   displayMessage.setAttribute('role', 'status');
@@ -1459,10 +1482,35 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     historyTitle.textContent = t('settings.billing_history') || 'Billing History';
     const historyList = document.createElement('div');
     historyList.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem;';
-    historyList.textContent = t('settings.loading') || 'Loading...';
     historySection.appendChild(historyTitle);
     historySection.appendChild(historyList);
     billingSection.appendChild(historySection);
+
+    const historyStatus = document.createElement('div');
+    historyStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+    historyStatus.textContent = t('settings.loading') || 'Loading...';
+
+    const historySignal = signal<BillingHistoryRow[]>([]);
+    historyMount = mount(historyList, () =>
+      each(
+        () => historySignal(),
+        (row) => row.key,
+        (row) => {
+          const value = row();
+          const element = document.createElement('div');
+          element.style.cssText =
+            'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
+          const left = document.createElement('div');
+          left.textContent = value.left;
+          const right = document.createElement('div');
+          right.textContent = value.right;
+          element.appendChild(left);
+          element.appendChild(right);
+          return legacy(element);
+        },
+      ),
+    );
+    historyList.appendChild(historyStatus);
 
     const planNames: Record<string, string> = {
       flaxia_plus: 'Flaxia+ (¥300/mo)',
@@ -1550,34 +1598,23 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     };
 
     const renderHistory = (transactions: Array<Record<string, unknown>>) => {
-      historyList.textContent = '';
-      if (transactions.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
-        empty.textContent = t('settings.no_billing_history') || 'No payments yet';
-        historyList.appendChild(empty);
-        return;
-      }
       const txStatus = (status: unknown): string => {
         const key = `settings.status_${String(status)}`;
         const translated = t(key);
         return translated !== key ? translated : String(status);
       };
-      transactions.slice(0, 10).forEach((tx) => {
-        const row = document.createElement('div');
-        row.style.cssText =
-          'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
-        const left = document.createElement('div');
+      const rows: BillingHistoryRow[] = transactions.slice(0, 10).map((tx) => {
         const datePart = formatDate((tx.createdAt as string) || null);
         const namePart = (tx.planName as string) || (tx.type as string) || '';
-        left.textContent = [datePart, namePart].filter(Boolean).join(' · ');
-        const right = document.createElement('div');
         const amount = Number(tx.amount ?? 0);
-        right.textContent = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
-        row.appendChild(left);
-        row.appendChild(right);
-        historyList.appendChild(row);
+        const left = [datePart, namePart].filter(Boolean).join(' · ');
+        const right = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
+        return { key: `${left}|${right}`, left, right };
       });
+
+      historySignal.set(rows);
+      historyStatus.hidden = rows.length > 0;
+      if (rows.length === 0) historyStatus.textContent = t('settings.no_billing_history') || 'No payments yet';
     };
 
     const loadBilling = async () => {
@@ -1806,6 +1843,9 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       titlesMount?.dispose();
       stampsMount?.dispose();
+      historyMount?.dispose();
+      for (const mounted of displayMounts) mounted.dispose();
+      displayMounts.length = 0;
       vaultSection?.destroy();
       bugReportForm.destroy();
       container.remove();

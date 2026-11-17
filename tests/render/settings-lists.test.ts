@@ -111,3 +111,72 @@ describe('settings/lists', () => {
     assert.deepEqual(disposed, ['s2']);
   });
 });
+
+interface BillingRow {
+  key: string;
+  left: string;
+  right: string;
+}
+
+describe('settings/display-and-billing', () => {
+  it('renders static choice options in signal order', () => {
+    const root = document.createElement('div');
+    const options = [
+      { value: 'light', labelKey: 'Light' },
+      { value: 'dark', labelKey: 'Dark' },
+    ];
+
+    mount(root, () =>
+      each(
+        () => options,
+        (option) => option.value,
+        (option) => {
+          const label = document.createElement('label');
+          label.dataset.value = option().value;
+          label.textContent = option().labelKey;
+          return legacy(label);
+        },
+      ),
+    );
+
+    assert.deepEqual(
+      [...root.querySelectorAll<HTMLElement>('label')].map((element) => element.dataset.value),
+      ['light', 'dark'],
+    );
+  });
+
+  it('reuses billing rows across refreshes and disposes dropped ones', () => {
+    const root = document.createElement('div');
+    const rows = signal<BillingRow[]>([
+      { key: '2026-01|Flaxia+|300 JPY', left: '2026-01 · Flaxia+', right: '300 JPY · Paid' },
+      { key: '2026-02|Flaxia+|300 JPY', left: '2026-02 · Flaxia+', right: '300 JPY · Paid' },
+    ]);
+    const disposed: string[] = [];
+
+    mount(root, () =>
+      each(
+        () => rows(),
+        (row) => row.key,
+        (row) => {
+          const value = row();
+          const element = document.createElement('div');
+          element.dataset.key = value.key;
+          return legacy(element, () => disposed.push(value.key));
+        },
+      ),
+    );
+
+    const first = root.querySelector<HTMLElement>('[data-key="2026-01|Flaxia+|300 JPY"]');
+    assert.ok(first);
+
+    rows.set([
+      { key: '2026-01|Flaxia+|300 JPY', left: '2026-01 · Flaxia+', right: '300 JPY · Paid' },
+      { key: '2026-03|Flaxia+|300 JPY', left: '2026-03 · Flaxia+', right: '300 JPY · Paid' },
+    ]);
+    flushEffects();
+
+    assert.equal(root.querySelector('[data-key="2026-01|Flaxia+|300 JPY"]'), first);
+    assert.equal(root.querySelector('[data-key="2026-02|Flaxia+|300 JPY"]'), null);
+    assert.deepEqual(disposed, ['2026-02|Flaxia+|300 JPY']);
+  });
+});

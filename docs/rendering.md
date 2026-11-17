@@ -227,8 +227,12 @@ Implemented:
 - MailComposePage keys its attachment list by file identity, and
   MailSettingsPage renders its security rows through a keyed list;
 - SettingsPage's Titles and Custom Emoji sections use keyed lists (title id /
-  stamp id, plus explicit empty/error/add entries). Their mounts are released in
-  the page's `destroy()`. Other Settings sections are still imperative;
+  stamp id, plus explicit empty/error/add entries). Its Display choice groups
+  render through `each` over the static option arrays, and the billing history
+  is a keyed list (`left|right` row key) so a refresh reuses rows. All mounts are
+  released in the page's `destroy()`. The remaining Settings sections
+  (language, email, password, Crowd, Billing plan, Vault) are single forms and
+  stay imperative;
 - AdminUsersTab keys its user rows by `id:frozen-state`. Search reuses matching
   rows, freeze recreates only the changed row, and delete removes it through the
   engine. The empty state sits outside the keyed range;
