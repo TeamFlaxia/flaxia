@@ -72,6 +72,7 @@ const groups = {
     'title-icon',
     'trust-score',
     'titles',
+    'unique',
   ],
   'media-games': [
     'arcade-availability',
@@ -123,6 +124,7 @@ const groups = {
     'sandbox-preview-bridge',
     'sandbox-response-policy',
     'translate',
+    'wvfs-audio-mute',
     'wvfs-cookie-compat',
     'wvfs-game-url',
     'wvfs-image-cors',
@@ -170,7 +172,6 @@ const groups = {
     'native-api',
     'native-crowd',
     'native-fetch',
-    'page-loader',
     'profile-route-redirects',
     'push-vapid',
     'render-preset',

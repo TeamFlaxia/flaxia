@@ -12,6 +12,7 @@ import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
+import { appendUniqueBy, uniqueBy } from '../lib/unique.ts';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -581,7 +582,7 @@ export class ExplorePage {
         const data = (await response.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
         const newPosts = data.games || [];
         if (newPosts.length > 0) {
-          this.arcadePosts.push(...newPosts);
+          this.arcadePosts = appendUniqueBy(this.arcadePosts, newPosts, (game) => game.postId);
           this.cursor = data.cursor ?? undefined;
           this.hasMore = data.hasMore;
           this.renderArcadePosts();
@@ -594,7 +595,7 @@ export class ExplorePage {
         const newPosts = data.posts || [];
 
         if (newPosts.length > 0) {
-          this.posts.push(...newPosts);
+          this.posts = appendUniqueBy(this.posts, newPosts, (post) => post.id);
           if (!this.props.tag) {
             const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
             this.cursor = `${lastPost.score},${lastPost.created_at}`;
@@ -652,7 +653,7 @@ export class ExplorePage {
     const res = await fetch('/api/games?limit=10');
     if (res.ok) {
       const data = (await res.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
-      this.arcadePosts = data.games || [];
+      this.arcadePosts = uniqueBy(data.games || [], (game) => game.postId);
       this.cursor = data.cursor ?? undefined;
       this.hasMore = data.hasMore;
       this.renderArcadePosts();
@@ -672,7 +673,7 @@ export class ExplorePage {
           bio?: string;
         }>;
       };
-      this.userSuggestions = data.users || [];
+      this.userSuggestions = uniqueBy(data.users || [], (user) => user.id);
       this.hasMore = false;
       this.renderUserSuggestions();
     }
@@ -680,7 +681,7 @@ export class ExplorePage {
 
   private handleNewPosts(newPosts: Post[]): void {
     if (newPosts.length > 0) {
-      this.posts.push(...newPosts);
+      this.posts = appendUniqueBy(this.posts, newPosts, (post) => post.id);
       this.cursor = newPosts[newPosts.length - 1].created_at;
       this.hasMore = newPosts.length === 10;
       this.renderPosts();
@@ -1047,6 +1048,7 @@ export class ExplorePage {
   }
 
   private handleNewPost(post: Post): void {
+    if (this.posts.some((existing) => existing.id === post.id)) return;
     this.posts = [post, ...this.posts];
     this.postsSignal.set([...this.posts]);
     this.updateTagCount();

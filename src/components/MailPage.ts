@@ -18,6 +18,7 @@ import { goToMailCompose, goToMailSettings, goToMailThread } from '../lib/mail/n
 import { MailReader } from '../lib/mail/reader.js';
 import { avatar, emptyState, formatMailDate, iconButton, mailButton, triggerPop } from '../lib/mail/ui.js';
 import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
+import { uniqueBy } from '../lib/unique.ts';
 import { ensureVaultUnlocked, provisionMailIdentity } from '../lib/vault/mail-identity.js';
 import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
 import { createVaultUnlockForm } from './VaultUnlockForm.js';
@@ -271,7 +272,7 @@ export class MailPage {
             });
       const reader = new MailReader(this.address);
       const decrypted = await reader.decryptThreadList(result);
-      this.threads = decrypted.threads;
+      this.threads = uniqueBy(decrypted.threads, (thread) => thread.id);
       this.counts = decrypted.counts ?? result.counts ?? this.counts;
       if (this.folder === 'inbox') this.unreadTotal = this.counts.inbox ?? this.unreadTotal;
       if (result.threads.length > 0 && decrypted.threads.length === 0) {

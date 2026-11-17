@@ -6,6 +6,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
+import { uniqueBy } from '../lib/unique.ts';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -549,10 +550,10 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       };
       if (requestId !== loadRequestId) return;
 
-      allUsers = data.users || [];
-      allPosts = data.posts || [];
-      allArcade = data.games || [];
-      allWeb = data.web || [];
+      allUsers = uniqueBy(data.users || [], (user) => user.id);
+      allPosts = uniqueBy(data.posts || [], (post) => post.id);
+      allArcade = uniqueBy(data.games || [], (post) => post.id);
+      allWeb = uniqueBy(data.web || [], (result) => result.url);
 
       renderResults();
     } catch (error) {

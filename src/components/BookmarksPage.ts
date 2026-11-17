@@ -10,6 +10,7 @@ import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
+import { appendUniqueBy } from '../lib/unique.ts';
 import { Post } from '../types/post.js';
 import { createOfflineDownloads } from './OfflineDownloads.ts';
 import { createPostCard } from './PostCard.js';
@@ -139,7 +140,7 @@ export class BookmarksPage {
       const newPosts = data.posts || [];
 
       if (newPosts.length > 0) {
-        this.posts.push(...newPosts);
+        this.posts = appendUniqueBy(this.posts, newPosts, (post) => post.id);
         this.cursor = newPosts[newPosts.length - 1].created_at;
         this.hasMore = newPosts.length === 10;
         this.renderPosts();

@@ -23,6 +23,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { pauseMediaIn, setMediaMuted } from './lib/media-mute.js';
 import { isModalOpen } from './lib/modal-state.js';
 import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
 import { createNativeFetch } from './lib/native-fetch.js';
@@ -34,6 +35,7 @@ import {
   setNativeBadge,
 } from './lib/native-notify.js';
 import { initOfflineGames } from './lib/native-offline-games.js';
+import { hideNavigationSpinner, showNavigationSpinner } from './lib/nav-loading.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
 import { isOffline, setOffline } from './lib/offline-status.js';
@@ -255,6 +257,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function disposeParkedView(): void {
       if (!parkedView) return;
+      // A detached media element can keep playing; stop it before the component
+      // (and its DOM) is released.
+      pauseMediaIn(parkedHost);
       parkedView.component.destroy();
       parkedView = null;
       parkedHost.replaceChildren();
@@ -262,6 +267,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function parkCurrentView(view: ParkableView, component: PageComponent, scrollY: number): void {
       if (parkedView) disposeParkedView();
+      // Keep games/videos alive but silent while the view is off screen.
+      setMediaMuted(appRoot, true);
       const nodes = [...appRoot.childNodes];
       parkedView = {
         key: parkingKey(view, currentPostId, _currentUsername, currentTag, currentSearchQuery, currentSearchType),
@@ -281,6 +288,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     function restoreParkedView(parked: ParkedView): void {
       appRoot.replaceChildren(...parked.nodes);
       parkedHost.replaceChildren();
+      // Undo the parking mute (user-muted players keep their own state).
+      setMediaMuted(appRoot, false);
       currentView = parked.view;
       currentPostId = parked.postId;
       _currentUsername = parked.username;
@@ -588,8 +597,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // URL routing (see src/lib/router.ts)
 
-    // Page loading overlay (see src/lib/page-loader.ts)
-
     // Navigate to view
     const navigateTo = async (
       view: RouteView,
@@ -600,6 +607,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade' | 'web',
     ) => {
+      // Invalidate any in-flight navigation as soon as a new one starts. This
+      // also covers the parked-view restore path below, which returns early.
+      const navigation = ++navigationToken;
+
       // Authentication UI lives on auth.flaxia.app. A full navigation keeps the
       // login flow out of this SPA and returns through /api/auth/callback.
       if (view === 'login' || view === 'register') {
@@ -744,6 +755,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (parkedView && parkedView.key === targetKey) {
         const parked = parkedView;
         parkedView = null;
+        hideNavigationSpinner();
         restoreParkedView(parked);
         return;
       }
@@ -752,10 +764,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Build the next view in a detached staging root. The current view stays
-      // visible until the new one is ready, so navigation never blanks the
-      // content column. The swap is a single replaceChildren().
-      const navigation = ++navigationToken;
+      // visible until the new one is ready. When the current view was parked
+      // (or on the first render) `#app` is empty, so show the inline spinner
+      // instead of leaving a blank content column.
       const staging = document.createElement('div');
+      if (appRoot.childNodes.length === 0) showNavigationSpinner(appRoot);
       // Scroll restoration for the synchronous branches; the deferred
       // requestAnimationFrame paths restore after the commit themselves.
       let pendingScrollY: number | null = null;
@@ -1417,10 +1430,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page. Always rebuild from the freshly fetched
-          // data (only the scroll position is restored) so notifications that
-          // arrived while a thread/Arcade was open are not lost.
-          const notificationsScrollY = 0;
+          // Create Notifications Page. This branch runs on a fresh navigation
+          // and uses the just-fetched data. Returning from a post restores the
+          // parked notifications DOM instead (see parkCurrentView), which is the
+          // faster path and keeps the user's scroll position; the unread badge
+          // is kept live by the notification socket.
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -1447,7 +1461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           requestAnimationFrame(() => {
-            window.scrollTo(0, notificationsScrollY);
+            window.scrollTo(0, 0);
           });
 
           // Create Right Panel
@@ -1662,13 +1676,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           showToast(t('common.error'), true);
         }
       } finally {
-        if (navigation === navigationToken && staging.childNodes.length > 0) {
-          appRoot.replaceChildren(...staging.childNodes);
-          if (pendingScrollY !== null) window.scrollTo(0, pendingScrollY);
-        } else if (navigation === navigationToken && appRoot.childNodes.length === 0 && parkedView) {
-          const parked = parkedView;
-          parkedView = null;
-          restoreParkedView(parked);
+        if (navigation === navigationToken) {
+          hideNavigationSpinner();
+          if (staging.childNodes.length > 0) {
+            appRoot.replaceChildren(...staging.childNodes);
+            if (pendingScrollY !== null) window.scrollTo(0, pendingScrollY);
+          } else if (appRoot.childNodes.length === 0 && parkedView) {
+            const parked = parkedView;
+            parkedView = null;
+            restoreParkedView(parked);
+          }
         }
       }
     };

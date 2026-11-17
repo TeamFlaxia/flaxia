@@ -18,6 +18,11 @@ const chromiumExecutable = process.env.RENDER_CHROMIUM_EXECUTABLE;
 const engine = { chromium, firefox, webkit }[browserName];
 assert.ok(engine, `unknown RENDER_BROWSER: ${browserName}`);
 
+function launchOptions() {
+  if (browserName !== 'chromium') return {};
+  return chromiumExecutable ? { executablePath: chromiumExecutable } : { channel: 'chrome' };
+}
+
 const distPath = new URL('../packages/flaxia-render/dist/render.iife.js', import.meta.url);
 const engineSource = await readFile(distPath, 'utf8');
 
@@ -98,7 +103,7 @@ test('real browser: keyed reorder, hidden iframe and text identity', { timeout: 
   let browser;
   try {
     try {
-      browser = await engine.launch(browserName === 'chromium' ? { channel: 'chrome' } : {});
+      browser = await engine.launch(launchOptions());
     } catch {
       browser = await engine.launch();
     }

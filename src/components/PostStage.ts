@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { setMediaMuted } from '../lib/media-mute.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { parseMediaCues } from '../lib/post-cues.js';
@@ -426,6 +427,8 @@ async function showExecution(container: HTMLElement, state: StageState, props: P
     if (state.disposed || token !== state.executionToken) return;
     state.executionReady = true;
     execution.hidden = state.mode !== PostCardMode.EXECUTING;
+    // Collapsing the stage while it was loading must not leak audio.
+    setMediaMuted(execution, state.mode !== PostCardMode.EXECUTING);
   } catch (error) {
     if (state.disposed || token !== state.executionToken) return;
     console.error('Failed to execute post content:', error);
@@ -538,13 +541,21 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   const canExecute = attachments.length === 0 && Boolean(props.post.payload_key || props.post.swf_key);
 
   if (!canExecute || props.mode === PostCardMode.PREVIEW) {
-    if (state.execution) state.execution.hidden = true;
+    if (state.execution) {
+      state.execution.hidden = true;
+      // Keep the browsing context (and the game state) but stop the audio.
+      setMediaMuted(state.execution, true);
+    }
     showPreview(container, state, props);
     return;
   }
 
   if (state.preview) state.preview.hidden = true;
   await showExecution(container, state, props);
+  if (!state.disposed && state.mode === PostCardMode.EXECUTING && state.execution) {
+    // Undo a mute applied while the stage was collapsed/loading.
+    setMediaMuted(state.execution, false);
+  }
 }
 
 // Export a function to update the stage content when mode changes

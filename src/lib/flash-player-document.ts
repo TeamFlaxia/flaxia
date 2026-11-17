@@ -1,15 +1,37 @@
+import { GAME_AUDIO_MUTE_MESSAGE } from '../../sandbox/zip-preview-protocol.js';
+
 export const FLASH_PLAYER_BOOTSTRAP = `
     var swfData = null;
     var ruffleLoaded = false;
     var playerContainer = document.getElementById('player');
+    var flashPlayer = null;
+    var muted = false;
+    var volumeBeforeMute = 1;
     var loadFailedText = playerContainer
       ? playerContainer.getAttribute('data-load-failed') || 'Failed to load SWF.'
       : 'Failed to load SWF.';
+
+    function applyMute() {
+      if (!flashPlayer) return;
+      try {
+        if (muted) {
+          var current = Number(flashPlayer.volume);
+          if (isFinite(current) && current > 0) volumeBeforeMute = current;
+          flashPlayer.volume = 0;
+        } else {
+          flashPlayer.volume = volumeBeforeMute;
+        }
+      } catch (error) {}
+    }
 
     window.addEventListener('message', function(e) {
       if (e.data && e.data.type === 'SWF_DATA') {
         swfData = e.data.data;
         tryStart();
+      }
+      if (e.data && e.data.type === '${GAME_AUDIO_MUTE_MESSAGE}') {
+        muted = Boolean(e.data.muted);
+        applyMute();
       }
     });
 
@@ -40,6 +62,7 @@ export const FLASH_PLAYER_BOOTSTRAP = `
       window.RufflePlayer = window.RufflePlayer || {};
       var ruffle = window.RufflePlayer.newest();
       var player = ruffle.createPlayer();
+      flashPlayer = player;
       player.id = 'flash-player';
       player.config = {
         autoplay: 'on',
@@ -56,6 +79,7 @@ export const FLASH_PLAYER_BOOTSTRAP = `
 
       var container = document.getElementById('player');
       container.appendChild(player);
+      applyMute();
 
       player.load({ data: new Uint8Array(swfData) }).catch(function(error) {
         console.error('Failed to load SWF:', error);

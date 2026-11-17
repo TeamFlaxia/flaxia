@@ -3,6 +3,7 @@ import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
+import { pauseMediaIn } from '../lib/media-mute.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { stripMediaCues } from '../lib/post-cues.js';
@@ -1232,6 +1233,9 @@ export class PostCard {
       this.menuDropdown.remove();
       this.menuDropdown = undefined;
     }
+
+    // Stop carousel audio/video; a detached media element can keep playing.
+    pauseMediaIn(this.element);
 
     // Cleanup event listeners
     this.element.remove();

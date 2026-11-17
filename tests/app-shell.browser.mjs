@@ -709,7 +709,7 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     await page.fill('.reply-composer-textarea', 'Nice post');
 
     const typed = await page.evaluate(() => ({
-      submitDisabled: document.querySelector < HTMLButtonElement > '.reply-composer-submit'?.disabled ?? true,
+      submitDisabled: document.querySelector('.reply-composer-submit')?.disabled ?? true,
       charCount: document.querySelector('.reply-composer-char-count')?.textContent?.trim() ?? '',
     }));
     assert.equal(typed.submitDisabled, false, 'submit should enable once there is content');

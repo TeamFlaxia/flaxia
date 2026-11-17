@@ -4,7 +4,7 @@ const CSP_SCRIPT_HASHES = [
   "'sha256-8UZ1xbdoEGBJfbCFW7UdTEkjFZkH/d+8yO/eZ/JEOM0='",
   "'sha256-lf+0nM1TqVv41CHz3DTo1q7DzxErxegCLlYtVBZlTWg='",
   // Trusted SWF/Ruffle bootstrap, AdSense iframe bootstrap, and legacy sandbox wrapper.
-  "'sha256-2noITtBmjNoi295cUQM1dJ7ioF61E0NeKuweqwK4O1M='",
+  "'sha256-QkLYwXmQ/14wDFcYo7uqnujEIBSc/XWY1kMfskVSXuY='",
   "'sha256-L9NtTqBLxf1z3sIza7z/JTtm01m91a8xVl07p4WTMYw='",
   "'sha256-9jpcqwJpr7kicF5b0vRUbAJtyA6CqjotdcnTjIv8i4U='",
 ].join(' ');
