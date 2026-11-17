@@ -80,6 +80,19 @@ const TIMELINE_POST = {
 
 const TIMELINE_RESPONSE = { body: { posts: [TIMELINE_POST], nextCursor: null } };
 
+// A post whose image arrives late: the reserved 16:9 box must absorb it.
+const MEDIA_POST = {
+  ...TIMELINE_POST,
+  id: 'p2',
+  text: 'Media post for the layout-shift budget.',
+  mentions: '',
+  hashtags: '',
+  quoted_post_id: undefined,
+  quoted_post: undefined,
+  reactions: [],
+  attachments: [{ r2_key: 'smoke.png', kind: 'image', position: 1 }],
+};
+
 const GUEST_STUBS = {
   '/api/me': { status: 401, body: {} },
   '/api/posts': TIMELINE_RESPONSE,
@@ -94,6 +107,13 @@ const GUEST_STUBS = {
     body: { results: [{ username: 'quoted', display_name: 'Quoted', avatar_key: null }] },
   },
   '/api/tags/suggest': { body: { tags: [{ tag: 'flaxia', count: 12 }] } },
+};
+
+// Same stubs, but the feed is one post whose image arrives late.
+const MEDIA_STUBS = {
+  ...GUEST_STUBS,
+  '/api/posts': { body: { posts: [MEDIA_POST], nextCursor: null } },
+  '/api/posts/recommended': { body: { posts: [MEDIA_POST], nextCursor: null } },
 };
 
 const SIGNED_IN_STUBS = {
@@ -114,6 +134,38 @@ const SIGNED_IN_STUBS = {
       ],
     },
   },
+};
+
+// 1x1 transparent PNG: stubbed media so <img> loading is exercised locally.
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+// Performance observers installed before any app script runs. Layout shifts
+// without recent input count toward CLS; LCP is recorded for the budget check.
+const PERFORMANCE_INIT_SCRIPT = () => {
+  const perf = { cls: 0, lcp: 0, shifts: [] };
+  window.__flaxiaPerf = perf;
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      if (entry.hadRecentInput) continue;
+      perf.cls += entry.value;
+      if (entry.value > 0) {
+        perf.shifts.push({
+          value: entry.value,
+          sources: (entry.sources || []).map((source) => ({
+            node: source.node?.className || source.node?.nodeName || '',
+            previous: source.previousRect ? source.previousRect.y : null,
+            current: source.currentRect ? source.currentRect.y : null,
+          })),
+        });
+      }
+    }
+  }).observe({ type: 'layout-shift', buffered: true });
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) perf.lcp = entry.startTime;
+  }).observe({ type: 'largest-contentful-paint', buffered: true });
 };
 
 function createStaticServer() {
@@ -162,10 +214,14 @@ async function launchBrowser() {
  * Third-party requests (fonts, AdSense, the crowd node bundle) are aborted: the
  * app must render without them.
  */
-async function openApp(browser, url, stubs, viewport = { width: 1400, height: 1000 }) {
+async function openApp(browser, url, stubs, viewport = { width: 1400, height: 1000 }, options = {}) {
   const page = await browser.newPage({ viewport });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
+
+  if (options.measurePerformance) {
+    await page.addInitScript(PERFORMANCE_INIT_SCRIPT);
+  }
 
   await page.route('**/*', (route) => {
     const requestUrl = new URL(route.request().url());
@@ -173,8 +229,16 @@ async function openApp(browser, url, stubs, viewport = { width: 1400, height: 10
     return route.abort();
   });
 
-  await page.route('**/api/**', (route) => {
+  await page.route('**/api/**', async (route) => {
     const requestUrl = new URL(route.request().url());
+    // Media goes through /api/images/*; answer with a real PNG (optionally
+    // delayed) so late image loads can be measured against the reserved box.
+    if (requestUrl.pathname.startsWith('/api/images/')) {
+      if (options.imageDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.imageDelayMs));
+      }
+      return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
+    }
     const stub = stubs[requestUrl.pathname];
     return route.fulfill({
       status: stub?.status ?? 200,
@@ -634,5 +698,66 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(draft, 'Hi @quoted ');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('layout stays put while async panels and media settle (CLS / LCP budget)', { timeout: 180_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const cases = [
+      { label: 'timeline 1400x1000', path: '/', stubs: MEDIA_STUBS, viewport: { width: 1400, height: 1000 } },
+      {
+        label: 'settings 1400x1000',
+        path: '/settings',
+        stubs: SIGNED_IN_STUBS,
+        viewport: { width: 1400, height: 1000 },
+      },
+      { label: 'timeline 390x844', path: '/', stubs: MEDIA_STUBS, viewport: { width: 390, height: 844 } },
+    ];
+
+    for (const testCase of cases) {
+      const { page, pageErrors } = await openApp(
+        browser,
+        `${origin}${testCase.path}`,
+        testCase.stubs,
+        testCase.viewport,
+        { measurePerformance: true, imageDelayMs: 600 },
+      );
+
+      await page.waitForSelector('.main-container', { timeout: 30_000 });
+      if (testCase.path === '/') {
+        await page.waitForSelector('.post-card .image-preview', { timeout: 30_000 });
+      } else {
+        await page.waitForSelector('.settings-section', { timeout: 30_000 });
+      }
+      // Wait past the delayed media response plus a settle window so async
+      // panels (right rail, settings sections) finish before we read the budget.
+      await page.waitForTimeout(1800);
+
+      const perf = await page.evaluate(() => window.__flaxiaPerf ?? { cls: -1, lcp: -1, shifts: [] });
+
+      if (testCase.path === '/') {
+        const media = await page.evaluate(() => {
+          const img = document.querySelector('.post-card .image-preview img');
+          return {
+            loaded: !!img && img.naturalWidth > 0,
+            boxHeight: document.querySelector('.post-card .image-preview')?.getBoundingClientRect().height ?? 0,
+          };
+        });
+        assert.ok(media.loaded, `${testCase.label}: stubbed image never loaded`);
+        assert.ok(media.boxHeight > 100, `${testCase.label}: media box has no reserved height`);
+      }
+
+      assert.ok(perf.lcp > 0, `${testCase.label}: no LCP entry recorded`);
+      assert.ok(
+        perf.cls < 0.02,
+        `${testCase.label}: CLS ${perf.cls.toFixed(4)} exceeds budget; shifts=${JSON.stringify(perf.shifts)}`,
+      );
+      assert.deepEqual(pageErrors, [], `${testCase.label}: page errors: ${pageErrors.join(' | ')}`);
+
+      console.log(
+        `${testCase.label}: cls=${perf.cls.toFixed(4)} lcp=${perf.lcp.toFixed(0)}ms shifts=${perf.shifts.length}`,
+      );
+      await page.close();
+    }
   });
 });

@@ -293,7 +293,13 @@ Remaining maintenance (not part of the stabilization contract above):
    1024 and 1400px in the app smoke, plus the built-CSS geometry smoke. WebKit
    runs the same two smokes in the `styles-webkit` CI job, but has never been
    executed locally (host libraries require `sudo playwright install-deps`).
-3. Real-device CLS/LCP measurement using `?render-debug=1`.
+3. Real-device CLS/LCP numbers using `?render-debug=1`. The headless budget
+   already exists: `tests/app-shell.browser.mjs` installs
+   `PerformanceObserver`s before any app script, delays the stubbed media by
+   600ms, and asserts CLS < 0.02 and a recorded LCP for the timeline at
+   1400x1000 and 390x844 and for `/settings` at 1400x1000. Current headless
+   numbers are CLS 0.0000-0.0007 and LCP 80-550ms; the only measured shift is a
+   ~22px move of the right-rail shortcuts block as its async content lands.
 
 ## Tests
 
@@ -325,7 +331,9 @@ a stubbed timeline post for `PostHeader`/`PostActions`/`QuotedPostCard`, and
 `/settings` for a signed-in user) at 390x844 (bottom nav on the viewport
 edge, off-canvas left drawer, drawer open/close, right rail hidden, no
 horizontal overflow) and across 768/900/1024px (drawer breakpoint stays sharp,
-right rail hidden at and below 1024px, left nav in flow above 768px). The styles smoke test loads the real build output, asserts both
+right rail hidden at and below 1024px, left nav in flow above 768px). A final
+case records layout-shift and LCP entries with delayed media and enforces the
+CLS budget at desktop and mobile. The styles smoke test loads the real build output, asserts both
 `legacy` and `primitives` layers, verifies that `primitives` wins on a
 same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with
