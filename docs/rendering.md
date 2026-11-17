@@ -205,6 +205,9 @@ Implemented:
 - `ExplorePage` keeps posts, Arcade games and user suggestions in three keyed
   hosts. Post cards are wrapped with `legacy()` and disposed on filter change or
   unmount, while tag pages reuse the same post list;
+- Arcade's game feed is a single-active swipe viewport, not a grid. Its comments
+  list is keyed (`each` + `legacy`) for both flat and tree reply modes, with one
+  mount per comment panel and generation-checked fetches;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

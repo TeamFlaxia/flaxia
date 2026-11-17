@@ -10,9 +10,10 @@ import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
 import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../lib/recommendation/vector-codec.js';
+import { each, legacy, type Mounted, mount, type Renderable, type Signal, signal } from '../lib/render/index.ts';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import { buildTree } from '../lib/thread.js';
+import { buildTree, type PostNode } from '../lib/thread.ts';
 import { showToast } from '../lib/toast.js';
 import {
   getRecommendationProfile,
@@ -35,6 +36,10 @@ export interface ArcadePageHandle {
   suspend: () => void;
   resume: () => void;
 }
+
+type ArcadeCommentEntry =
+  | { key: string; kind: 'flat'; post: Post; index?: number }
+  | { key: string; kind: 'tree'; node: PostNode };
 
 interface ArcadeEvent {
   postId: string;
@@ -1057,6 +1062,14 @@ export class ArcadePage {
   private commentModalUnregister: (() => void) | null = null;
   private boundPostUpdatedHandler?: (e: Event) => void;
   private commentLoadGeneration = 0;
+  private commentHeaderTitle: HTMLElement | null = null;
+  private commentPostIndexMap: Map<string, number> = new Map();
+  private commentsSignal: Signal<ArcadeCommentEntry[]> = signal<ArcadeCommentEntry[]>([]);
+  private commentsMount?: Mounted;
+  private commentsLoadingEl?: HTMLElement;
+  private commentsErrorEl?: HTMLElement;
+  private commentsHeaderEl?: HTMLElement;
+  private commentsEmptyEl?: HTMLElement;
 
   private handleComments(): void {
     const game = this.games[this.currentIndex];
@@ -1131,11 +1144,67 @@ export class ArcadePage {
     // Replies list
     const list = document.createElement('div');
     this.commentListEl = list;
+    this.commentHeaderTitle = headerTitle;
     list.style.cssText = 'flex: 1; overflow-y: auto; padding: 0.5rem 0;';
+
     const loading = document.createElement('div');
     loading.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;';
     loading.textContent = t('common.loading');
+    this.commentsLoadingEl = loading;
     list.appendChild(loading);
+
+    const error = document.createElement('div');
+    error.style.cssText = 'text-align: center; padding: 2rem; color: var(--danger-text); font-size: 0.85rem;';
+    error.textContent = t('common.error');
+    error.hidden = true;
+    this.commentsErrorEl = error;
+    list.appendChild(error);
+
+    const repliesHeader = document.createElement('div');
+    repliesHeader.className = 'replies-header';
+    repliesHeader.style.cssText = `
+      color: var(--text-muted);
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 0.9rem;
+      margin: 0 1rem 0.5rem 1rem;
+      font-weight: normal;
+    `;
+    repliesHeader.hidden = true;
+    this.commentsHeaderEl = repliesHeader;
+    list.appendChild(repliesHeader);
+
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;';
+    empty.textContent = 'No comments yet';
+    empty.hidden = true;
+    this.commentsEmptyEl = empty;
+    list.appendChild(empty);
+
+    const host = document.createElement('div');
+    host.style.cssText = 'display: flex; flex-direction: column;';
+    this.commentsMount = mount(host, () =>
+      each(
+        () => this.commentsSignal(),
+        (entry) => entry.key,
+        (entry) => this.renderCommentEntry(entry()),
+      ),
+    );
+    list.appendChild(host);
+
+    // Click handler for >>N references. Attach once to the list, not per load.
+    list.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const refLink = target.classList.contains('post-ref-link')
+        ? target
+        : (target.closest('.post-ref-link') as HTMLElement | null);
+      if (!refLink) return;
+      e.preventDefault();
+      const index = refLink.dataset.postIndex;
+      if (!index) return;
+      const targetPost = list.querySelector(`[data-post-index="${index}"]`);
+      targetPost?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
     dialog.appendChild(list);
 
     // Close on overlay click
@@ -1158,14 +1227,58 @@ export class ArcadePage {
     this.loadComments(game.postId, list, headerTitle, composer);
   }
 
+  private renderCommentEntry(entry: ArcadeCommentEntry): Renderable {
+    if (entry.kind === 'flat') {
+      const card = createPostCard({
+        post: entry.post,
+        sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser || undefined,
+        depth: entry.post.depth,
+        onDelete: () => {},
+        disableNavigation: true,
+        postIndex: entry.index,
+        enablePostRefs: true,
+      });
+      return legacy(card.getElement(), () => card.destroy());
+    }
+
+    const replyNode = createReplyNode({
+      node: entry.node,
+      sandboxOrigin: this.props.sandboxOrigin,
+      currentUser: this.props.currentUser,
+      onReplyCreated: () => {
+        const game = this.games[this.currentIndex];
+        if (!game) return;
+        game.replyCount = (game.replyCount || 0) + 1;
+        if (this.commentHeaderTitle) {
+          this.commentHeaderTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`;
+        }
+        this.updateFloatingActions(game);
+      },
+      postIndexMap: this.commentPostIndexMap,
+    });
+    return legacy(replyNode.getElement());
+  }
+
+  private showCommentsStatus(state: 'loading' | 'error' | 'ready', empty = false): void {
+    if (this.commentsLoadingEl) this.commentsLoadingEl.hidden = state !== 'loading';
+    if (this.commentsErrorEl) this.commentsErrorEl.hidden = state !== 'error';
+    if (this.commentsHeaderEl) this.commentsHeaderEl.hidden = state !== 'ready';
+    if (this.commentsEmptyEl) this.commentsEmptyEl.hidden = !(state === 'ready' && empty);
+  }
+
   private async loadComments(
     postId: string,
-    list: HTMLElement,
+    _list: HTMLElement,
     headerTitle: HTMLElement,
-    composer?: ReplyComposer,
+    _composer?: ReplyComposer,
     scrollToPostId?: string,
   ): Promise<void> {
     const myGen = ++this.commentLoadGeneration;
+    this.commentHeaderTitle = headerTitle;
+    this.showCommentsStatus('loading');
+    this.commentsSignal.set([]);
+
     try {
       const res = await fetch(`/api/posts/${postId}/thread`);
       if (!res.ok) throw new Error('Failed to load comments');
@@ -1181,8 +1294,7 @@ export class ArcadePage {
       // Assign sequential indices to replies (1-based)
       const postIdToIndex = new Map<string, number>();
       data.replies.forEach((p, i) => void postIdToIndex.set(p.id, i + 1));
-
-      list.innerHTML = '';
+      this.commentPostIndexMap = postIdToIndex;
 
       // Sync reply count from API data
       const game = this.games[this.currentIndex];
@@ -1192,106 +1304,44 @@ export class ArcadePage {
         this.updateFloatingActions(game);
       }
 
-      // Replies header (matching ThreadPage spec)
-      const repliesHeader = document.createElement('div');
-      repliesHeader.className = 'replies-header';
-      repliesHeader.textContent = `${t('thread.replies_header', { count: formatCount(data.replies.length) })}`;
-      repliesHeader.style.cssText = `
-        color: var(--text-muted);
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 0.9rem;
-        margin: 0 1rem 0.5rem 1rem;
-        font-weight: normal;
-      `;
-      list.appendChild(repliesHeader);
-
       const replyStyle = getReplyStyle();
-
-      if (data.replies.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;';
-        empty.textContent = 'No comments yet';
-        list.appendChild(empty);
+      const entries: ArcadeCommentEntry[] = [];
+      if (replyStyle === 'twitter') {
+        for (const node of buildTree(data.replies)) {
+          entries.push({ key: node.post.id, kind: 'tree', node });
+        }
       } else {
-        if (replyStyle === 'twitter') {
-          // Twitter-style: tree view with ReplyNode
-          const replyTree = buildTree(data.replies);
-          const container = document.createElement('div');
-          container.className = 'replies-container';
-
-          replyTree.forEach((node) => {
-            const replyNode = createReplyNode({
-              node,
-              sandboxOrigin: this.props.sandboxOrigin,
-              currentUser: this.props.currentUser,
-              onReplyCreated: () => {
-                // Tree mode: ReplyNode handles DOM insertion internally
-                const g = this.games[this.currentIndex];
-                if (g) {
-                  g.replyCount = (g.replyCount || 0) + 1;
-                  headerTitle.textContent = `${t('thread_view.title')} (${formatCount(g.replyCount)})`;
-                  this.updateFloatingActions(g);
-                }
-              },
-              postIndexMap: postIdToIndex,
-            });
-            container.appendChild(replyNode.getElement());
+        for (const reply of data.replies) {
+          entries.push({
+            key: reply.id,
+            kind: 'flat',
+            post: reply,
+            index: postIdToIndex.get(reply.id),
           });
-
-          list.appendChild(container);
-        } else {
-          // 2ch-style: flat list with sequential indices
-          for (const reply of data.replies) {
-            const nodeIndex = postIdToIndex.get(reply.id);
-            const card = createPostCard({
-              post: reply,
-              sandboxOrigin: this.props.sandboxOrigin,
-              currentUser: this.props.currentUser || undefined,
-              depth: reply.depth,
-              onDelete: () => {},
-              disableNavigation: true,
-              postIndex: nodeIndex,
-              enablePostRefs: true,
-            });
-            list.appendChild(card.getElement());
-          }
         }
       }
 
-      // Click handler for >>N post references (scroll to referenced reply)
-      list.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        const refLink = target.classList.contains('post-ref-link')
-          ? target
-          : (target.closest('.post-ref-link') as HTMLElement | null);
-        if (refLink) {
-          e.preventDefault();
-          const index = refLink.dataset.postIndex;
-          if (index) {
-            const targetPost = list.querySelector(`[data-post-index="${index}"]`);
-            if (targetPost) {
-              targetPost.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }
-        }
-      });
+      this.commentsSignal.set(entries);
+      if (this.commentsHeaderEl) {
+        this.commentsHeaderEl.textContent = `${t('thread.replies_header', {
+          count: formatCount(data.replies.length),
+        })}`;
+      }
+      this.showCommentsStatus('ready', entries.length === 0);
 
-      // Scroll to newly created reply if requested
       if (scrollToPostId) {
         const newIndex = postIdToIndex.get(scrollToPostId);
         if (newIndex !== undefined) {
-          const newPostEl = list.querySelector(`[data-post-index="${newIndex}"]`);
-          if (newPostEl) {
-            newPostEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
+          requestAnimationFrame(() => {
+            const newPostEl = this.commentListEl?.querySelector(`[data-post-index="${newIndex}"]`);
+            newPostEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
         }
       }
     } catch {
-      list.innerHTML = '';
-      const err = document.createElement('div');
-      err.style.cssText = 'text-align: center; padding: 2rem; color: var(--danger-text); font-size: 0.85rem;';
-      err.textContent = t('common.error');
-      list.appendChild(err);
+      if (myGen !== this.commentLoadGeneration) return;
+      this.commentsSignal.set([]);
+      this.showCommentsStatus('error');
     }
   }
 
@@ -1347,6 +1397,16 @@ export class ArcadePage {
         document.removeEventListener('keydown', this.commentPanelKeyHandler);
         this.commentPanelKeyHandler = null;
       }
+      this.commentLoadGeneration++;
+      this.commentsMount?.dispose();
+      this.commentsMount = undefined;
+      this.commentsSignal.set([]);
+      this.commentsLoadingEl = undefined;
+      this.commentsErrorEl = undefined;
+      this.commentsHeaderEl = undefined;
+      this.commentsEmptyEl = undefined;
+      this.commentHeaderTitle = null;
+      this.commentPostIndexMap = new Map();
       this.commentPanel.remove();
       this.commentPanel = null;
       this.commentListEl = null;
