@@ -284,6 +284,19 @@ test('the built app boots into the layered three-column shell', { timeout: 90_00
     assert.match(post.quotedText, /An older quoted post/);
     assert.equal(post.quotedAuthor, '@quoted');
 
+    // The post menu opens as a keyed list (guest sees block + report).
+    await page.click('.post-card .post-menu-button');
+    await page.waitForSelector('.post-menu-dropdown', { timeout: 5_000 });
+    const menu = await page.evaluate(() => ({
+      items: [...document.querySelectorAll('.post-menu-dropdown .fx-menu-item')].map((item) =>
+        (item.textContent ?? '').trim(),
+      ),
+      danger: document.querySelectorAll('.post-menu-dropdown .fx-menu-item[data-danger="true"]').length,
+    }));
+    assert.ok(menu.items.length >= 2, `post menu items: ${menu.items.join(', ')}`);
+    assert.ok(menu.danger >= 1, 'destructive menu item lost its danger marker');
+    await page.keyboard.press('Escape');
+
     // No horizontal overflow at desktop width.
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -476,5 +489,78 @@ test('the mobile viewport keeps the bottom nav and the left drawer', { timeout: 
     assert.ok(closed, 'drawer did not close from the overlay');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint sharp', {
+  timeout: 120_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const cases = [
+      // Exactly at the drawer breakpoint: bottom bar on, drawer off-canvas.
+      { width: 768, height: 1024, mobile: true },
+      { width: 900, height: 1024, mobile: false },
+      // At the right-rail breakpoint the rail is already hidden.
+      { width: 1024, height: 1024, mobile: false },
+    ];
+
+    for (const testCase of cases) {
+      const { page, pageErrors } = await openApp(browser, `${origin}/`, GUEST_STUBS, {
+        width: testCase.width,
+        height: testCase.height,
+      });
+      await page.waitForSelector('.main-container', { timeout: 30_000 });
+      // The bar is mounted at every width; only its computed display differs.
+      await page.waitForSelector('.bottom-nav', { state: 'attached', timeout: 30_000 });
+      await page.waitForSelector('.post-card', { timeout: 30_000 });
+      // Let the media query settle after the lazy nav mount.
+      await page.waitForTimeout(100);
+
+      const layout = await page.evaluate(() => {
+        const rect = (selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return null;
+          const bounds = element.getBoundingClientRect();
+          return { left: bounds.left, right: bounds.right, width: bounds.width };
+        };
+        const nav = document.querySelector('.bottom-nav');
+        const leftNav = document.querySelector('.left-nav');
+        const rightPanel = document.querySelector('.right-panel');
+        return {
+          bottomNavDisplay: nav ? getComputedStyle(nav).display : null,
+          leftNav: rect('.left-nav'),
+          leftNavPosition: leftNav ? getComputedStyle(leftNav).position : null,
+          rightPanelDisplay: rightPanel ? getComputedStyle(rightPanel).display : null,
+          content: rect('.timeline, .main-content'),
+          overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+
+      const label = `${testCase.width}px`;
+
+      // The right rail is hidden at and below 1024px.
+      assert.equal(layout.rightPanelDisplay, 'none', `${label}: right rail should be hidden`);
+      assert.ok(layout.overflow <= 1, `${label}: horizontal overflow ${layout.overflow}px`);
+      assert.ok(layout.content, `${label}: content column missing`);
+      assert.ok(layout.content.width <= testCase.width + 1, `${label}: content wider than the viewport`);
+
+      if (testCase.mobile) {
+        assert.equal(layout.bottomNavDisplay, 'flex', `${label}: bottom nav should be visible`);
+        assert.ok(layout.leftNav, `${label}: left nav missing`);
+        assert.ok(layout.leftNav.right <= 1, `${label}: drawer should be off-canvas`);
+      } else {
+        assert.equal(layout.bottomNavDisplay, 'none', `${label}: bottom nav should be hidden`);
+        assert.ok(layout.leftNav, `${label}: left nav missing`);
+        assert.ok(Math.abs(layout.leftNav.width - 240) < 1, `${label}: left nav width ${layout.leftNav.width}`);
+        // The shell is centred below 1200px, so the nav starts at the container
+        // inset rather than at 0; it must still be on-screen and full-width.
+        assert.ok(layout.leftNav.left >= 0, `${label}: left nav should be on-screen`);
+        assert.ok(layout.leftNav.right > 0, `${label}: left nav should be laid out`);
+        assert.equal(layout.leftNavPosition, 'sticky', `${label}: left nav should be sticky`);
+      }
+
+      assert.deepEqual(pageErrors, [], `${label}: page errors: ${pageErrors.join(' | ')}`);
+      await page.close();
+    }
   });
 });

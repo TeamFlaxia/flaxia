@@ -40,41 +40,43 @@ export function createPostActions(props: PostActionsOptions): HTMLElement {
   const container = document.createElement('div');
   container.className = 'post-actions';
 
-  const leftGroup = document.createElement('div');
-  leftGroup.className = 'post-actions-left';
-
-  const rightGroup = document.createElement('div');
-  rightGroup.className = 'post-actions-right';
-
-  // Fresh! button
-  const freshButton = createActionButton('fresh', formatCount(props.freshCount), props.isFreshed, true);
-  freshButton.addEventListener('click', props.onFreshToggle);
-
-  // Reply button
-  const replyButton = createActionButton('reply', formatCount(props.replyCount), false, true);
-  replyButton.addEventListener('click', props.onReplyToggle);
-
   const reloadActionsDropdown = createReloadActionsDropdown(props);
+  const reactionsRow = createReactionsRow(props.reactions, props.onReactionToggle, props.popReaction);
 
-  // Bookmark button (no count)
-  const bookmarkButton = createActionButton('bookmark', '', props.isBookmarked, false);
-  bookmarkButton.addEventListener('click', props.onBookmarkToggle);
-
-  // Impressions button (display only, not clickable)
-  const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false, true);
-
-  leftGroup.appendChild(freshButton);
-  leftGroup.appendChild(replyButton);
-  leftGroup.appendChild(reloadActionsDropdown);
-
-  // Right-aligned group: rightmost impressions, then bookmark
-  rightGroup.appendChild(bookmarkButton);
-  rightGroup.appendChild(impressionsButton);
-
-  container.appendChild(leftGroup);
-  container.appendChild(rightGroup);
-
-  container.appendChild(createReactionsRow(props.reactions, props.onReactionToggle, props.popReaction));
+  mount(
+    container,
+    () => html`
+      <div class="post-actions-left">
+        ${actionButtonTemplate({
+          type: 'fresh',
+          count: formatCount(props.freshCount),
+          isActive: props.isFreshed,
+          showCount: true,
+          onClick: props.onFreshToggle,
+        })}
+        ${actionButtonTemplate({
+          type: 'reply',
+          count: formatCount(props.replyCount),
+          showCount: true,
+          onClick: props.onReplyToggle,
+        })}
+        ${reloadActionsDropdown}
+      </div>
+      <div class="post-actions-right">
+        ${actionButtonTemplate({
+          type: 'bookmark',
+          isActive: props.isBookmarked,
+          onClick: props.onBookmarkToggle,
+        })}
+        ${actionButtonTemplate({
+          type: 'impressions',
+          count: formatCount(props.impressions),
+          showCount: true,
+        })}
+      </div>
+      ${reactionsRow}
+    `,
+  );
 
   // One-shot feedback for the toggle that just turned ON.
   if (props.popAction) {
@@ -89,14 +91,21 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
   const wrapper = document.createElement('div');
   wrapper.className = 'post-action-dropdown';
 
-  const trigger = createActionButton('reload', formatCount(props.reloadCount), props.isReloaded, true);
+  mount(wrapper, () =>
+    actionButtonTemplate({
+      type: 'reload',
+      count: formatCount(props.reloadCount),
+      isActive: props.isReloaded,
+      showCount: true,
+    }),
+  );
+  const trigger = wrapper.querySelector<HTMLButtonElement>('.action-button--reload');
+  if (!trigger) throw new Error('[post-actions] reload trigger failed to render');
   const dropdownId = `post-action-dropdown-${++nextActionDropdownId}`;
   trigger.setAttribute('aria-label', t('post_actions.more_actions'));
   trigger.setAttribute('title', t('post_actions.more_actions'));
   trigger.setAttribute('aria-expanded', 'false');
   trigger.setAttribute('aria-controls', dropdownId);
-  wrapper.appendChild(trigger);
-
   let dropdown: HTMLDivElement | null = null;
 
   const closeDropdown = () => {
@@ -282,40 +291,28 @@ function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => void): 
   openStampPicker(anchor, { onSelect: onPick });
 }
 
-function createActionButton(type: ActionButtonType, count: string, isActive: boolean, showCount: boolean): HTMLElement {
-  const button = document.createElement('button');
-  button.className = `action-button action-button--${type}`;
+interface ActionButtonOptions {
+  type: ActionButtonType;
+  count?: string;
+  isActive?: boolean;
+  showCount?: boolean;
+  onClick?: () => void;
+}
+
+function actionButtonTemplate(options: ActionButtonOptions) {
+  const { type, count = '', isActive = false, showCount = false, onClick } = options;
   const label = type === 'reload' ? t('post_actions.reload') : t('post_actions.aria_label', { type });
-  button.setAttribute('aria-label', label);
-  button.setAttribute('title', label);
-
-  if (isActive) {
-    button.classList.add('action-button--active');
-  }
-
+  const className = `action-button action-button--${type}${isActive ? ' action-button--active' : ''}`;
   // Toggle semantics for the two single-state actions. Reload opens a
   // disclosure menu, so aria-pressed would be the wrong role there.
-  if (type === 'fresh' || type === 'bookmark') {
-    button.setAttribute('aria-pressed', String(isActive));
-  }
+  const pressed = type === 'fresh' || type === 'bookmark' ? String(isActive) : null;
 
-  // Create icon (universal Lucide icon, not OS-dependent emoji).
-  const iconEl = document.createElement('span');
-  iconEl.className = 'action-icon';
-  iconEl.appendChild(icon(getIconNameForType(type)));
-
-  button.appendChild(iconEl);
-
-  // Add count for fresh, reply and impressions buttons only
-  if (showCount) {
-    const countSpan = document.createElement('span');
-    countSpan.className = 'action-count';
-    countSpan.textContent = count;
-
-    button.appendChild(countSpan);
-  }
-
-  return button;
+  return html`
+    <button class=${className} aria-label=${label} title=${label} aria-pressed=${pressed} @click=${onClick ?? (() => {})}>
+      <span class="action-icon">${icon(getIconNameForType(type))}</span>
+      ${showCount ? html`<span class="action-count">${count}</span>` : ''}
+    </button>
+  `;
 }
 
 type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'reload' | 'share' | 'impressions' | 'quote';

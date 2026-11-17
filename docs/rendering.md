@@ -286,9 +286,13 @@ Implemented:
 
 Remaining maintenance (not part of the stabilization contract above):
 
-1. Page-by-page migration of the remaining components (PostCard internals,
-   Settings, Admin, Mail, Maps, etc.) to the renderer.
-2. CSS layer consolidation and a full cross-browser visual matrix.
+1. `PostText` (rich text, mentions, hashtags, code blocks) and
+   `ReplyComposer` are still imperative; they are the remaining PostCard
+   internals.
+2. Cross-browser visual coverage: Chromium and Firefox now assert 390, 768, 900,
+   1024 and 1400px in the app smoke, plus the built-CSS geometry smoke. WebKit
+   runs the same two smokes in the `styles-webkit` CI job, but has never been
+   executed locally (host libraries require `sudo playwright install-deps`).
 3. Real-device CLS/LCP measurement using `?render-debug=1`.
 
 ## Tests
@@ -318,9 +322,10 @@ The renderer browser test checks keyed element identity, text-node identity,
 in-place iframe browsing-context preservation, hidden-iframe preservation and
 layout shift. The app smoke boots the real build at 1400x1000 (guest shell +
 a stubbed timeline post for `PostHeader`/`PostActions`/`QuotedPostCard`, and
-`/settings` for a signed-in user) and at 390x844 (bottom nav on the viewport
+`/settings` for a signed-in user) at 390x844 (bottom nav on the viewport
 edge, off-canvas left drawer, drawer open/close, right rail hidden, no
-horizontal overflow). The styles smoke test loads the real build output, asserts both
+horizontal overflow) and across 768/900/1024px (drawer breakpoint stays sharp,
+right rail hidden at and below 1024px, left nav in flow above 768px). The styles smoke test loads the real build output, asserts both
 `legacy` and `primitives` layers, verifies that `primitives` wins on a
 same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with

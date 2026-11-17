@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { createMenuItem } from '../lib/modal-overlay.js';
+import { each, html, legacy, mount } from '../lib/render/index.ts';
 import { isZipGame } from './PostStage.js';
 import { type SignInPromptAction, showSignInPrompt } from './SignInPrompt.js';
 
@@ -47,6 +48,13 @@ function requireAuth(
   return true;
 }
 
+interface PostMenuEntry {
+  key: string;
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+}
+
 export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
   const { isOwnPost, isRemote, showPinOption, pinned, payloadKey, currentUser, actions } = props;
 
@@ -57,125 +65,138 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
     dropdown.remove();
   };
 
-  // Version history only exists for local posts.
+  // Build the entry list first, then render it through the engine: the menu is
+  // one keyed list instead of eight hand-appended buttons.
+  const entries: PostMenuEntry[] = [];
+
   if (!isRemote) {
-    dropdown.appendChild(
-      createMenuItem({
-        label: t('game.version_history'),
-        onClick: () => {
-          closeDropdown();
-          actions.onVersionHistory();
-        },
-      }),
-    );
+    entries.push({
+      key: 'version-history',
+      label: t('game.version_history'),
+      onClick: () => {
+        closeDropdown();
+        actions.onVersionHistory();
+      },
+    });
   }
 
   if (isOwnPost) {
-    // Pin/unpin
     if (showPinOption) {
-      dropdown.appendChild(
-        createMenuItem({
-          label: pinned ? t('post.menu_unpin') : t('post.menu_pin'),
-          onClick: () => {
-            closeDropdown();
-            actions.onTogglePin?.();
-          },
-        }),
-      );
-    }
-
-    // Counter notice (only for hidden posts)
-    if (props.showPinOption) {
-      dropdown.appendChild(
-        createMenuItem({
-          label: t('post.menu_counter_notice'),
-          onClick: () => {
-            closeDropdown();
-            actions.onCounterNotice();
-          },
-        }),
-      );
-    }
-
-    // Edit
-    dropdown.appendChild(
-      createMenuItem({
-        label: t('post.menu_edit'),
+      entries.push({
+        key: 'pin',
+        label: pinned ? t('post.menu_unpin') : t('post.menu_pin'),
         onClick: () => {
           closeDropdown();
-          actions.onEdit();
+          actions.onTogglePin?.();
         },
-      }),
-    );
+      });
+      entries.push({
+        key: 'counter-notice',
+        label: t('post.menu_counter_notice'),
+        onClick: () => {
+          closeDropdown();
+          actions.onCounterNotice();
+        },
+      });
+    }
 
-    // Update (only for ZIP games)
+    entries.push({
+      key: 'edit',
+      label: t('post.menu_edit'),
+      onClick: () => {
+        closeDropdown();
+        actions.onEdit();
+      },
+    });
+
     if (isZipGame(payloadKey)) {
-      dropdown.appendChild(
-        createMenuItem({
-          label: t('game.update'),
-          onClick: () => {
-            closeDropdown();
-            actions.onUpdate();
-          },
-        }),
-      );
-    }
-
-    // Delete (danger)
-    dropdown.appendChild(
-      createMenuItem({
-        label: t('post.menu_delete'),
-        danger: true,
+      entries.push({
+        key: 'update',
+        label: t('game.update'),
         onClick: () => {
           closeDropdown();
-          actions.onDelete();
+          actions.onUpdate();
         },
-      }),
-    );
+      });
+    }
+
+    entries.push({
+      key: 'delete',
+      label: t('post.menu_delete'),
+      danger: true,
+      onClick: () => {
+        closeDropdown();
+        actions.onDelete();
+      },
+    });
   } else {
     // Blocking a remote actor is a separate ActivityPub operation; do not
     // present the local block action for a post of another instance.
     if (!isRemote) {
-      dropdown.appendChild(
-        createMenuItem({
-          label: t('post.menu_block'),
-          danger: true,
-          onClick: () => {
-            closeDropdown();
-            if (!requireAuth('block', actions.onBlock, currentUser)) return;
-            actions.onBlock();
-          },
-        }),
-      );
-    }
-
-    // Report
-    dropdown.appendChild(
-      createMenuItem({
-        label: t('post.menu_report'),
+      entries.push({
+        key: 'block',
+        label: t('post.menu_block'),
+        danger: true,
         onClick: () => {
           closeDropdown();
-          if (!requireAuth('report', actions.onReport, currentUser)) return;
-          actions.onReport();
+          if (!requireAuth('block', actions.onBlock, currentUser)) return;
+          actions.onBlock();
         },
-      }),
-    );
+      });
+    }
+
+    entries.push({
+      key: 'report',
+      label: t('post.menu_report'),
+      onClick: () => {
+        closeDropdown();
+        if (!requireAuth('report', actions.onReport, currentUser)) return;
+        actions.onReport();
+      },
+    });
   }
+
+  mount(dropdown, () =>
+    each(
+      () => entries,
+      (entry) => entry.key,
+      (entry) =>
+        legacy(
+          createMenuItem({
+            label: entry().label,
+            danger: entry().danger,
+            onClick: entry().onClick,
+          }),
+        ),
+    ),
+  );
 
   return dropdown;
 }
 
 export function createMenuButton(onClick: () => void): HTMLElement {
-  const menuButton = document.createElement('button');
-  menuButton.type = 'button';
-  menuButton.className = 'post-menu-button';
-  menuButton.textContent = '⋯';
-  menuButton.setAttribute('aria-label', t('post_actions.more_actions'));
+  const holder = document.createElement('div');
+  let menuButton!: HTMLButtonElement;
 
-  menuButton.addEventListener('click', (e) => {
-    e.stopPropagation();
-    onClick();
-  });
+  mount(
+    holder,
+    () => html`
+      <button
+        type="button"
+        class="post-menu-button"
+        aria-label=${t('post_actions.more_actions')}
+        @click=${(event: Event) => {
+          event.stopPropagation();
+          onClick();
+        }}
+        ref=${(element: Element | null) => {
+          if (element) menuButton = element as unknown as HTMLButtonElement;
+        }}
+      >
+        ⋯
+      </button>
+    `,
+  );
 
   return menuButton;
 }
