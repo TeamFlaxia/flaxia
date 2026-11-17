@@ -52,8 +52,9 @@ const TIMELINE_POST = {
   user_id: 'u2',
   username: 'author',
   display_name: 'Author',
-  text: 'Hello from the built app smoke test.',
-  hashtags: '',
+  text: 'Hello @quoted and #flaxia from the built app smoke test.',
+  hashtags: 'flaxia',
+  mentions: JSON.stringify([{ username: 'quoted', user_id: 'u3' }]),
   created_at: new Date(Date.now() - 60_000).toISOString(),
   fresh_count: 3,
   reply_count: 1,
@@ -89,6 +90,10 @@ const GUEST_STUBS = {
   '/api/ads/active': { body: { ads: [] } },
   '/api/tags/trending': { body: { tags: [] } },
   '/api/users/suggestions': { body: { users: [] } },
+  '/api/search': {
+    body: { results: [{ username: 'quoted', display_name: 'Quoted', avatar_key: null }] },
+  },
+  '/api/tags/suggest': { body: { tags: [{ tag: 'flaxia', count: 12 }] } },
 };
 
 const SIGNED_IN_STUBS = {
@@ -271,6 +276,9 @@ test('the built app boots into the layered three-column shell', { timeout: 90_00
       reactionAdd: !!document.querySelector('.post-card .post-reaction-add'),
       quotedText: document.querySelector('.post-card .quoted-post-text')?.textContent?.trim() ?? '',
       quotedAuthor: document.querySelector('.post-card .quoted-post-username')?.textContent?.trim() ?? '',
+      mentionLink: document.querySelector('.post-card .post-text .mention-link')?.textContent?.trim() ?? '',
+      hashtagLink: document.querySelector('.post-card .post-text .hashtag-link')?.textContent?.trim() ?? '',
+      richText: !!document.querySelector('.post-card .post-text.post-text--rich'),
     }));
 
     assert.equal(post.username, '@author');
@@ -283,6 +291,9 @@ test('the built app boots into the layered three-column shell', { timeout: 90_00
     assert.ok(post.reactionAdd, 'add-reaction button missing');
     assert.match(post.quotedText, /An older quoted post/);
     assert.equal(post.quotedAuthor, '@quoted');
+    assert.ok(post.richText, 'rich post text missing');
+    assert.equal(post.mentionLink, '@quoted');
+    assert.equal(post.hashtagLink, '#flaxia');
 
     // The post menu opens as a keyed list (guest sees block + report).
     await page.click('.post-card .post-menu-button');
@@ -562,5 +573,66 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       assert.deepEqual(pageErrors, [], `${label}: page errors: ${pageErrors.join(' | ')}`);
       await page.close();
     }
+  });
+});
+
+test('a signed-in reply composer mounts, counts characters and suggests mentions', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
+    await page.waitForSelector('.post-card', { timeout: 30_000 });
+
+    await page.click('.post-card .action-button--reply');
+    await page.waitForSelector('.reply-composer', { timeout: 10_000 });
+
+    const initial = await page.evaluate(() => {
+      const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector('.reply-composer-textarea'));
+      const submit = /** @type {HTMLButtonElement | null} */ (document.querySelector('.reply-composer-submit'));
+      return {
+        placeholder: textarea?.placeholder ?? '',
+        maxLength: textarea?.maxLength ?? 0,
+        submitDisabled: submit?.disabled ?? false,
+        charCount: document.querySelector('.reply-composer-char-count')?.textContent?.trim() ?? '',
+        buttons: document.querySelectorAll('.reply-composer-buttons button').length,
+      };
+    });
+
+    assert.ok(initial.placeholder.length > 0, 'composer placeholder missing');
+    assert.equal(initial.maxLength, 200);
+    assert.equal(initial.submitDisabled, true);
+    assert.equal(initial.charCount, '0/200');
+    assert.equal(initial.buttons, 2);
+
+    await page.fill('.reply-composer-textarea', 'Nice post');
+
+    const typed = await page.evaluate(() => ({
+      submitDisabled: document.querySelector < HTMLButtonElement > '.reply-composer-submit'?.disabled ?? true,
+      charCount: document.querySelector('.reply-composer-char-count')?.textContent?.trim() ?? '',
+    }));
+    assert.equal(typed.submitDisabled, false, 'submit should enable once there is content');
+    assert.equal(typed.charCount, '9/200');
+
+    // Mention suggestions are a keyed list fed by the search endpoint.
+    await page.fill('.reply-composer-textarea', 'Hi @qu');
+    await page.waitForSelector('.mention-dropdown .mention-item', { timeout: 10_000 });
+
+    const suggestions = await page.evaluate(() => ({
+      items: [...document.querySelectorAll('.mention-dropdown .mention-item')].map((item) => ({
+        value: item.getAttribute('data-value'),
+        active: item.classList.contains('mention-item--active'),
+        text: (item.textContent ?? '').trim(),
+      })),
+    }));
+
+    assert.equal(suggestions.items.length, 1);
+    assert.equal(suggestions.items[0].value, 'quoted');
+    assert.ok(suggestions.items[0].active, 'first suggestion should start active');
+    assert.match(suggestions.items[0].text, /@quoted/);
+
+    // Picking the suggestion rewrites the draft.
+    await page.click('.mention-dropdown .mention-item');
+    const draft = await page.inputValue('.reply-composer-textarea');
+    assert.equal(draft, 'Hi @quoted ');
+
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
   });
 });

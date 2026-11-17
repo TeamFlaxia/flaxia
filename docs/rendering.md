@@ -286,9 +286,9 @@ Implemented:
 
 Remaining maintenance (not part of the stabilization contract above):
 
-1. `PostText` (rich text, mentions, hashtags, code blocks) and
-   `ReplyComposer` are still imperative; they are the remaining PostCard
-   internals.
+1. The PostCard tree is fully engine-rendered apart from `PostText`'s sanitized
+   markdown payload (written as one `innerHTML` string by design) and the
+   `PostActions` reload dropdown (document-level listeners + focus restore).
 2. Cross-browser visual coverage: Chromium and Firefox now assert 390, 768, 900,
    1024 and 1400px in the app smoke, plus the built-CSS geometry smoke. WebKit
    runs the same two smokes in the `styles-webkit` CI job, but has never been
