@@ -224,6 +224,10 @@ Implemented:
 - MailThreadPage keeps its status, message list and reply composer in separate
   hosts. Messages are keyed by id, so a thread refresh reuses cards and their
   asynchronously rendered HTML/attachments;
+- MailComposePage keys its attachment list by file identity, and
+  MailSettingsPage renders its security rows through a keyed list;
+- Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
+  are still unlayered.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

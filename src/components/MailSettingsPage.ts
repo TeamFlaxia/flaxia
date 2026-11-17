@@ -7,6 +7,7 @@ import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { getQuota, listAddresses } from '../lib/mail/api.js';
 import { goToMail, mailBack } from '../lib/mail/navigation.js';
 import { mailButton } from '../lib/mail/ui.js';
+import { each, legacy, type Mounted, mount } from '../lib/render/index.ts';
 import { isVaultUnlocked } from '../lib/vault/session.js';
 import { activateMailAddress } from './MailPage.js';
 import { createVaultUnlockForm, type VaultUnlockForm } from './VaultUnlockForm.js';
@@ -18,6 +19,7 @@ export interface MailSettingsPageProps {
 export class MailSettingsPage {
   private element: HTMLElement;
   private unlockForm: VaultUnlockForm | null = null;
+  private securityMount?: Mounted;
   private props: MailSettingsPageProps;
 
   constructor(props: MailSettingsPageProps) {
@@ -31,6 +33,8 @@ export class MailSettingsPage {
     const el = this.element;
     this.unlockForm?.destroy();
     this.unlockForm = null;
+    this.securityMount?.dispose();
+    this.securityMount = undefined;
     el.replaceChildren();
 
     const header = document.createElement('header');
@@ -251,22 +255,31 @@ export class MailSettingsPage {
         t('mail.security_tls_note') || 'External outbound mail is protected in transit, not E2EE.',
       ],
     ];
-    for (const [iconName, title, note] of rows) {
-      const item = document.createElement('li');
-      const mark = document.createElement('span');
-      mark.className = 'mail-security-icon';
-      mark.appendChild(icon(iconName as 'shield' | 'lock' | 'mail-open', { width: '16', height: '16' }));
-      const body = document.createElement('span');
-      const strong = document.createElement('strong');
-      strong.textContent = title;
-      const detail = document.createElement('span');
-      detail.textContent = note;
-      body.appendChild(strong);
-      body.appendChild(detail);
-      item.appendChild(mark);
-      item.appendChild(body);
-      list.appendChild(item);
-    }
+
+    this.securityMount = mount(list, () =>
+      each(
+        () => rows,
+        (row) => row[1],
+        (row) => {
+          const [iconName, title, note] = row();
+          const item = document.createElement('li');
+          const mark = document.createElement('span');
+          mark.className = 'mail-security-icon';
+          mark.appendChild(icon(iconName as 'shield' | 'lock' | 'mail-open', { width: '16', height: '16' }));
+          const body = document.createElement('span');
+          const strong = document.createElement('strong');
+          strong.textContent = title;
+          const detail = document.createElement('span');
+          detail.textContent = note;
+          body.appendChild(strong);
+          body.appendChild(detail);
+          item.appendChild(mark);
+          item.appendChild(body);
+          return legacy(item);
+        },
+      ),
+    );
+
     section.appendChild(list);
     return section;
   }
@@ -278,6 +291,8 @@ export class MailSettingsPage {
   destroy(): void {
     this.unlockForm?.destroy();
     this.unlockForm = null;
+    this.securityMount?.dispose();
+    this.securityMount = undefined;
     this.element.remove();
   }
 }

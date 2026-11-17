@@ -9,6 +9,7 @@ import { mailBack } from '../lib/mail/navigation.js';
 import { type ComposeAttachmentInput, type ComposeFields, MAX_ATTACHMENTS, MAX_SEND_BYTES } from '../lib/mail/seal.js';
 import { openDraft, saveComposeDraft, sendCompose } from '../lib/mail/send.js';
 import { formatBytes, mailButton, mailErrorKey, securityChip } from '../lib/mail/ui.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 
 export interface MailComposePageProps {
   currentUser: { id: string; username: string } | null;
@@ -24,6 +25,8 @@ export class MailComposePage {
   private chipHost: HTMLElement | null = null;
   private attachmentsEl: HTMLElement | null = null;
   private files: File[] = [];
+  private attachmentsSignal: Signal<File[]> = signal<File[]>([]);
+  private attachmentsMount?: Mounted;
   private form: HTMLFormElement | null = null;
   private sendButton: HTMLButtonElement | null = null;
   private draftButton: HTMLButtonElement | null = null;
@@ -48,6 +51,9 @@ export class MailComposePage {
   }
 
   private render(): void {
+    this.attachmentsMount?.dispose();
+    this.attachmentsMount = undefined;
+    this.attachmentsSignal.set([]);
     this.element.replaceChildren();
     const header = document.createElement('header');
     header.className = 'page-header mail-compose-header';
@@ -169,6 +175,13 @@ export class MailComposePage {
 
     this.attachmentsEl = document.createElement('div');
     this.attachmentsEl.className = 'mail-attachment-list';
+    this.attachmentsMount = mount(this.attachmentsEl, () =>
+      each(
+        () => this.attachmentsSignal(),
+        (file) => `${file.name}:${file.size}:${file.lastModified}`,
+        (file) => legacy(this.buildAttachmentItem(file())),
+      ),
+    );
     form.appendChild(this.attachmentsEl);
 
     this.element.appendChild(form);
@@ -220,21 +233,21 @@ export class MailComposePage {
   }
 
   private renderAttachments(): void {
-    if (!this.attachmentsEl) return;
-    this.attachmentsEl.replaceChildren();
-    for (const file of this.files) {
-      const item = document.createElement('div');
-      item.className = 'mail-attachment';
-      item.appendChild(icon('paperclip', { width: '13', height: '13' }));
-      const name = document.createElement('span');
-      name.textContent = file.name;
-      const size = document.createElement('span');
-      size.className = 'mail-attachment-size';
-      size.textContent = formatBytes(file.size);
-      item.appendChild(name);
-      item.appendChild(size);
-      this.attachmentsEl.appendChild(item);
-    }
+    this.attachmentsSignal.set([...this.files]);
+  }
+
+  private buildAttachmentItem(file: File): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'mail-attachment';
+    item.appendChild(icon('paperclip', { width: '13', height: '13' }));
+    const name = document.createElement('span');
+    name.textContent = file.name;
+    const size = document.createElement('span');
+    size.className = 'mail-attachment-size';
+    size.textContent = formatBytes(file.size);
+    item.appendChild(name);
+    item.appendChild(size);
+    return item;
   }
 
   private formValue(form: HTMLFormElement, name: string): string {
@@ -361,6 +374,9 @@ export class MailComposePage {
   }
 
   destroy(): void {
+    this.attachmentsMount?.dispose();
+    this.attachmentsMount = undefined;
+    this.attachmentsSignal.set([]);
     this.element.remove();
   }
 }
