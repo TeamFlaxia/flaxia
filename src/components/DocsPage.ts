@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify';
 import type { MarkdownIt } from 'markdown-it';
-import { getLocale, t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.ts';
+import { html, mount } from '../lib/render/index.ts';
 
 interface DocsPageProps {
   slug?: string;
@@ -217,13 +218,8 @@ export function createDocsPage({ slug }: DocsPageProps) {
   const container = document.createElement('div');
   container.className = 'legal-page docs-page';
 
-  const contentWrapper = document.createElement('div');
-  contentWrapper.className = 'legal-content-wrapper';
-
   const header = renderHeader();
-
-  const content = document.createElement('article');
-  content.className = 'legal-content';
+  let content!: HTMLElement;
 
   const loadContent = async () => {
     const titleEl = document.createElement('h1');
@@ -270,15 +266,26 @@ export function createDocsPage({ slug }: DocsPageProps) {
     }
   };
 
-  contentWrapper.appendChild(header);
-  contentWrapper.appendChild(content);
-  contentWrapper.appendChild(renderFooter());
-  container.appendChild(contentWrapper);
+  const mounted = mount(
+    container,
+    () => html`
+      <div class="legal-content-wrapper">
+        ${header}
+        <article
+          class="legal-content"
+          ref=${(element: Element | null) => {
+            if (element) content = element as HTMLElement;
+          }}
+        ></article>
+        ${renderFooter()}
+      </div>
+    `,
+  );
 
   loadContent();
 
   return {
     getElement: () => container,
-    destroy: () => {},
+    destroy: () => mounted.dispose(),
   };
 }
