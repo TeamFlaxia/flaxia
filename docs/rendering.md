@@ -232,6 +232,8 @@ Implemented:
 - AdminUsersTab keys its user rows by `id:frozen-state`. Search reuses matching
   rows, freeze recreates only the changed row, and delete removes it through the
   engine. The empty state sits outside the keyed range;
+- AdminHiddenTab keys hidden posts by post id. Restoring a post removes only that
+  row through the signal, and the empty state is toggled outside the list;
 - Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
   are still unlayered.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
