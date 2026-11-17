@@ -218,6 +218,9 @@ Implemented:
 - MapsPage keeps its MapLibre canvas, but the WebGL fallback tile grid is keyed by
   z/x/y and the weather overlay is driven by loading/error/ready signals instead
   of `innerHTML`;
+- MailPage keeps status states (login, locked, loading, error, empty) outside a
+  keyed thread list. Folder/search changes reuse rows; read and star actions
+  update the existing row instead of rebuilding the mailbox;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

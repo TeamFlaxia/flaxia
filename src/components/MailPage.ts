@@ -17,6 +17,7 @@ import {
 import { goToMailCompose, goToMailSettings, goToMailThread } from '../lib/mail/navigation.js';
 import { MailReader } from '../lib/mail/reader.js';
 import { avatar, emptyState, formatMailDate, iconButton, mailButton, triggerPop } from '../lib/mail/ui.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { ensureVaultUnlocked, provisionMailIdentity } from '../lib/vault/mail-identity.js';
 import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
 import { createVaultUnlockForm } from './VaultUnlockForm.js';
@@ -58,6 +59,10 @@ export class MailPage {
   private unreadTotal = 0;
   private destroyed = false;
   private listEl: HTMLElement | null = null;
+  private threadsHost: HTMLElement | null = null;
+  private threadsSignal: Signal<MailRow[]> = signal<MailRow[]>([]);
+  private threadsMount?: Mounted;
+  private rowElements: Map<string, HTMLElement> = new Map();
   private tabsEl: HTMLElement | null = null;
   private searchInput: HTMLInputElement | null = null;
 
@@ -157,8 +162,25 @@ export class MailPage {
 
     this.listEl = document.createElement('div');
     this.listEl.className = 'mail-list';
-    this.listEl.setAttribute('role', 'list');
     this.element.appendChild(this.listEl);
+
+    this.threadsHost = document.createElement('div');
+    this.threadsHost.className = 'mail-thread-list';
+    this.threadsHost.setAttribute('role', 'list');
+    this.threadsHost.hidden = true;
+    this.listEl.appendChild(this.threadsHost);
+    this.threadsMount = mount(this.threadsHost, () =>
+      each(
+        () => this.threadsSignal(),
+        (thread) => thread.id,
+        (thread) => {
+          const value = thread();
+          const row = this.buildRow(value);
+          this.rowElements.set(value.id, row);
+          return legacy(row, () => this.rowElements.delete(value.id));
+        },
+      ),
+    );
   }
 
   private buildTabs(): HTMLElement {
@@ -312,7 +334,11 @@ export class MailPage {
   private renderList(): void {
     const list = this.listEl;
     if (!list) return;
-    list.replaceChildren();
+
+    for (const child of [...list.childNodes]) {
+      if (child !== this.threadsHost) child.remove();
+    }
+    if (this.threadsHost) this.threadsHost.hidden = true;
 
     if (!this.props.currentUser) {
       list.appendChild(emptyState('mail', t('mail.requires_login') || 'Sign in to use Mail.', ''));
@@ -418,14 +444,20 @@ export class MailPage {
       return;
     }
 
-    for (const thread of threads) {
-      list.appendChild(this.buildRow(thread));
+    if (this.threadsHost) {
+      this.threadsSignal.set(threads);
+      this.threadsHost.hidden = false;
+    } else {
+      for (const thread of threads) {
+        list.appendChild(this.buildRow(thread));
+      }
     }
   }
 
   private buildRow(thread: MailRow): HTMLElement {
     const row = document.createElement('div');
     row.className = 'mail-thread-row';
+    row.dataset.threadId = thread.id;
     row.setAttribute('role', 'listitem');
     row.tabIndex = 0;
     row.classList.toggle('mail-thread-row--unread', thread.unread);
@@ -505,7 +537,10 @@ export class MailPage {
     this.unreadTotal = Math.max(0, this.unreadTotal - 1);
     if (this.folder === 'inbox') this.counts = { ...this.counts, inbox: Math.max(0, (this.counts.inbox ?? 0) - 1) };
     this.updateTabs();
-    this.renderList();
+
+    const row = this.rowElements.get(thread.id);
+    row?.classList.remove('mail-thread-row--unread');
+    row?.querySelector('.mail-unread-dot')?.remove();
   }
 
   private toggleStar(thread: MailRow, starButton?: HTMLButtonElement): void {
@@ -514,15 +549,14 @@ export class MailPage {
     // Update in place so the row does not replay its entrance on every
     // toggle; the pop reports the state change (motion.css "press and
     // answer") instead of a silent swap.
-    if (starButton) {
+    const button = starButton ?? this.rowElements.get(thread.id)?.querySelector<HTMLButtonElement>('.mail-star');
+    if (button) {
       const label = thread.starred ? t('mail.unstar') || 'Unstar' : t('mail.star') || 'Star';
-      starButton.classList.toggle('mail-star--active', thread.starred);
-      starButton.setAttribute('aria-label', label);
-      starButton.setAttribute('aria-pressed', String(thread.starred));
-      starButton.title = label;
-      triggerPop(starButton);
-    } else {
-      this.renderList();
+      button.classList.toggle('mail-star--active', thread.starred);
+      button.setAttribute('aria-label', label);
+      button.setAttribute('aria-pressed', String(thread.starred));
+      button.title = label;
+      triggerPop(button);
     }
   }
 
@@ -532,6 +566,10 @@ export class MailPage {
 
   destroy(): void {
     this.destroyed = true;
+    this.threadsMount?.dispose();
+    this.threadsMount = undefined;
+    this.threadsSignal.set([]);
+    this.rowElements.clear();
     this.element.remove();
   }
 }
