@@ -693,9 +693,19 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
 test('a signed-in reply composer mounts, counts characters and suggests mentions', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
-    const searchRequests = [];
+    const searchEvents = [];
     page.on('request', (request) => {
-      if (request.url().includes('/api/search')) searchRequests.push(request.url());
+      if (request.url().includes('/api/search')) searchEvents.push({ type: 'request', url: request.url() });
+    });
+    page.on('response', (response) => {
+      if (response.url().includes('/api/search')) {
+        searchEvents.push({ type: 'response', status: response.status() });
+      }
+    });
+    page.on('requestfailed', (request) => {
+      if (request.url().includes('/api/search')) {
+        searchEvents.push({ type: 'failed', error: request.failure()?.errorText ?? '' });
+      }
     });
     await page.waitForSelector('.post-card', { timeout: 30_000 });
 
@@ -743,16 +753,30 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     try {
       await page.waitForSelector('.mention-dropdown .mention-item', { state: 'attached', timeout: 10_000 });
     } catch (error) {
-      const debug = await page.evaluate(() => {
+      const debug = await page.evaluate(async () => {
         const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector('.reply-composer-textarea'));
+        let probe;
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2_000);
+          const response = await fetch('/api/search?type=users&q=qu&limit=5', {
+            credentials: 'include',
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          probe = { ok: response.ok, status: response.status, text: (await response.text()).slice(0, 160) };
+        } catch (error) {
+          probe = { error: String(error) };
+        }
         return {
           value: textarea?.value ?? null,
           selectionStart: textarea?.selectionStart ?? null,
           dropdownDisplay: document.querySelector('.mention-dropdown')?.style.display ?? null,
           items: document.querySelectorAll('.mention-item').length,
+          probe,
         };
       });
-      throw new Error(`${String(error)}\nrequests=${JSON.stringify(searchRequests)}\nstate=${JSON.stringify(debug)}`);
+      throw new Error(`${String(error)}\nevents=${JSON.stringify(searchEvents)}\nstate=${JSON.stringify(debug)}`);
     }
 
     const suggestions = await page.evaluate(() => ({
