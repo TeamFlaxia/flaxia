@@ -196,6 +196,8 @@ Implemented:
   async markdown loader writes into the captured article element;
 - `DocsPage` uses the same shell composition and keeps its markdown-it/DOMPurify
   article renderer behind the captured article element;
+- `SkeletonCard` / `SkeletonPost` are rendered with `html`/`mount` while keeping
+  the existing skeleton class contract;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
