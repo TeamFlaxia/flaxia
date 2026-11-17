@@ -4,6 +4,7 @@ import { t } from '../lib/i18n.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { stripPostColors } from '../lib/post-colors.js';
+import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
@@ -14,6 +15,17 @@ interface WebSearchResult {
   snippet: string;
   source: string;
   published_at?: string;
+}
+
+interface SearchUser {
+  id: string;
+  username: string;
+  display_name?: string;
+  avatar_key?: string;
+  badge_type?: string | null;
+  name_color?: string | null;
+  bio?: string;
+  is_following?: boolean;
 }
 
 type SearchFilter = 'all' | 'web' | 'users' | 'posts' | 'arcade';
@@ -38,16 +50,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   let activeFilter: SearchFilter = initialFilter;
 
-  let allUsers: Array<{
-    id: string;
-    username: string;
-    display_name?: string;
-    avatar_key?: string;
-    badge_type?: string | null;
-    name_color?: string | null;
-    bio?: string;
-    is_following?: boolean;
-  }> = [];
+  let allUsers: SearchUser[] = [];
   let allPosts: Post[] = [];
   let allArcade: Post[] = [];
   let allWeb: WebSearchResult[] = [];
@@ -156,6 +159,168 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   content.className = 'search-page-content';
 
   container.appendChild(content);
+
+  // ── Results: persistent sections with keyed lists ──
+  const usersSignal = signal<SearchUser[]>([]);
+  const postsSignal = signal<Post[]>([]);
+  const arcadeSignal = signal<Post[]>([]);
+  const webSignal = signal<WebSearchResult[]>([]);
+
+  const sectionLabel = (text: string): HTMLElement => {
+    const label = document.createElement('div');
+    label.className = 'search-section-label';
+    label.textContent = text;
+    return label;
+  };
+
+  const sectionDivider = (): HTMLElement => {
+    const divider = document.createElement('div');
+    divider.className = 'search-section-divider';
+    divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;';
+    return divider;
+  };
+
+  const usersLabel = sectionLabel(t('search.users'));
+  const usersHost = document.createElement('div');
+  const usersDivider = sectionDivider();
+
+  const arcadeLabel = sectionLabel(t('explore.filter_arcade'));
+  const arcadeRowsHost = document.createElement('div');
+  const arcadeCardsWrapper = document.createElement('div');
+  arcadeCardsWrapper.style.cssText = 'position: relative;';
+  const arcadeScroll = document.createElement('div');
+  arcadeScroll.style.cssText = `
+    display: flex;
+    overflow-x: auto;
+    gap: 0.75rem;
+    padding: 0.5rem 0 0.75rem;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+  `;
+  const arcadeFade = document.createElement('div');
+  arcadeFade.style.cssText = `
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 48px;
+    background: linear-gradient(to right, transparent, var(--bg-primary));
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.3s;
+    z-index: 1;
+  `;
+  const updateArcadeFade = () => {
+    const atEnd = arcadeScroll.scrollLeft >= arcadeScroll.scrollWidth - arcadeScroll.clientWidth - 4;
+    arcadeFade.style.opacity = atEnd ? '0' : '1';
+  };
+  arcadeScroll.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+      e.preventDefault();
+      arcadeScroll.scrollLeft += e.deltaY;
+    }
+  });
+  arcadeScroll.addEventListener('scroll', updateArcadeFade);
+  arcadeCardsWrapper.appendChild(arcadeFade);
+  arcadeCardsWrapper.appendChild(arcadeScroll);
+  const arcadeDivider = sectionDivider();
+
+  const postsLabel = sectionLabel(t('search.posts'));
+  const postsHost = document.createElement('div');
+
+  const webDivider = sectionDivider();
+  const webLabel = sectionLabel(t('search.web_results'));
+  webLabel.style.cssText =
+    'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
+  const webHost = document.createElement('div');
+
+  const empty = document.createElement('div');
+  empty.className = 'page-empty';
+  empty.hidden = true;
+  const emptyIcon = document.createElement('span');
+  emptyIcon.className = 'page-empty-icon';
+  const emptyTitle = document.createElement('p');
+  emptyTitle.className = 'page-empty-title fx-display';
+  emptyTitle.textContent = t('search.no_results', { query });
+  empty.appendChild(emptyIcon);
+  empty.appendChild(emptyTitle);
+
+  const statusHost = document.createElement('div');
+  statusHost.hidden = true;
+
+  for (const element of [
+    usersLabel,
+    usersHost,
+    usersDivider,
+    arcadeLabel,
+    arcadeRowsHost,
+    arcadeCardsWrapper,
+    arcadeDivider,
+    postsLabel,
+    postsHost,
+    webDivider,
+    webLabel,
+    webHost,
+    empty,
+    statusHost,
+  ]) {
+    content.appendChild(element);
+  }
+
+  const usersMount: Mounted = mount(usersHost, () =>
+    each(
+      () => usersSignal(),
+      (user) => user.id,
+      (user) => legacy(createUserRow(user())),
+    ),
+  );
+
+  const postsMount: Mounted = mount(postsHost, () =>
+    each(
+      () => postsSignal(),
+      (post) => post.id,
+      (post) => {
+        const value = post();
+        const card = createPostCard({
+          post: value,
+          currentUser,
+          sandboxOrigin,
+          initialMode: PostCardMode.PREVIEW,
+          depth: value.depth,
+        });
+        return legacy(card.getElement(), () => card.destroy());
+      },
+    ),
+  );
+
+  const arcadeRowsMount: Mounted = mount(arcadeRowsHost, () =>
+    each(
+      () => arcadeSignal(),
+      (post) => post.id,
+      (post) => legacy(createArcadeRow(post())),
+    ),
+  );
+
+  const arcadeCardsMount: Mounted = mount(arcadeScroll, () =>
+    each(
+      () => arcadeSignal(),
+      (post) => post.id,
+      (post) => legacy(createArcadeCard(post())),
+    ),
+  );
+
+  const webMount: Mounted = mount(webHost, () =>
+    each(
+      () => webSignal(),
+      (result) => result.url,
+      (result) => {
+        const item = createWebItem(result());
+        return item ? legacy(item) : null;
+      },
+    ),
+  );
 
   // ── Suggest helpers ──
   let suggestAbortController: AbortController | null = null;
@@ -325,25 +490,37 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   });
 
   // ── Data fetching ──
-  const showLoading = () => {
-    content.innerHTML = '';
-    const el = document.createElement('div');
-    el.style.cssText = `
-      text-align: center;
-      padding: 3rem;
-      color: var(--text-muted);
-    `;
-    el.textContent = t('common.loading');
-    content.appendChild(el);
+  const hideSections = () => {
+    for (const element of [
+      usersLabel,
+      usersHost,
+      usersDivider,
+      arcadeLabel,
+      arcadeRowsHost,
+      arcadeCardsWrapper,
+      arcadeDivider,
+      postsLabel,
+      postsHost,
+      webDivider,
+      webLabel,
+      webHost,
+      empty,
+    ]) {
+      element.hidden = true;
+    }
   };
 
-  const showError = () => {
-    content.innerHTML = '';
-    const el = document.createElement('div');
-    el.style.cssText = 'text-align: center; padding: 3rem; color: var(--danger);';
-    el.textContent = t('common.error');
-    content.appendChild(el);
+  const showStatus = (text: string, danger = false) => {
+    hideSections();
+    statusHost.hidden = false;
+    statusHost.textContent = text;
+    statusHost.style.cssText = danger
+      ? 'text-align: center; padding: 3rem; color: var(--danger);'
+      : 'text-align: center; padding: 3rem; color: var(--text-muted);';
   };
+
+  const showLoading = () => showStatus(t('common.loading'));
+  const showError = () => showStatus(t('common.error'), true);
 
   const tabForFilter = (filter: SearchFilter): string => (filter === 'arcade' ? 'games' : filter);
 
@@ -387,445 +564,300 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   // ── Rendering ──
   const renderResults = () => {
-    content.innerHTML = '';
-
     const showAll = activeFilter === 'all';
-    let anyVisible = false;
+    const showUsers = (showAll || activeFilter === 'users') && allUsers.length > 0;
+    const showArcade = (showAll || activeFilter === 'arcade') && allArcade.length > 0;
+    const showPosts = (showAll || activeFilter === 'posts') && allPosts.length > 0;
+    const showWeb = (showAll || activeFilter === 'web') && allWeb.length > 0;
+    const anyVisible = showUsers || showArcade || showPosts || showWeb;
 
-    // Users section
-    if ((showAll || activeFilter === 'users') && allUsers.length > 0) {
-      anyVisible = true;
-      if (showAll) {
-        const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'search-section-label';
-        sectionTitle.textContent = t('search.users');
-        content.appendChild(sectionTitle);
-      }
-      renderUsers(allUsers);
-      if (showAll && allArcade.length > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'search-section-divider';
-        content.appendChild(divider);
-      }
-    }
+    usersSignal.set(allUsers);
+    arcadeSignal.set(allArcade);
+    postsSignal.set(allPosts);
+    webSignal.set(allWeb);
 
-    // Arcade section
-    if ((showAll || activeFilter === 'arcade') && allArcade.length > 0) {
-      anyVisible = true;
-      if (showAll) {
-        const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'search-section-label';
-        sectionTitle.textContent = t('explore.filter_arcade');
-        content.appendChild(sectionTitle);
-        renderArcade(allArcade, false);
-      } else {
-        const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'search-section-label';
-        sectionTitle.textContent = t('explore.filter_arcade');
-        content.appendChild(sectionTitle);
-        renderArcade(allArcade, true);
-      }
-      if (showAll && allPosts.length > 0) {
-        const divider = document.createElement('div');
-        divider.className = 'search-section-divider';
-        content.appendChild(divider);
-      }
-    }
+    statusHost.hidden = true;
+    usersHost.hidden = !showUsers;
+    usersLabel.hidden = !(showAll && showUsers);
+    usersDivider.hidden = !(showAll && showUsers && showArcade);
 
-    // Posts section
-    if ((showAll || activeFilter === 'posts') && allPosts.length > 0) {
-      anyVisible = true;
-      if (showAll) {
-        const sectionTitle = document.createElement('div');
-        sectionTitle.className = 'search-section-label';
-        sectionTitle.textContent = t('search.posts');
-        content.appendChild(sectionTitle);
-      }
-      renderPosts(allPosts);
-    }
+    arcadeLabel.hidden = !showArcade;
+    arcadeRowsHost.hidden = !(showArcade && !showAll);
+    arcadeCardsWrapper.hidden = !(showArcade && showAll);
+    arcadeDivider.hidden = !(showAll && showArcade && showPosts);
 
-    // Web section
-    if ((showAll || activeFilter === 'web') && allWeb.length > 0) {
-      anyVisible = true;
-      if (showAll && (allUsers.length > 0 || allArcade.length > 0 || allPosts.length > 0)) {
-        const divider = document.createElement('div');
-        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;';
-        content.appendChild(divider);
-      }
-      const sectionTitle = document.createElement('div');
-      sectionTitle.textContent = t('search.web_results');
-      sectionTitle.style.cssText =
-        'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
-      content.appendChild(sectionTitle);
-      renderWeb(allWeb);
-    }
+    postsHost.hidden = !showPosts;
+    postsLabel.hidden = !(showAll && showPosts);
 
-    if (!anyVisible) {
-      const empty = document.createElement('div');
-      empty.className = 'page-empty';
-      const emptyIcon = document.createElement('span');
-      emptyIcon.className = 'page-empty-icon';
-      const emptyTitle = document.createElement('p');
-      emptyTitle.className = 'page-empty-title fx-display';
-      emptyTitle.textContent = t('search.no_results', { query });
-      empty.appendChild(emptyIcon);
-      empty.appendChild(emptyTitle);
-      content.appendChild(empty);
-    }
+    webHost.hidden = !showWeb;
+    webLabel.hidden = !showWeb;
+    webDivider.hidden = !(showAll && showWeb && (showUsers || showArcade || showPosts));
+    empty.hidden = anyVisible;
+    requestAnimationFrame(updateArcadeFade);
   };
 
-  const renderWeb = (results: WebSearchResult[]) => {
-    for (const result of results) {
-      let href: string;
-      try {
-        const parsed = new URL(result.url);
-        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
-        href = parsed.toString();
-      } catch {
-        continue;
-      }
+  function createUserRow(user: SearchUser): HTMLElement {
+    const userItem = document.createElement('div');
+    userItem.className = 'search-user-row';
+    userItem.onclick = () => {
+      window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
+    };
 
-      const item = document.createElement('a');
-      item.href = href;
-      item.target = '_blank';
-      item.rel = 'noopener noreferrer';
-      item.style.cssText = `
-        display: block;
-        padding: 0.75rem;
-        border-radius: 0.5rem;
-        text-decoration: none;
-        transition: background 0.2s ease;
-      `;
-      item.addEventListener('mouseenter', () => {
-        item.style.background = 'var(--bg-secondary)';
-      });
-      item.addEventListener('mouseleave', () => {
-        item.style.background = 'transparent';
-      });
-
-      const title = document.createElement('div');
-      title.textContent = result.title;
-      title.style.cssText = `
-        font-weight: 600;
-        color: var(--link, var(--accent));
-        font-size: 0.95rem;
-        line-height: 1.35;
-      `;
-
-      const meta = document.createElement('div');
-      let hostname = '';
-      try {
-        hostname = new URL(href).hostname;
-      } catch {
-        hostname = '';
-      }
-      meta.textContent = [result.source, hostname].filter(Boolean).join(' · ');
-      meta.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;';
-
-      const snippet = document.createElement('div');
-      snippet.textContent = result.snippet;
-      snippet.style.cssText =
-        'font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.3rem; line-height: 1.45;';
-
-      item.appendChild(title);
-      item.appendChild(meta);
-      if (result.snippet) item.appendChild(snippet);
-      content.appendChild(item);
+    const avatar = document.createElement('div');
+    avatar.className = 'search-avatar';
+    if (user.avatar_key) {
+      avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
     }
-  };
+    if (!user.avatar_key) {
+      avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
+    }
+    attachPlusBadge(avatar, user.badge_type);
 
-  const renderUsers = (
-    users: Array<{
-      id: string;
-      username: string;
-      display_name?: string;
-      avatar_key?: string;
-      badge_type?: string | null;
-      name_color?: string | null;
-      bio?: string;
-      is_following?: boolean;
-    }>,
-  ) => {
-    users.forEach((user) => {
-      const userItem = document.createElement('div');
-      userItem.className = 'search-user-row';
-      userItem.onclick = () => {
-        window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
-      };
+    const userInfo = document.createElement('div');
+    userInfo.className = 'search-user-info';
+    const usernameEl = document.createElement('div');
+    usernameEl.className = 'search-user-name';
+    usernameEl.textContent = `@${user.username}`;
+    const displayNameEl = document.createElement('div');
+    displayNameEl.className = 'search-user-display';
+    displayNameEl.textContent = user.display_name || '';
+    applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
-      const avatar = document.createElement('div');
-      avatar.className = 'search-avatar';
-      if (user.avatar_key) {
-        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
-      }
-      if (!user.avatar_key) {
-        avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
-      }
-      attachPlusBadge(avatar, user.badge_type);
+    userInfo.appendChild(usernameEl);
+    userInfo.appendChild(displayNameEl);
+    userItem.appendChild(avatar);
+    userItem.appendChild(userInfo);
+    return userItem;
+  }
 
-      const userInfo = document.createElement('div');
-      userInfo.className = 'search-user-info';
-      const usernameEl = document.createElement('div');
-      usernameEl.className = 'search-user-name';
-      usernameEl.textContent = `@${user.username}`;
-      const displayNameEl = document.createElement('div');
-      displayNameEl.className = 'search-user-display';
-      displayNameEl.textContent = user.display_name || '';
-      applyNameColor(displayNameEl, user.name_color, user.badge_type);
+  function createWebItem(result: WebSearchResult): HTMLElement | null {
+    let href: string;
+    try {
+      const parsed = new URL(result.url);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+      href = parsed.toString();
+    } catch {
+      return null;
+    }
 
-      userInfo.appendChild(usernameEl);
-      userInfo.appendChild(displayNameEl);
-      userItem.appendChild(avatar);
-      userItem.appendChild(userInfo);
-      content.appendChild(userItem);
+    const item = document.createElement('a');
+    item.href = href;
+    item.target = '_blank';
+    item.rel = 'noopener noreferrer';
+    item.style.cssText = `
+      display: block;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      text-decoration: none;
+      transition: background 0.2s ease;
+    `;
+    item.addEventListener('mouseenter', () => {
+      item.style.background = 'var(--bg-secondary)';
     });
-  };
-
-  const renderPosts = (posts: Post[]) => {
-    posts.forEach((post) => {
-      const postCard = createPostCard({
-        post,
-        currentUser,
-        sandboxOrigin,
-        initialMode: PostCardMode.PREVIEW,
-        depth: post.depth,
-      });
-      content.appendChild(postCard.getElement());
+    item.addEventListener('mouseleave', () => {
+      item.style.background = 'transparent';
     });
-  };
 
-  const renderArcade = (posts: Post[], grid: boolean) => {
-    if (grid) {
-      // YouTube-style horizontal list
-      for (const post of posts) {
-        const row = document.createElement('div');
-        row.style.cssText = `
-          display: flex;
-          gap: 1rem;
-          padding: 0.75rem;
-          border-radius: 0.5rem;
-          cursor: pointer;
-          transition: background 0.2s;
-          margin-bottom: 0.25rem;
-        `;
-        row.addEventListener('mouseenter', () => {
-          row.style.background = 'var(--bg-secondary)';
-        });
-        row.addEventListener('mouseleave', () => {
-          row.style.background = 'transparent';
-        });
-        row.onclick = () => {
-          pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
-        };
+    const title = document.createElement('div');
+    title.textContent = result.title;
+    title.style.cssText = `
+      font-weight: 600;
+      color: var(--link, var(--accent));
+      font-size: 0.95rem;
+      line-height: 1.35;
+    `;
 
-        // Thumbnail (fixed width, 16:9 aspect ratio)
-        const thumb = document.createElement('div');
-        thumb.style.cssText = `
-          width: 180px;
-          flex-shrink: 0;
-          aspect-ratio: 16 / 9;
-          border-radius: 0.5rem;
-          overflow: hidden;
-          position: relative;
-          background: var(--bg-input);
-        `;
-        if (post.thumbnail_key) {
-          const img = document.createElement('img');
-          img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
-          img.loading = 'lazy';
-          img.width = 180;
-          img.height = 101;
-          img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
-          thumb.appendChild(img);
-        } else {
-          const icon = document.createElement('span');
-          icon.textContent = '🎮';
-          icon.style.cssText =
-            'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;';
-          thumb.appendChild(icon);
-        }
+    const meta = document.createElement('div');
+    let hostname = '';
+    try {
+      hostname = new URL(href).hostname;
+    } catch {
+      hostname = '';
+    }
+    meta.textContent = [result.source, hostname].filter(Boolean).join(' · ');
+    meta.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;';
 
-        // Badge
-        const badge = document.createElement('span');
-        badge.style.cssText = `
-          position: absolute; top: 4px; right: 4px;
-          padding: 0.1rem 0.4rem; border-radius: 4px;
-          background: var(--accent); color: var(--on-accent);
-          font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
-          line-height: 1.2;
-        `;
-        badge.textContent = 'GAME';
-        thumb.appendChild(badge);
+    const snippet = document.createElement('div');
+    snippet.textContent = result.snippet;
+    snippet.style.cssText = 'font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.3rem; line-height: 1.45;';
 
-        // Details
-        const details = document.createElement('div');
-        details.style.cssText = 'display: flex; flex-direction: column; justify-content: center; min-width: 0;';
+    item.appendChild(title);
+    item.appendChild(meta);
+    if (result.snippet) item.appendChild(snippet);
+    return item;
+  }
 
-        const title = document.createElement('div');
-        title.textContent = stripPostColors(post.text || '') || '(no title)';
-        title.style.cssText = `
-          font-weight: 600; color: var(--text-primary);
-          font-size: 0.95rem; line-height: 1.4;
-          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        `;
+  function createArcadeRow(post: Post): HTMLElement {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display: flex;
+      gap: 1rem;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      cursor: pointer;
+      transition: background 0.2s;
+      margin-bottom: 0.25rem;
+    `;
+    row.addEventListener('mouseenter', () => {
+      row.style.background = 'var(--bg-secondary)';
+    });
+    row.addEventListener('mouseleave', () => {
+      row.style.background = 'transparent';
+    });
+    row.onclick = () => {
+      pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+    };
 
-        const meta = document.createElement('div');
-        meta.textContent = `@${post.username}`;
-        meta.style.cssText = `
-          font-size: 0.8rem; color: var(--text-muted);
-          margin-top: 0.25rem;
-        `;
-
-        details.appendChild(title);
-        details.appendChild(meta);
-        row.appendChild(thumb);
-        row.appendChild(details);
-        content.appendChild(row);
-      }
+    const thumb = document.createElement('div');
+    thumb.style.cssText = `
+      width: 180px;
+      flex-shrink: 0;
+      aspect-ratio: 16 / 9;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      position: relative;
+      background: var(--bg-input);
+    `;
+    if (post.thumbnail_key) {
+      const img = document.createElement('img');
+      img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
+      img.loading = 'lazy';
+      img.width = 180;
+      img.height = 101;
+      img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+      thumb.appendChild(img);
     } else {
-      // Horizontal scroll cards
-      const wrapper = document.createElement('div');
-      wrapper.style.cssText = 'position: relative;';
-
-      const scrollContainer = document.createElement('div');
-      scrollContainer.style.cssText = `
-        display: flex;
-        overflow-x: auto;
-        gap: 0.75rem;
-        padding: 0.5rem 0 0.75rem;
-        scrollbar-width: thin;
-        scrollbar-color: var(--border) transparent;
-        scroll-snap-type: x mandatory;
-        -webkit-overflow-scrolling: touch;
-      `;
-      scrollContainer.addEventListener('wheel', (e) => {
-        if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
-          e.preventDefault();
-          scrollContainer.scrollLeft += e.deltaY;
-        }
-      });
-
-      // Right-edge fade hint
-      const fadeHint = document.createElement('div');
-      fadeHint.style.cssText = `
-        position: absolute;
-        top: 0;
-        right: 0;
-        bottom: 0;
-        width: 48px;
-        background: linear-gradient(to right, transparent, var(--bg-primary));
-        pointer-events: none;
-        opacity: 1;
-        transition: opacity 0.3s;
-        z-index: 1;
-      `;
-      wrapper.appendChild(fadeHint);
-
-      const updateFade = () => {
-        const atEnd = scrollContainer.scrollLeft >= scrollContainer.scrollWidth - scrollContainer.clientWidth - 4;
-        fadeHint.style.opacity = atEnd ? '0' : '1';
-      };
-      scrollContainer.addEventListener('scroll', updateFade);
-
-      for (const post of posts) {
-        const card = document.createElement('div');
-        card.style.cssText = `
-          width: 150px;
-          flex-shrink: 0;
-          cursor: pointer;
-          border-radius: 0.75rem;
-          overflow: hidden;
-          transition: transform 0.2s, box-shadow 0.2s;
-          scroll-snap-align: start;
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-        `;
-        card.onmouseenter = () => {
-          card.style.transform = 'translateY(-3px)';
-          card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
-        };
-        card.onmouseleave = () => {
-          card.style.transform = 'none';
-          card.style.boxShadow = 'none';
-        };
-        card.onclick = () => {
-          pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
-        };
-
-        // Thumbnail
-        const thumb = document.createElement('div');
-        thumb.style.cssText = `
-          width: 100%;
-          aspect-ratio: 9 / 12;
-          overflow: hidden;
-          position: relative;
-          background: var(--bg-input);
-        `;
-        if (post.thumbnail_key) {
-          const img = document.createElement('img');
-          img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
-          img.loading = 'lazy';
-          img.width = 150;
-          img.height = 200;
-          img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
-          thumb.appendChild(img);
-        } else {
-          const icon = document.createElement('span');
-          icon.textContent = '🎮';
-          icon.style.cssText =
-            'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
-          thumb.appendChild(icon);
-        }
-
-        // Badge
-        const badge = document.createElement('span');
-        badge.style.cssText = `
-          position: absolute; top: 4px; right: 4px;
-          padding: 0.1rem 0.35rem; border-radius: 4px;
-          background: var(--accent); color: var(--on-accent);
-          font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
-          line-height: 1.2;
-        `;
-        badge.textContent = 'GAME';
-        thumb.appendChild(badge);
-
-        // Info
-        const info = document.createElement('div');
-        info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
-
-        const title = document.createElement('div');
-        title.textContent = stripPostColors(post.text || '').slice(0, 60) || '(no text)';
-        title.style.cssText = `
-          font-weight: 600; color: var(--text-primary);
-          font-size: 0.8rem; line-height: 1.3;
-          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        `;
-
-        const meta = document.createElement('div');
-        meta.textContent = `@${post.username}`;
-        meta.style.cssText = `
-          font-size: 0.7rem; color: var(--text-muted);
-          margin-top: 0.15rem;
-          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        `;
-
-        info.appendChild(title);
-        info.appendChild(meta);
-        card.appendChild(thumb);
-        card.appendChild(info);
-        scrollContainer.appendChild(card);
-      }
-
-      wrapper.appendChild(scrollContainer);
-      content.appendChild(wrapper);
-
-      // Initial fade state
-      requestAnimationFrame(updateFade);
+      const icon = document.createElement('span');
+      icon.textContent = '🎮';
+      icon.style.cssText =
+        'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;';
+      thumb.appendChild(icon);
     }
-  };
+
+    const badge = document.createElement('span');
+    badge.style.cssText = `
+      position: absolute; top: 4px; right: 4px;
+      padding: 0.1rem 0.4rem; border-radius: 4px;
+      background: var(--accent); color: var(--on-accent);
+      font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+      line-height: 1.2;
+    `;
+    badge.textContent = 'GAME';
+    thumb.appendChild(badge);
+
+    const details = document.createElement('div');
+    details.style.cssText = 'display: flex; flex-direction: column; justify-content: center; min-width: 0;';
+
+    const title = document.createElement('div');
+    title.textContent = stripPostColors(post.text || '') || '(no title)';
+    title.style.cssText = `
+      font-weight: 600; color: var(--text-primary);
+      font-size: 0.95rem; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    `;
+
+    const meta = document.createElement('div');
+    meta.textContent = `@${post.username}`;
+    meta.style.cssText = `
+      font-size: 0.8rem; color: var(--text-muted);
+      margin-top: 0.25rem;
+    `;
+
+    details.appendChild(title);
+    details.appendChild(meta);
+    row.appendChild(thumb);
+    row.appendChild(details);
+    return row;
+  }
+
+  function createArcadeCard(post: Post): HTMLElement {
+    const card = document.createElement('div');
+    card.style.cssText = `
+      width: 150px;
+      flex-shrink: 0;
+      cursor: pointer;
+      border-radius: 0.75rem;
+      overflow: hidden;
+      transition: transform 0.2s, box-shadow 0.2s;
+      scroll-snap-align: start;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+    `;
+    card.onmouseenter = () => {
+      card.style.transform = 'translateY(-3px)';
+      card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
+    };
+    card.onmouseleave = () => {
+      card.style.transform = 'none';
+      card.style.boxShadow = 'none';
+    };
+    card.onclick = () => {
+      pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+    };
+
+    const thumb = document.createElement('div');
+    thumb.style.cssText = `
+      width: 100%;
+      aspect-ratio: 9 / 12;
+      overflow: hidden;
+      position: relative;
+      background: var(--bg-input);
+    `;
+    if (post.thumbnail_key) {
+      const img = document.createElement('img');
+      img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
+      img.loading = 'lazy';
+      img.width = 150;
+      img.height = 200;
+      img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+      thumb.appendChild(img);
+    } else {
+      const icon = document.createElement('span');
+      icon.textContent = '🎮';
+      icon.style.cssText =
+        'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+      thumb.appendChild(icon);
+    }
+
+    const badge = document.createElement('span');
+    badge.style.cssText = `
+      position: absolute; top: 4px; right: 4px;
+      padding: 0.1rem 0.35rem; border-radius: 4px;
+      background: var(--accent); color: var(--on-accent);
+      font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+      line-height: 1.2;
+    `;
+    badge.textContent = 'GAME';
+    thumb.appendChild(badge);
+
+    const info = document.createElement('div');
+    info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
+
+    const title = document.createElement('div');
+    title.textContent = stripPostColors(post.text || '').slice(0, 60) || '(no text)';
+    title.style.cssText = `
+      font-weight: 600; color: var(--text-primary);
+      font-size: 0.8rem; line-height: 1.3;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    `;
+
+    const meta = document.createElement('div');
+    meta.textContent = `@${post.username}`;
+    meta.style.cssText = `
+      font-size: 0.7rem; color: var(--text-muted);
+      margin-top: 0.15rem;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    `;
+
+    info.appendChild(title);
+    info.appendChild(meta);
+    card.appendChild(thumb);
+    card.appendChild(info);
+    return card;
+  }
 
   // Start
   loadSearchResults();
@@ -833,6 +865,11 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   return {
     getElement: () => container,
     destroy: () => {
+      usersMount.dispose();
+      postsMount.dispose();
+      arcadeRowsMount.dispose();
+      arcadeCardsMount.dispose();
+      webMount.dispose();
       container.remove();
     },
   };

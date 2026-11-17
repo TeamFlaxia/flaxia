@@ -198,6 +198,10 @@ Implemented:
   article renderer behind the captured article element;
 - `SkeletonCard` / `SkeletonPost` are rendered with `html`/`mount` while keeping
   the existing skeleton class contract;
+- `SearchPage` keeps persistent user/post/arcade/web sections. Each section is a
+  keyed list, so a new query or filter change updates items in place instead of
+  clearing the content area; the horizontal and grid Arcade variants share the
+  same arcade signal;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
