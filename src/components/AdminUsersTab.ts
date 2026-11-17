@@ -1,6 +1,7 @@
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 
 export interface AdminUser {
   id: string;
@@ -23,6 +24,9 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
   let users: AdminUser[] = [];
   let filteredUsers: AdminUser[] = [];
   let searchQuery = '';
+  const usersSignal: Signal<AdminUser[]> = signal<AdminUser[]>([]);
+  let usersMount: Mounted | undefined;
+  let usersEmpty: HTMLElement | undefined;
 
   // Create container immediately
   element = document.createElement('div');
@@ -229,6 +233,8 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
   };
 
   const render = async () => {
+    usersMount?.dispose();
+    usersMount = undefined;
     element.innerHTML = '';
 
     const title = document.createElement('h2');
@@ -329,34 +335,27 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
       border-radius: 0 0 8px 8px;
     `;
 
-    if (filteredUsers.length === 0) {
-      const empty = document.createElement('div');
-      empty.textContent = searchQuery ? t('admin_users.no_results') : t('admin_users.empty');
-      empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
-      tableBody.appendChild(empty);
-    } else {
-      filteredUsers.forEach((user) => {
-        tableBody.appendChild(createUserRow(user));
-      });
-    }
+    usersEmpty = document.createElement('div');
+    usersEmpty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
+
+    usersMount = mount(tableBody, () =>
+      each(
+        () => usersSignal(),
+        (user) => `${user.id}:${user.frozen_at ? 'frozen' : 'active'}`,
+        (user) => legacy(createUserRow(user())),
+      ),
+    );
+    tableBody.appendChild(usersEmpty);
 
     element.appendChild(tableBody);
+    renderUsersList();
   };
 
   const renderUsersList = () => {
-    const tableBody = element.querySelector('#users-list') as HTMLElement;
-    if (tableBody) {
-      tableBody.innerHTML = '';
-      if (filteredUsers.length === 0) {
-        const empty = document.createElement('div');
-        empty.textContent = searchQuery ? t('admin_users.no_results') : t('admin_users.empty');
-        empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
-        tableBody.appendChild(empty);
-      } else {
-        filteredUsers.forEach((user) => {
-          tableBody.appendChild(createUserRow(user));
-        });
-      }
+    usersSignal.set([...filteredUsers]);
+    if (usersEmpty) {
+      usersEmpty.textContent = searchQuery ? t('admin_users.no_results') : t('admin_users.empty');
+      usersEmpty.hidden = filteredUsers.length > 0;
     }
   };
 
@@ -376,6 +375,8 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
       await render();
     },
     destroy: () => {
+      usersMount?.dispose();
+      usersMount = undefined;
       if (element && element.parentNode) {
         element.parentNode.removeChild(element);
       }
