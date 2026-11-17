@@ -693,6 +693,10 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
 test('a signed-in reply composer mounts, counts characters and suggests mentions', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
+    const searchRequests = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/search')) searchRequests.push(request.url());
+    });
     await page.waitForSelector('.post-card', { timeout: 30_000 });
 
     await page.click('.post-card .action-button--reply');
@@ -736,7 +740,20 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
       textarea.setSelectionRange(textarea.value.length, textarea.value.length);
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await page.waitForSelector('.mention-dropdown .mention-item', { state: 'attached', timeout: 10_000 });
+    try {
+      await page.waitForSelector('.mention-dropdown .mention-item', { state: 'attached', timeout: 10_000 });
+    } catch (error) {
+      const debug = await page.evaluate(() => {
+        const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector('.reply-composer-textarea'));
+        return {
+          value: textarea?.value ?? null,
+          selectionStart: textarea?.selectionStart ?? null,
+          dropdownDisplay: document.querySelector('.mention-dropdown')?.style.display ?? null,
+          items: document.querySelectorAll('.mention-item').length,
+        };
+      });
+      throw new Error(`${String(error)}\nrequests=${JSON.stringify(searchRequests)}\nstate=${JSON.stringify(debug)}`);
+    }
 
     const suggestions = await page.evaluate(() => ({
       items: [...document.querySelectorAll('.mention-dropdown .mention-item')].map((item) => ({
