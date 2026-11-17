@@ -2,16 +2,21 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { stripPostColors } from '../lib/post-colors.js';
+import { each, legacy, type Mounted, mount, type Renderable, type Signal, signal } from '../lib/render/index.ts';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import { buildTree } from '../lib/thread.js';
+import { buildTree, type PostNode } from '../lib/thread.ts';
 import { Post } from '../types/post.js';
 import { createLeftNav } from './LeftNav.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
-import { createReplyNode, ReplyNode } from './ReplyNode.js';
+import { createReplyNode } from './ReplyNode.js';
 import { showSignInPrompt } from './SignInPrompt.js';
+
+type ThreadReplyEntry =
+  | { key: string; kind: 'flat'; post: Post; index?: number }
+  | { key: string; kind: 'tree'; node: PostNode };
 
 export interface ThreadPageProps {
   postId: string;
@@ -27,9 +32,14 @@ export class ThreadPage {
   private rootPostCard?: ReturnType<typeof createPostCard>;
   private rootReplyComposer?: ReplyComposer;
   private isRootReplyComposerOpen: boolean = false;
-  private replyNodes: ReplyNode[] = [];
   private leftNav?: ReturnType<typeof createLeftNav>;
   private boundPostUpdatedHandler?: (e: Event) => void;
+  private currentReplies: Post[] = [];
+  private replyIndexMap: Map<string, number> = new Map();
+  private repliesSignal: Signal<ThreadReplyEntry[]> = signal<ThreadReplyEntry[]>([]);
+  private repliesMount?: Mounted;
+  private repliesHeaderEl?: HTMLElement;
+  private repliesEmptyEl?: HTMLElement;
 
   constructor(props: ThreadPageProps) {
     this.props = props;
@@ -55,33 +65,18 @@ export class ThreadPage {
   }
 
   private insertFlatReply(newReply: Record<string, unknown>): void {
-    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
-    if (!repliesContent) return;
+    const reply = newReply as unknown as Post;
+    if (!reply?.id || this.currentReplies.some((existing) => existing.id === reply.id)) return;
 
-    const repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
-    if (!repliesContainer) return;
+    this.currentReplies = [...this.currentReplies, reply];
+    this.replyIndexMap.set(reply.id, this.currentReplies.length);
+    this.renderReplies();
 
-    // Append new reply at the end (matching API ordering: oldest-first)
-    const nextIndex = repliesContainer.children.length + 1;
-    const card = createPostCard({
-      post: newReply as unknown as Post,
-      sandboxOrigin: this.props.sandboxOrigin,
-      currentUser: this.props.currentUser || undefined,
-      depth: (newReply.depth as number) || 0,
-      onDelete: () => {},
-      disableNavigation: true,
-      postIndex: nextIndex,
-      enablePostRefs: true,
+    const index = this.replyIndexMap.get(reply.id);
+    requestAnimationFrame(() => {
+      const element = this.element.querySelector(`[data-post-index="${index}"]`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
-    const cardEl = card.getElement();
-    repliesContainer.appendChild(cardEl);
-    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-    // Update replies header count
-    const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
-    if (header) {
-      header.textContent = t('thread.replies_header', { count: formatCount(repliesContainer.children.length) });
-    }
   }
 
   private createElement(): HTMLElement {
@@ -225,6 +220,59 @@ export class ThreadPage {
     repliesContent.className = 'thread-replies-content';
     repliesContent.id = `thread-replies-${this.props.postId}`;
 
+    const repliesHeader = document.createElement('h2');
+    repliesHeader.id = 'thread-replies-header';
+    repliesHeader.hidden = true;
+    repliesHeader.style.cssText = `
+      color: var(--text-muted);
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 1rem;
+      margin: 0 0 1rem 0;
+      padding-top: 1rem;
+      font-weight: normal;
+    `;
+    this.repliesHeaderEl = repliesHeader;
+
+    const repliesEmpty = document.createElement('p');
+    repliesEmpty.textContent = t('thread.no_replies');
+    repliesEmpty.hidden = true;
+    repliesEmpty.style.cssText = `
+      color: var(--text-muted);
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      text-align: center;
+      padding: 2rem;
+      font-style: italic;
+    `;
+    this.repliesEmptyEl = repliesEmpty;
+
+    const repliesHost = document.createElement('div');
+    repliesHost.className = 'replies-container';
+    this.repliesMount = mount(repliesHost, () =>
+      each(
+        () => this.repliesSignal(),
+        (entry) => entry.key,
+        (entry) => this.renderReplyEntry(entry()),
+      ),
+    );
+
+    repliesContent.appendChild(repliesHeader);
+    repliesContent.appendChild(repliesEmpty);
+    repliesContent.appendChild(repliesHost);
+
+    // One handler for >>N references; the list is reused across loads.
+    repliesContent.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const refLink = target.classList.contains('post-ref-link')
+        ? target
+        : (target.closest('.post-ref-link') as HTMLElement | null);
+      if (!refLink) return;
+      e.preventDefault();
+      const index = refLink.dataset.postIndex;
+      if (!index) return;
+      const targetPost = repliesContent.querySelector(`[data-post-index="${index}"]`);
+      targetPost?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
     // Loading state
     const loading = document.createElement('div');
     loading.className = 'thread-loading';
@@ -321,10 +369,66 @@ export class ThreadPage {
     container.appendChild(style);
   }
 
+  private renderReplyEntry(entry: ThreadReplyEntry): Renderable {
+    if (entry.kind === 'tree') {
+      const replyNode = createReplyNode({
+        node: entry.node,
+        sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser,
+        onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
+        postIndexMap: this.replyIndexMap,
+      });
+      return legacy(replyNode.getElement(), () => replyNode.destroy());
+    }
+
+    const card = createPostCard({
+      post: entry.post,
+      sandboxOrigin: this.props.sandboxOrigin,
+      currentUser: this.props.currentUser || undefined,
+      depth: entry.post.depth,
+      onDelete: () => {},
+      disableNavigation: true,
+      postIndex: entry.index,
+      enablePostRefs: true,
+    });
+    return legacy(card.getElement(), () => card.destroy());
+  }
+
+  private renderReplies(): void {
+    const replyStyle = getReplyStyle();
+    const entries: ThreadReplyEntry[] = [];
+    if (replyStyle === 'twitter') {
+      for (const node of buildTree(this.currentReplies)) {
+        entries.push({ key: node.post.id, kind: 'tree', node });
+      }
+    } else {
+      this.currentReplies.forEach((reply) => {
+        entries.push({
+          key: reply.id,
+          kind: 'flat',
+          post: reply,
+          index: this.replyIndexMap.get(reply.id),
+        });
+      });
+    }
+
+    this.repliesSignal.set(entries);
+    if (this.repliesHeaderEl) {
+      this.repliesHeaderEl.textContent = `${t('thread.replies_header', {
+        count: formatCount(this.currentReplies.length),
+      })}`;
+      this.repliesHeaderEl.hidden = false;
+    }
+    if (this.repliesEmptyEl) this.repliesEmptyEl.hidden = entries.length > 0;
+  }
+
   private clearThreadContent(): void {
     // Clean up existing reply nodes
-    this.replyNodes.forEach((node) => void node.destroy());
-    this.replyNodes = [];
+    this.currentReplies = [];
+    this.replyIndexMap = new Map();
+    this.repliesSignal.set([]);
+    if (this.repliesHeaderEl) this.repliesHeaderEl.hidden = true;
+    if (this.repliesEmptyEl) this.repliesEmptyEl.hidden = true;
 
     // Clean up root post card
     if (this.rootPostCard) {
@@ -342,15 +446,11 @@ export class ThreadPage {
     const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement;
     if (rootContainer) rootContainer.innerHTML = '';
 
-    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
-    if (repliesContent) repliesContent.innerHTML = '';
-
     this.isRootReplyComposerOpen = false;
   }
 
   private async loadThread(): Promise<void> {
     const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement;
-    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
     const loading = this.element.querySelector('.thread-loading') as HTMLElement;
 
     // Clear existing content before reloading
@@ -414,90 +514,9 @@ export class ThreadPage {
         }
       }) as EventListener);
 
-      // Add replies header
-      const repliesHeader = document.createElement('h2');
-      repliesHeader.id = 'thread-replies-header';
-      repliesHeader.textContent = t('thread.replies_header', { count: formatCount(data.replies.length) });
-      repliesHeader.style.cssText = `
-        color: var(--text-muted);
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 1rem;
-        margin: 0 0 1rem 0;
-        padding-top: 1rem;
-        font-weight: normal;
-      `;
-      repliesContent.appendChild(repliesHeader);
-
-      const replyStyle = getReplyStyle();
-
-      if (data.replies.length > 0) {
-        const repliesContainer = document.createElement('div');
-        repliesContainer.className = 'replies-container';
-
-        if (replyStyle === 'twitter') {
-          // Twitter-style: tree view with ReplyNode
-          const replyTree = buildTree(data.replies);
-
-          replyTree.forEach((node) => {
-            const replyNode = createReplyNode({
-              node,
-              sandboxOrigin: this.props.sandboxOrigin,
-              currentUser: this.props.currentUser,
-              onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
-              postIndexMap: postIdToIndex,
-            });
-            this.replyNodes.push(replyNode);
-            repliesContainer.appendChild(replyNode.getElement());
-          });
-        } else {
-          // 2ch-style: flat list with sequential indices
-          for (const reply of data.replies) {
-            const nodeIndex = postIdToIndex.get(reply.id);
-            const card = createPostCard({
-              post: reply,
-              sandboxOrigin: this.props.sandboxOrigin,
-              currentUser: this.props.currentUser || undefined,
-              depth: reply.depth,
-              onDelete: () => {},
-              disableNavigation: true,
-              postIndex: nodeIndex,
-              enablePostRefs: true,
-            });
-            repliesContainer.appendChild(card.getElement());
-          }
-        }
-
-        repliesContent.appendChild(repliesContainer);
-      } else {
-        const noReplies = document.createElement('p');
-        noReplies.textContent = t('thread.no_replies');
-        noReplies.style.cssText = `
-          color: var(--text-muted);
-          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          text-align: center;
-          padding: 2rem;
-          font-style: italic;
-        `;
-        repliesContent.appendChild(noReplies);
-      }
-
-      // Click handler for >>N post references (scroll to referenced reply)
-      repliesContent.addEventListener('click', (e) => {
-        const target = e.target as HTMLElement;
-        const refLink = target.classList.contains('post-ref-link')
-          ? target
-          : (target.closest('.post-ref-link') as HTMLElement | null);
-        if (refLink) {
-          e.preventDefault();
-          const index = refLink.dataset.postIndex;
-          if (index) {
-            const targetPost = repliesContent.querySelector(`[data-post-index="${index}"]`);
-            if (targetPost) {
-              targetPost.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }
-        }
-      });
+      this.currentReplies = data.replies;
+      this.replyIndexMap = postIdToIndex;
+      this.renderReplies();
     } catch (error) {
       console.error('Failed to load thread:', error);
       loading.textContent = t('thread.load_failed');
@@ -509,93 +528,25 @@ export class ThreadPage {
   private handleRootReplyCreated(newReply: Post): void {
     this.hideRootReplyComposer();
 
-    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
-    if (!repliesContent) return;
-
-    // Remove "no replies" placeholder if present
-    const noReplies = repliesContent.querySelector('.thread-no-replies, p');
-    if (noReplies && !noReplies.closest('.replies-container') && !noReplies.closest('.reply-node')) {
-      noReplies.remove();
+    if (!this.currentReplies.some((existing) => existing.id === newReply.id)) {
+      this.currentReplies = [...this.currentReplies, newReply];
+      this.replyIndexMap.set(newReply.id, this.currentReplies.length);
     }
+    this.renderReplies();
 
-    // Get or create replies container
-    let repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
-    if (!repliesContainer) {
-      // Reuse existing header (from loadThread) or create new one
-      let repliesHeader = repliesContent.querySelector('h2') as HTMLElement;
-      if (!repliesHeader) {
-        repliesHeader = document.createElement('h2');
-        repliesHeader.style.cssText = `
-          color: var(--text-muted);
-          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          font-size: 1rem;
-          margin: 0 0 1rem 0;
-          padding-top: 1rem;
-          font-weight: normal;
-        `;
-        repliesContent.appendChild(repliesHeader);
-      }
-      repliesHeader.id = 'thread-replies-header';
-      repliesHeader.textContent = t('thread.replies_header', { count: formatCount(1) });
+    const index = this.replyIndexMap.get(newReply.id);
+    requestAnimationFrame(() => {
+      const element = this.element.querySelector(`[data-post-index="${index}"]`);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
 
-      repliesContainer = document.createElement('div');
-      repliesContainer.className = 'replies-container';
-      repliesContent.appendChild(repliesContainer);
-    } else {
-      // Update replies header count
-      const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
-      if (header) {
-        const currentCount = repliesContainer.children.length;
-        header.textContent = t('thread.replies_header', { count: formatCount(currentCount + 1) });
-      }
-    }
-
-    const replyStyle = getReplyStyle();
-    if (replyStyle === 'twitter') {
-      // Tree mode: create a ReplyNode for the new reply
-      const node = { post: newReply, children: [] };
-      const nextIndex = repliesContainer.children.length + 1;
-      const indexMap = new Map<string, number>();
-      indexMap.set(newReply.id, nextIndex);
-      const replyNode = createReplyNode({
-        node,
-        sandboxOrigin: this.props.sandboxOrigin,
-        currentUser: this.props.currentUser,
-        onReplyCreated: (reply) => this.handleReplyCreated(reply),
-        postIndexMap: indexMap,
-      });
-      this.replyNodes.push(replyNode);
-      const replyEl = replyNode.getElement();
-      repliesContainer.appendChild(replyEl);
-      replyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    } else {
-      // 2ch flat mode: append as PostCard (matching API ordering)
-      const nextIndex = repliesContainer.children.length + 1;
-      const card = createPostCard({
-        post: newReply,
-        sandboxOrigin: this.props.sandboxOrigin,
-        currentUser: this.props.currentUser || undefined,
-        depth: newReply.depth,
-        onDelete: () => {},
-        disableNavigation: true,
-        postIndex: nextIndex,
-        enablePostRefs: true,
-      });
-      const cardEl = card.getElement();
-      repliesContainer.appendChild(cardEl);
-      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-
-    // Update root post reply count
     if (this.rootPostCard) {
-      const currentCount = this.rootPostCard.getReplyCount() || 0;
-      this.rootPostCard.updatePost({ reply_count: currentCount + 1 });
+      this.rootPostCard.updatePost({ reply_count: this.currentReplies.length });
     }
 
-    // Notify Timeline PostCards about updated reply count
     window.dispatchEvent(
       new CustomEvent('postUpdated', {
-        detail: { postId: this.props.postId, replyCount: repliesContainer.children.length },
+        detail: { postId: this.props.postId, replyCount: this.currentReplies.length },
       }),
     );
   }
@@ -645,10 +596,15 @@ export class ThreadPage {
   }
 
   private handleReplyCreated(newReply: Post): void {
-    // In tree mode, ReplyNode.handleReplyCreated already inserts the child reply into the DOM.
-    // Just update root reply count.
+    // ReplyNode has already inserted the child into the DOM. Keep the source
+    // list current so a later tree rebuild (for example, a new root reply)
+    // preserves this child.
+    if (!this.currentReplies.some((existing) => existing.id === newReply.id)) {
+      this.currentReplies = [...this.currentReplies, newReply];
+      this.replyIndexMap.set(newReply.id, this.currentReplies.length);
+    }
     if (this.rootPostCard) {
-      this.rootPostCard.updatePost({ reply_count: (this.rootPostCard.getReplyCount() || 0) + 1 });
+      this.rootPostCard.updatePost({ reply_count: this.currentReplies.length });
     }
   }
 
@@ -657,9 +613,9 @@ export class ThreadPage {
   }
 
   public destroy(): void {
-    // Cleanup reply nodes
-    this.replyNodes.forEach((node) => void node.destroy());
-    this.replyNodes = [];
+    this.repliesMount?.dispose();
+    this.repliesMount = undefined;
+    this.repliesSignal.set([]);
 
     // Cleanup root post card
     if (this.rootPostCard) {

@@ -211,6 +211,10 @@ Implemented:
 - Profile's posts/freshs/bookmarks tabs share `UserPostList`, which now keeps a
   keyed post list. Initial load, paging, `addPost` and delete all update the
   signal, so existing cards (and their running stages) are reused;
+- ThreadPage keeps its root card single, while the reply area is a keyed list for
+  both flat and tree modes. New root replies append to the source list and
+  re-render keyed entries; child replies stay in the source list for later tree
+  rebuilds;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
