@@ -42,38 +42,23 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
     navigateToProfile();
   };
 
+  // Keep the row on ONE line: `html` preserves the template's whitespace, so a
+  // newline between inline elements would render as a space the original
+  // appendChild-built header never had.
   mount(
     header,
-    () => html`
-      <div
-        class="post-avatar"
-        @click=${onProfileClick}
-        ref=${(element: Element | null) => {
-          if (element) avatar = element as HTMLElement;
-        }}
-      >
-        <div
-          class="post-avatar-inner"
-          ref=${(element: Element | null) => {
-            if (element) avatarInner = element as HTMLElement;
-          }}
-        >
-          <span class="avatar-initial">${initial}</span>
-        </div>
-      </div>
-      <span
-        class="post-display-name"
-        @click=${onProfileClick}
-        ref=${(element: Element | null) => {
-          if (element) displayName = element as HTMLElement;
-        }}
-      >
-        ${displayNameText}
-      </span>
-      <span class="post-username" @click=${onProfileClick}>@${props.username}</span>
-      ${titleBadge ?? ''}
-      <span class="post-timestamp">${timestampText}${editedBadge ?? ''}</span>
-    `,
+    () =>
+      html`<div class="post-avatar" @click=${onProfileClick} ref=${(element: Element | null) => {
+        if (element) avatar = element as HTMLElement;
+      }}><div class="post-avatar-inner" ref=${(element: Element | null) => {
+        if (element) avatarInner = element as HTMLElement;
+      }}><span class="avatar-initial">${initial}</span></div></div><span class="post-display-name" @click=${onProfileClick} ref=${(
+        element: Element | null,
+      ) => {
+        if (element) displayName = element as HTMLElement;
+      }}>${displayNameText}</span><span class="post-username" @click=${onProfileClick}>${`@${props.username}`}</span>${
+        titleBadge ?? ''
+      }<span class="post-timestamp">${timestampText}${editedBadge ?? ''}</span>`,
   );
 
   attachPlusBadge(avatar, props.badge_type);

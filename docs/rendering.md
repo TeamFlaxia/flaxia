@@ -248,10 +248,13 @@ Implemented:
 - AdminAdsTab keys ad rows by `id:active-state`. Toggling active recreates only
   that row, and deleting removes it through the signal; the settings section and
   modal remain outside the keyed list;
-- CSS is loaded through `src/styles/index.css`. Legacy `main.css` and
-  `redesign/*` are in an explicit `legacy` layer; render primitives are in a
-  later `primitives` layer. `main.ts` imports only that entry, and
-  `tests/render/css-layers.test.ts` guards the order;
+- CSS is loaded through `src/styles/index.css` as plain ordered imports:
+  `main.css`, then `redesign/*`, then `render/primitives.css` last so a
+  primitive can override a legacy rule by source order. The entry must stay
+  **unlayered**: `index.html` inlines unlayered critical CSS, and unlayered
+  declarations always beat layered ones, so an `@layer` wrapper silently
+  reverts the redesign (240px nav, 1200px container, unpadded post cards).
+  `tests/render/css-layers.test.ts` and the browser smokes guard this;
 - media ratios are reserved with `.fx-box` rather than hand-rolled aspect
   tricks: PostStage ZIP/SWF (16/9 and 4/3), ImagePreview 16:9, the data-saver
   tap gate (16/9), link-preview thumbnails (1.914, 4 for the image-less banner)
@@ -290,7 +293,9 @@ Remaining maintenance (not part of the stabilization contract above):
    markdown payload (written as one `innerHTML` string by design) and the
    `PostActions` reload dropdown (document-level listeners + focus restore).
 2. Cross-browser visual coverage: Chromium and Firefox now assert 390, 768, 900,
-   1024 and 1400px in the app smoke, plus the built-CSS geometry smoke. WebKit
+   1024 and 1400px in the app smoke, plus the built-CSS geometry smoke.
+   `docs/visual-parity.md` records the origin/main comparison (19 routes,
+   screenshots + computed styles) used to catch the `@layer` regression. WebKit
    runs the same two smokes in the `styles-webkit` CI job, but has never been
    executed locally (host libraries require `sudo playwright install-deps`).
 3. Real-device CLS/LCP numbers using `?render-debug=1`. The headless budget
@@ -340,11 +345,12 @@ right rail hidden at and below 1024px, left nav in flow above 768px). A final
 case records layout-shift and LCP entries with delayed media and enforces the
 CLS budget at desktop and mobile, including one run where the right rail's
 async cards (trending tags, weather forecast, follow suggestions) land after
-first paint; it also asserts the rail becomes visible and filled. The styles smoke test loads the real build output, asserts both
-`legacy` and `primitives` layers, verifies that `primitives` wins on a
-same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
+first paint; it also asserts the rail becomes visible and filled. The styles smoke test loads the real build output, asserts that the
+bundle contains no `@layer` blocks, that a later rule wins on the source-order
+probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with
 `playwright install --with-deps webkit` and runs the same smoke test. The app
-shell smoke asserts that the real build still renders the 240px / content /
-350px shell from the layered stylesheet, without the initial loader and without
-horizontal overflow; it also runs under WebKit in CI.
+shell smoke asserts that the real build still renders the shipped design
+(290px nav / 640px content / 290px right rail, 13px 14px post-card padding) from
+the ordered stylesheet, without the initial loader and without horizontal
+overflow; it also runs under WebKit in CI.

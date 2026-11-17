@@ -86,8 +86,10 @@ export function createUserPostList(props: {
       },
     ),
   );
-  // Empty state lives alongside the engine range, not inside it.
-  postList.appendChild(emptyState);
+  // The empty state is a sibling of `.post-list`, not a child: a child would
+  // make the last post card stop matching `.post-list > :last-child`, adding a
+  // bottom margin the original list never had.
+  container.appendChild(emptyState);
 
   // Render posts
   const renderPosts = () => {

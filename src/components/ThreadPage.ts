@@ -462,42 +462,51 @@ export class ThreadPage {
         throw new Error('Failed to load thread');
       }
 
-      const data = (await response.json()) as { root: Post; replies: Post[] };
+      const data = (await response.json()) as { root?: Post; replies?: Post[] };
+      const replies = Array.isArray(data.replies) ? data.replies : [];
+      const root = data.root;
+      if (!root) {
+        // A malformed payload is not an exception worth logging: show the
+        // "could not load" state and leave the rest of the page intact.
+        loading.textContent = t('thread.load_failed');
+        loading.style.color = '#ef4444';
+        return;
+      }
 
       // Notify cached PostCards (e.g. in Timeline) about updated reply count
       window.dispatchEvent(
         new CustomEvent('postUpdated', {
-          detail: { postId: this.props.postId, replyCount: data.replies.length },
+          detail: { postId: this.props.postId, replyCount: replies.length },
         }),
       );
 
       // Assign sequential indices only to replies (root excluded)
       const postIdToIndex = new Map<string, number>();
-      data.replies.forEach((p, i) => void postIdToIndex.set(p.id, i + 1));
+      replies.forEach((p, i) => void postIdToIndex.set(p.id, i + 1));
 
       // Clear loading state
       loading.style.display = 'none';
 
       // Create root post card (with reply button but without built-in reply composer)
       this.rootPostCard = createPostCard({
-        post: data.root,
+        post: root,
         sandboxOrigin: this.props.sandboxOrigin,
         currentUser: this.props.currentUser || undefined,
-        depth: data.root.depth,
+        depth: root.depth,
         onDelete: () => {}, // Add empty onDelete handler to prevent errors
         disableReplyComposer: true, // Disable only built-in reply composer, ThreadPage will handle replies
       });
       rootContainer.appendChild(this.rootPostCard.getElement());
 
       // Sync post card reply count with actual thread data
-      this.rootPostCard.updatePost({ reply_count: data.replies.length });
+      this.rootPostCard.updatePost({ reply_count: replies.length });
 
       // Update page metadata for accurate OGP regardless of client-side navigation
-      this.updateMetaTags(data.root);
+      this.updateMetaTags(root);
 
       // Root reply composer (hidden by default)
       this.rootReplyComposer = createReplyComposer({
-        postId: data.root.id,
+        postId: root.id,
         sandboxOrigin: this.props.sandboxOrigin,
         onReplyCreated: (newReply) => this.handleRootReplyCreated(newReply),
         onCancel: () => this.hideRootReplyComposer(),
@@ -509,12 +518,12 @@ export class ThreadPage {
       // Setup event listener for root post reply toggle
       this.rootPostCard.getElement().addEventListener('replyToggle', ((e: Event) => {
         const customEvent = e as CustomEvent;
-        if (customEvent.detail.postId === data.root.id) {
+        if (customEvent.detail.postId === root.id) {
           this.toggleRootReplyComposer();
         }
       }) as EventListener);
 
-      this.currentReplies = data.replies;
+      this.currentReplies = replies;
       this.replyIndexMap = postIdToIndex;
       this.renderReplies();
     } catch (error) {

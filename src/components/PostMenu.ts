@@ -180,22 +180,15 @@ export function createMenuButton(onClick: () => void): HTMLElement {
 
   mount(
     holder,
-    () => html`
-      <button
-        type="button"
-        class="post-menu-button"
-        aria-label=${t('post_actions.more_actions')}
-        @click=${(event: Event) => {
-          event.stopPropagation();
-          onClick();
-        }}
-        ref=${(element: Element | null) => {
-          if (element) menuButton = element as unknown as HTMLButtonElement;
-        }}
-      >
-        ⋯
-      </button>
-    `,
+    () =>
+      html`<button type="button" class="post-menu-button" aria-label=${t('post_actions.more_actions')} @click=${(
+        event: Event,
+      ) => {
+        event.stopPropagation();
+        onClick();
+      }} ref=${(element: Element | null) => {
+        if (element) menuButton = element as unknown as HTMLButtonElement;
+      }}>⋯</button>`,
   );
 
   return menuButton;

@@ -143,37 +143,19 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
   let name!: HTMLElement;
   let body!: HTMLElement;
 
+  // One line for the author row (inline elements), then the block children.
   mount(
     card,
-    () => html`
-      <div class="quoted-post-author">
-        <span
-          class="quoted-post-avatar"
-          ref=${(element: Element | null) => {
-            if (element) avatar = element as HTMLElement;
-          }}
-        >
-          ${avatarInitial}
-        </span>
-        <span
-          class="quoted-post-name"
-          ref=${(element: Element | null) => {
-            if (element) name = element as HTMLElement;
-          }}
-        >
-          ${displayName}
-        </span>
-        <span class="quoted-post-username">${username}</span>
-        ${titleBadge ?? ''}
-      </div>
-      <div
-        class="quoted-post-text"
-        ref=${(element: Element | null) => {
-          if (element) body = element as HTMLElement;
-        }}
-      ></div>
-      ${attachment ?? ''}
-    `,
+    () =>
+      html`<div class="quoted-post-author"><span class="quoted-post-avatar" ref=${(element: Element | null) => {
+        if (element) avatar = element as HTMLElement;
+      }}>${avatarInitial}</span><span class="quoted-post-name" ref=${(element: Element | null) => {
+        if (element) name = element as HTMLElement;
+      }}>${displayName}</span><span class="quoted-post-username">${username}</span>${titleBadge ?? ''}</div><div class="quoted-post-text" ref=${(
+        element: Element | null,
+      ) => {
+        if (element) body = element as HTMLElement;
+      }}></div>${attachment ?? ''}`,
   );
 
   if (avatarImage) {

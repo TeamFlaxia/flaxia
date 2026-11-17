@@ -43,39 +43,27 @@ export function createPostActions(props: PostActionsOptions): HTMLElement {
   const reloadActionsDropdown = createReloadActionsDropdown(props);
   const reactionsRow = createReactionsRow(props.reactions, props.onReactionToggle, props.popReaction);
 
+  // Adjacent interpolations: whitespace between them would be rendered as a
+  // gap the original appendChild-built row did not have.
   mount(
     container,
-    () => html`
-      <div class="post-actions-left">
-        ${actionButtonTemplate({
-          type: 'fresh',
-          count: formatCount(props.freshCount),
-          isActive: props.isFreshed,
-          showCount: true,
-          onClick: props.onFreshToggle,
-        })}
-        ${actionButtonTemplate({
-          type: 'reply',
-          count: formatCount(props.replyCount),
-          showCount: true,
-          onClick: props.onReplyToggle,
-        })}
-        ${reloadActionsDropdown}
-      </div>
-      <div class="post-actions-right">
-        ${actionButtonTemplate({
-          type: 'bookmark',
-          isActive: props.isBookmarked,
-          onClick: props.onBookmarkToggle,
-        })}
-        ${actionButtonTemplate({
-          type: 'impressions',
-          count: formatCount(props.impressions),
-          showCount: true,
-        })}
-      </div>
-      ${reactionsRow}
-    `,
+    () =>
+      html`<div class="post-actions-left">${actionButtonTemplate({
+        type: 'fresh',
+        count: formatCount(props.freshCount),
+        isActive: props.isFreshed,
+        showCount: true,
+        onClick: props.onFreshToggle,
+      })}${actionButtonTemplate({
+        type: 'reply',
+        count: formatCount(props.replyCount),
+        showCount: true,
+        onClick: props.onReplyToggle,
+      })}${reloadActionsDropdown}</div><div class="post-actions-right">${actionButtonTemplate({
+        type: 'bookmark',
+        isActive: props.isBookmarked,
+        onClick: props.onBookmarkToggle,
+      })}${actionButtonTemplate({ type: 'impressions', count: formatCount(props.impressions), showCount: true })}</div>${reactionsRow}`,
   );
 
   // One-shot feedback for the toggle that just turned ON.
@@ -222,20 +210,11 @@ function createReactionsRow(
   mount(
     row,
     () =>
-      html`
-      ${each(
+      html`${each(
         () => reactions,
         (reaction) => reaction.emoji,
         (reaction) => legacy(createReactionChip(reaction(), onToggle, popReaction)),
-      )}
-      <button
-        class="post-reaction-add"
-        aria-label=${t('post.reactions_add')}
-        title=${t('post.reactions_add')}
-      >
-        <span class="post-reaction-add-icon">${icon('smile-plus')}</span>
-      </button>
-    `,
+      )}<button class="post-reaction-add" aria-label=${t('post.reactions_add')} title=${t('post.reactions_add')}><span class="post-reaction-add-icon">${icon('smile-plus')}</span></button>`,
   );
 
   // Add-reaction button that opens the emoji picker
@@ -307,12 +286,9 @@ function actionButtonTemplate(options: ActionButtonOptions) {
   // disclosure menu, so aria-pressed would be the wrong role there.
   const pressed = type === 'fresh' || type === 'bookmark' ? String(isActive) : null;
 
-  return html`
-    <button class=${className} aria-label=${label} title=${label} aria-pressed=${pressed} @click=${onClick ?? (() => {})}>
-      <span class="action-icon">${icon(getIconNameForType(type))}</span>
-      ${showCount ? html`<span class="action-count">${count}</span>` : ''}
-    </button>
-  `;
+  // One line: whitespace between the icon and the count would show up as a gap
+  // the pre-engine buttons never had.
+  return html`<button class=${className} aria-label=${label} title=${label} aria-pressed=${pressed} @click=${onClick ?? (() => {})}><span class="action-icon">${icon(getIconNameForType(type))}</span>${showCount ? html`<span class="action-count">${count}</span>` : ''}</button>`;
 }
 
 type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'reload' | 'share' | 'impressions' | 'quote';

@@ -6,12 +6,6 @@
  * load order, image dimensions or iframe timing.
  */
 
-/* Reserve the desktop scrollbar so the 3-column shell does not shift when the
-   document changes between short and tall views. */
-html {
-  scrollbar-gutter: stable;
-}
-
 .fx-box {
   position: relative;
   inline-size: 100%;

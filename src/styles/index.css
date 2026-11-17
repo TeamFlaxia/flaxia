@@ -1,25 +1,22 @@
 /**
- * Phase 5 stylesheet entry.
+ * Stylesheet entry.
  *
- * Existing styles are unlayered today, which makes cascade order depend on
- * import order. Keep them in a `legacy` layer while new render primitives live in
- * a later `primitives` layer. Unlayered rules (for example the small inline
- * boot styles in index.html) still win, as they did before.
- *
- * Layer order, not selector specificity, decides legacy-vs-primitives conflicts.
+ * Order matters: the app stylesheets load first, the render primitives last so
+ * a primitive (for example `.post-stage.fx-box`) can override a legacy rule by
+ * source order. Do NOT wrap these in `@layer`: the critical CSS inlined in
+ * `index.html` is unlayered, and unlayered declarations always beat layered
+ * ones regardless of order, which silently reverted the whole redesign.
  */
-@layer legacy, primitives;
-
-@import "./main.css" layer(legacy);
-@import "./redesign/foundation.css" layer(legacy);
-@import "./redesign/shell.css" layer(legacy);
-@import "./redesign/timeline.css" layer(legacy);
-@import "./redesign/composer.css" layer(legacy);
-@import "./redesign/overlays.css" layer(legacy);
-@import "./redesign/pages.css" layer(legacy);
-@import "./redesign/maps.css" layer(legacy);
-@import "./redesign/mail.css" layer(legacy);
-@import "./redesign/command.css" layer(legacy);
-@import "./redesign/rail.css" layer(legacy);
-@import "./redesign/motion.css" layer(legacy);
-@import "./render/primitives.css" layer(primitives);
+@import "./main.css";
+@import "./redesign/foundation.css";
+@import "./redesign/shell.css";
+@import "./redesign/timeline.css";
+@import "./redesign/composer.css";
+@import "./redesign/overlays.css";
+@import "./redesign/pages.css";
+@import "./redesign/maps.css";
+@import "./redesign/mail.css";
+@import "./redesign/command.css";
+@import "./redesign/rail.css";
+@import "./redesign/motion.css";
+@import "./render/primitives.css";

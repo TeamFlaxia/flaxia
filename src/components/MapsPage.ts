@@ -459,7 +459,8 @@ export class MapsPage {
 
   private currentWeatherPoint(): WeatherPoint | undefined {
     const state = this.weatherSignal();
-    return state.status === 'ready' ? state.data.points[0] : undefined;
+    if (state.status !== 'ready') return undefined;
+    return (state.data.points ?? [])[0];
   }
 
   private weatherTemp(): string {
@@ -478,7 +479,7 @@ export class MapsPage {
   private nextClearPoint(): WeatherPoint | undefined {
     const state = this.weatherSignal();
     if (state.status !== 'ready') return undefined;
-    return state.data.points.slice(1).find((point) => {
+    return (state.data.points ?? []).slice(1).find((point) => {
       const symbol = (point.symbol ?? '').toLowerCase();
       return symbol.startsWith('clearsky') || symbol.startsWith('fair');
     });

@@ -3,7 +3,7 @@
 // Boots the actual `vite build` output (dist/index.html + hashed assets) against
 // a static file server and a stubbed /api. Two surfaces are checked:
 //
-//   1. the guest shell (layered CSS still produces the three-column layout);
+//   1. the guest shell (the real design: 290/640/290 columns and padded cards);
 //   2. /settings for a signed-in user (the engine-rendered sections mount and
 //      keep their inputs, selects and keyed lists).
 //
@@ -294,7 +294,7 @@ async function withServer(run) {
   }
 }
 
-test('the built app boots into the layered three-column shell', { timeout: 90_000 }, async () => {
+test('the built app boots into the three-column shell', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/`, GUEST_STUBS);
 
@@ -324,35 +324,48 @@ test('the built app boots into the layered three-column shell', { timeout: 90_00
       if (sheet) walk(sheet.cssRules);
 
       return {
-        layers: layerNames,
+        layerBlocks: layerNames.length,
         left: measure('.left-nav'),
         center: measure('.timeline, .main-content'),
         right: measure('.right-panel'),
         appChildren: document.querySelector('#app')?.children.length ?? 0,
         bodyBackground: getComputedStyle(document.body).backgroundColor,
         textColor: getComputedStyle(document.body).color,
+        postCard: (() => {
+          const card = document.querySelector('.post-card');
+          if (!card) return null;
+          const cs = getComputedStyle(card);
+          return { padding: cs.padding, margin: cs.margin, borderRadius: cs.borderRadius };
+        })(),
+        leftNavPadding: (() => {
+          const nav = document.querySelector('.left-nav');
+          return nav ? getComputedStyle(nav).padding : null;
+        })(),
       };
     });
 
-    // The shared layer entry is what the app actually ships.
-    assert.ok(result.layers.includes('legacy'), `legacy layer missing: ${result.layers.join(',')}`);
-    assert.ok(result.layers.includes('primitives'), `primitives layer missing: ${result.layers.join(',')}`);
+    // Regression guard for the @layer experiment: layered app CSS loses to the
+    // unlayered critical CSS inlined in index.html, which reverted the redesign
+    // (240px nav, unpadded cards). The shipped CSS must stay unlayered.
+    assert.equal(result.layerBlocks, 0, 'app CSS must not use @layer');
 
-    // Guest shell: nav (240px) + content column + right rail (350px).
+    // The shipped design: 290px nav + 640px content + 290px rail at 1400px.
     assert.ok(result.appChildren > 0, '#app was never populated');
     assert.ok(result.left, 'left nav missing');
-    assert.ok(Math.abs(result.left.width - 240) < 1, `left nav width: ${result.left.width}`);
+    assert.ok(Math.abs(result.left.width - 290) < 1, `left nav width: ${result.left.width}`);
     assert.ok(result.right, 'right rail missing');
-    assert.ok(Math.abs(result.right.width - 350) < 1, `right rail width: ${result.right.width}`);
+    assert.ok(Math.abs(result.right.width - 290) < 1, `right rail width: ${result.right.width}`);
     assert.ok(result.center, 'content column missing');
-    assert.ok(
-      result.center.width >= 560 && result.center.width <= 620,
-      `content column width out of range: ${result.center.width}`,
-    );
+    assert.ok(Math.abs(result.center.width - 640) < 1, `content column width: ${result.center.width}`);
+    assert.equal(result.leftNavPadding, '10px 14px');
 
-    // Tokens still resolve: the layered entry must not drop the theme variables.
+    // Tokens and card chrome still resolve to the redesign values.
     assert.equal(result.bodyBackground, 'rgb(255, 255, 255)');
     assert.equal(result.textColor, 'rgb(15, 23, 42)');
+    assert.ok(result.postCard, 'post card missing');
+    assert.equal(result.postCard.padding, '13px 14px', `post card padding: ${result.postCard.padding}`);
+    assert.equal(result.postCard.margin, '0px 8px', `post card margin: ${result.postCard.margin}`);
+    assert.equal(result.postCard.borderRadius, '12px');
 
     // The stubbed timeline post exercises PostCard's header, actions and quote.
     await page.waitForSelector('.post-card', { timeout: 20_000 });
@@ -655,12 +668,9 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       } else {
         assert.equal(layout.bottomNavDisplay, 'none', `${label}: bottom nav should be hidden`);
         assert.ok(layout.leftNav, `${label}: left nav missing`);
-        assert.ok(Math.abs(layout.leftNav.width - 240) < 1, `${label}: left nav width ${layout.leftNav.width}`);
-        // The shell is centred below 1200px, so the nav starts at the container
-        // inset rather than at 0; it must still be on-screen and full-width.
+        // 769-1199px shows the collapsed icon rail (72px), not the 290px nav.
+        assert.ok(Math.abs(layout.leftNav.width - 72) < 1, `${label}: collapsed nav width ${layout.leftNav.width}`);
         assert.ok(layout.leftNav.left >= 0, `${label}: left nav should be on-screen`);
-        assert.ok(layout.leftNav.right > 0, `${label}: left nav should be laid out`);
-        assert.equal(layout.leftNavPosition, 'sticky', `${label}: left nav should be sticky`);
       }
 
       assert.deepEqual(pageErrors, [], `${label}: page errors: ${pageErrors.join(' | ')}`);

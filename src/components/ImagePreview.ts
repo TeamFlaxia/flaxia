@@ -82,6 +82,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     container.style.cssText = `
       --fx-ratio: 16 / 9;
       --fx-min: 0px;
+      background: var(--bg-input);
       ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
     `;
 

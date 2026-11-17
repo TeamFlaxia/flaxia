@@ -1,4 +1,4 @@
-// Built-CSS smoke test for the Phase 5 layer entry.
+// Built-CSS smoke test for the stylesheet entry.
 //
 // This loads the actual output of `vite build` (dist/assets/main-*.css), not a
 // hand-written fixture. Run with:
@@ -53,7 +53,7 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 }
 
-test('built app CSS keeps legacy/primitives layers and primitive geometry', { timeout: 60_000 }, async () => {
+test('built app CSS stays unlayered and keeps primitive geometry', { timeout: 60_000 }, async () => {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     if (url.pathname === '/' || url.pathname === '/index.html') {
@@ -89,26 +89,22 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
       const sheet = [...document.styleSheets].find((entry) => entry.href?.includes('/assets/main-'));
       if (!sheet) return { error: 'stylesheet missing' };
 
-      const layerNames = [];
+      // Guard the regression that reverted the redesign: the app CSS must not
+      // use @layer, because `index.html` inlines unlayered critical CSS.
+      let layerBlocks = 0;
       const walk = (rules) => {
         for (const rule of Array.from(rules)) {
-          if (rule.constructor.name === 'CSSLayerBlockRule') {
-            const name = rule.name;
-            layerNames.push(name);
-            walk(rule.cssRules);
-          } else if ('cssRules' in rule) {
-            walk(rule.cssRules);
-          }
+          if (rule.constructor.name === 'CSSLayerBlockRule') layerBlocks += 1;
+          if ('cssRules' in rule) walk(rule.cssRules);
         }
       };
       walk(sheet.cssRules);
 
-      // Insert one rule in each existing layer. The declared layer order must
-      // make primitives win even though both selectors have equal specificity.
-      sheet.insertRule('@layer legacy { .layer-probe { color: rgb(1, 2, 3); } }', sheet.cssRules.length);
-      sheet.insertRule('@layer primitives { .layer-probe { color: rgb(4, 5, 6); } }', sheet.cssRules.length);
+      // Sanity probe: the later primitive rule must win by source order.
+      sheet.insertRule('.order-probe { color: rgb(1, 2, 3); }', sheet.cssRules.length);
+      sheet.insertRule('.order-probe { color: rgb(4, 5, 6); }', sheet.cssRules.length);
       const probe = document.createElement('div');
-      probe.className = 'layer-probe';
+      probe.className = 'order-probe';
       probe.textContent = 'probe';
       document.body.appendChild(probe);
 
@@ -131,7 +127,7 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
       };
 
       return {
-        layers: layerNames,
+        layerBlocks,
         probeColor: getComputedStyle(probe).color,
         box: measure('ratio-box'),
         stage: measure('stage-box'),
@@ -149,9 +145,8 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
     });
 
     assert.equal(result.error, undefined, result.error);
-    assert.ok(result.layers.includes('legacy'), `legacy layer missing: ${result.layers.join(',')}`);
-    assert.ok(result.layers.includes('primitives'), `primitives layer missing: ${result.layers.join(',')}`);
-    assert.equal(result.probeColor, 'rgb(4, 5, 6)', 'primitives layer must win over legacy');
+    assert.equal(result.layerBlocks, 0, 'app CSS must not use @layer (it would lose to the inline critical CSS)');
+    assert.equal(result.probeColor, 'rgb(4, 5, 6)', 'later rules must win by source order');
 
     assert.ok(result.box, 'ratio box missing');
     assert.ok(Math.abs(result.box.width - 320) < 1, `unexpected width: ${result.box.width}`);

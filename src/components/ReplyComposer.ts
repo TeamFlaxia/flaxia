@@ -133,25 +133,13 @@ export class ReplyComposer {
               </span>
             </div>
             <div class="reply-composer-buttons">
-              <button
-                class="reply-composer-cancel"
-                type="button"
-                ref=${(element: Element | null) => {
-                  if (element) this.cancelButton = element as unknown as HTMLButtonElement;
-                }}
-              >
-                ${t('reply_composer.cancel')}
-              </button>
-              <button
-                class="reply-composer-submit"
-                type="button"
-                disabled
-                ref=${(element: Element | null) => {
-                  if (element) this.submitButton = element as unknown as HTMLButtonElement;
-                }}
-              >
-                ${t('reply_composer.reply')}
-              </button>
+              <button class="reply-composer-cancel" type="button" ref=${(element: Element | null) => {
+                if (element) this.cancelButton = element as unknown as HTMLButtonElement;
+              }}>${t('reply_composer.cancel')}</button><button class="reply-composer-submit" type="button" disabled ref=${(
+                element: Element | null,
+              ) => {
+                if (element) this.submitButton = element as unknown as HTMLButtonElement;
+              }}>${t('reply_composer.reply')}</button>
             </div>
           </div>
           <div class="reply-composer-file-preview" style="display: none">
