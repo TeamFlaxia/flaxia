@@ -234,6 +234,8 @@ Implemented:
   engine. The empty state sits outside the keyed range;
 - AdminHiddenTab keys hidden posts by post id. Restoring a post removes only that
   row through the signal, and the empty state is toggled outside the list;
+- AdminAlertsTab keys report rows by alert id. Hide/dismiss removes only the
+  affected row, while the NSFW and embedding controls stay outside the list;
 - Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
   are still unlayered.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;

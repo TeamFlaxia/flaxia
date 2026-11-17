@@ -1,5 +1,6 @@
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 
 export interface AdminAlert {
   id: string;
@@ -22,6 +23,9 @@ export interface AdminAlertsTabProps {
 export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
   let element: HTMLElement;
   let alerts: AdminAlert[] = [];
+  const alertsSignal: Signal<AdminAlert[]> = signal<AdminAlert[]>([]);
+  let alertsMount: Mounted | undefined;
+  let alertsEmpty: HTMLElement | undefined;
 
   // Create container immediately
   element = document.createElement('div');
@@ -359,7 +363,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       if (success) {
         await resolveAlert(alert.id);
         alerts = alerts.filter((a) => a.id !== alert.id);
-        render();
+        refreshList();
       }
     });
     actions.appendChild(hideBtn);
@@ -402,7 +406,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       const success = await resolveAlert(alert.id);
       if (success) {
         alerts = alerts.filter((a) => a.id !== alert.id);
-        render();
+        refreshList();
       }
     });
     actions.appendChild(dismissBtn);
@@ -412,7 +416,14 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     return row;
   };
 
+  const refreshList = () => {
+    alertsSignal.set([...alerts]);
+    if (alertsEmpty) alertsEmpty.hidden = alerts.length > 0;
+  };
+
   const render = async () => {
+    alertsMount?.dispose();
+    alertsMount = undefined;
     element.innerHTML = '';
 
     const title = document.createElement('h2');
@@ -427,16 +438,23 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     element.appendChild(createNsfwForm());
     element.appendChild(createEmbeddingBackfillControl());
 
-    if (alerts.length === 0) {
-      const empty = document.createElement('div');
-      empty.textContent = t('admin_alerts.empty');
-      empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
-      element.appendChild(empty);
-    } else {
-      alerts.forEach((alert) => {
-        element.appendChild(createAlertRow(alert));
-      });
-    }
+    const list = document.createElement('div');
+    element.appendChild(list);
+
+    alertsEmpty = document.createElement('div');
+    alertsEmpty.textContent = t('admin_alerts.empty');
+    alertsEmpty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
+    alertsEmpty.hidden = alerts.length > 0;
+    element.appendChild(alertsEmpty);
+
+    alertsMount = mount(list, () =>
+      each(
+        () => alertsSignal(),
+        (alert) => alert.id,
+        (alert) => legacy(createAlertRow(alert())),
+      ),
+    );
+    refreshList();
   };
 
   const init = async () => {
@@ -454,6 +472,8 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       await render();
     },
     destroy: () => {
+      alertsMount?.dispose();
+      alertsMount = undefined;
       if (element && element.parentNode) {
         element.parentNode.removeChild(element);
       }
