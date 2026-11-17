@@ -226,13 +226,18 @@ Implemented:
   asynchronously rendered HTML/attachments;
 - MailComposePage keys its attachment list by file identity, and
   MailSettingsPage renders its security rows through a keyed list;
-- SettingsPage's Titles and Custom Emoji sections use keyed lists (title id /
-  stamp id, plus explicit empty/error/add entries). Its Display choice groups
-  render through `each` over the static option arrays, and the billing history
-  is a keyed list (`left|right` row key) so a refresh reuses rows. All mounts are
-  released in the page's `destroy()`. The remaining Settings sections
-  (language, email, password, Crowd, Billing plan, Vault) are single forms and
-  stay imperative;
+- SettingsPage renders its panels through the engine: Titles and Custom Emoji
+  are keyed lists (title id / stamp id, plus explicit empty/error/add entries);
+  Display choice groups use `each` over the static option arrays; Language,
+  Email, Password, Crowd and the Billing plan card are `html` templates with
+  `ref`-captured inputs; the billing history is a keyed list (`left|right` row
+  key) so a refresh reuses rows. All mounts are released in the page's
+  `destroy()`. Three panels stay imperative on purpose: `VaultSection` (own
+  setup/locked/unlocked state machine and timers), the Maps tile-cache panel
+  (cache stats + persistence prompts) and `BugReportForm` (own form component).
+  `tests/app-shell.browser.mjs` boots `/settings` with a stubbed signed-in
+  session and asserts the rendered inputs, switches, language options and
+  billing row;
 - AdminUsersTab keys its user rows by `id:frozen-state`. Search reuses matching
   rows, freeze recreates only the changed row, and delete removes it through the
   engine. The empty state sits outside the keyed range;

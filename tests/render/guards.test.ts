@@ -54,3 +54,14 @@ describe('render/media-box-guards', () => {
     assert.match(stage, /--fx-ratio/);
   });
 });
+
+describe('render/settings-guards', () => {
+  it('builds the settings forms through the engine, not innerHTML', () => {
+    const settings = read('src/components/SettingsPage.ts');
+    assert.match(settings, /html/);
+    assert.match(settings, /const languageLocales = signal/);
+    assert.match(settings, /displayMounts\.push\(/);
+    assert.doesNotMatch(settings, /const languageSelect = document\.createElement/);
+    assert.doesNotMatch(settings, /languageSelect\.innerHTML/);
+  });
+});

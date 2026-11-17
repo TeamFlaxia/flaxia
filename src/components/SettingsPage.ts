@@ -26,7 +26,7 @@ import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '..
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
-import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
+import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import {
   getDataSaverMode,
   getReplyStyle,
@@ -546,42 +546,48 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const crowdSection = document.createElement('div');
   crowdSection.className = 'settings-section';
 
-  const crowdTitle = document.createElement('h2');
-  crowdTitle.textContent = t('settings.crowd');
-
   const nodeAvailable = canRunFlaxiaNode();
 
-  const crowdLabel = document.createElement('label');
-  crowdLabel.className = nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled';
+  let crowdCheckbox!: HTMLInputElement;
+  let crowdStatus!: HTMLElement;
+  let crowdMessage!: HTMLElement;
 
-  const crowdCheckbox = document.createElement('input');
-  crowdCheckbox.type = 'checkbox';
-  crowdCheckbox.checked = getCrowdConsentState() === 'granted';
-  crowdCheckbox.disabled = !nodeAvailable;
-  crowdCheckbox.className = 'settings-switch';
-
-  const crowdTextDiv = document.createElement('div');
-  crowdTextDiv.className = 'settings-switch-text';
-
-  const crowdNameSpan = document.createElement('span');
-  crowdNameSpan.className = 'settings-switch-name';
-  crowdNameSpan.textContent = t('settings.crowd');
-
-  const crowdDescSpan = document.createElement('span');
-  crowdDescSpan.className = 'settings-switch-desc';
-  crowdDescSpan.textContent = t('settings.crowd_desc');
-
-  crowdTextDiv.appendChild(crowdNameSpan);
-  crowdTextDiv.appendChild(crowdDescSpan);
-  crowdLabel.appendChild(crowdTextDiv);
-  crowdLabel.appendChild(crowdCheckbox);
-
-  const crowdStatus = document.createElement('div');
-  crowdStatus.className = 'settings-status settings-status--sm';
-
-  const crowdMessage = document.createElement('div');
-  crowdMessage.setAttribute('role', 'status');
-  crowdMessage.className = 'settings-status';
+  displayMounts.push(
+    mount(
+      crowdSection,
+      () => html`
+        <h2>${t('settings.crowd')}</h2>
+        <label class=${nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled'}>
+          <div class="settings-switch-text">
+            <span class="settings-switch-name">${t('settings.crowd')}</span>
+            <span class="settings-switch-desc">${t('settings.crowd_desc')}</span>
+          </div>
+          <input
+            class="settings-switch"
+            type="checkbox"
+            ?checked=${getCrowdConsentState() === 'granted'}
+            ?disabled=${!nodeAvailable}
+            ref=${(element: Element | null) => {
+              if (element) crowdCheckbox = element as HTMLInputElement;
+            }}
+          />
+        </label>
+        <div
+          class="settings-status settings-status--sm"
+          ref=${(element: Element | null) => {
+            if (element) crowdStatus = element as HTMLElement;
+          }}
+        ></div>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) crowdMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   const updateCrowdStatus = () => {
     if (!nodeAvailable) {
@@ -640,176 +646,204 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   // state through the public API so the toggle is correct on first paint.
   void resolveCrowdConsentState().then(onCrowdConsentChange);
 
-  crowdSection.appendChild(crowdTitle);
-  crowdSection.appendChild(crowdLabel);
-  crowdSection.appendChild(crowdStatus);
-  crowdSection.appendChild(crowdMessage);
-
   // Language Section
   const languageSection = document.createElement('div');
   languageSection.className = 'settings-section';
 
-  const languageTitle = document.createElement('h2');
-  languageTitle.textContent = t('settings.language');
+  let languageSelect!: HTMLSelectElement;
+  let languageSaveButton!: HTMLButtonElement;
+  let languageMessage!: HTMLElement;
+  const languageLocales = signal<Array<{ code: string; nativeName: string }>>([]);
 
-  const languageSelect = document.createElement('select');
-  languageSelect.setAttribute('aria-label', t('settings.language'));
-  languageSelect.className = 'settings-input';
+  displayMounts.push(
+    mount(
+      languageSection,
+      () => html`
+        <h2>${t('settings.language')}</h2>
+        <select
+          class="settings-input"
+          aria-label=${t('settings.language')}
+          ref=${(element: Element | null) => {
+            if (element) languageSelect = element as unknown as HTMLSelectElement;
+          }}
+        >
+          ${each(
+            () => languageLocales(),
+            (locale) => locale.code,
+            (locale) => html`<option value=${locale().code}>${locale().nativeName}</option>`,
+          )}
+        </select>
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) languageSaveButton = element as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) languageMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
+
+  const applyLanguageSelection = () => {
+    const desired = currentUser?.language || getLocale();
+    if ([...languageSelect.options].some((option) => option.value === desired)) {
+      languageSelect.value = desired;
+    }
+  };
 
   fetch('/locales/index.json')
     .then((r) => r.json())
     .then((locales) => {
-      languageSelect.innerHTML = '';
-      (locales as { code: string; nativeName: string }[]).forEach((l) => {
-        const opt = document.createElement('option');
-        opt.value = l.code;
-        opt.textContent = l.nativeName;
-        languageSelect.appendChild(opt);
-      });
-      if (currentUser?.language) {
-        languageSelect.value = currentUser.language;
-      } else {
-        languageSelect.value = getLocale();
-      }
+      languageLocales.set(locales as { code: string; nativeName: string }[]);
+      applyLanguageSelection();
     })
     .catch(() => {
-      ['en', 'ja'].forEach((code) => {
-        const opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code;
-        languageSelect.appendChild(opt);
-      });
+      languageLocales.set([
+        { code: 'en', nativeName: 'en' },
+        { code: 'ja', nativeName: 'ja' },
+      ]);
+      applyLanguageSelection();
     });
-
-  // Set current language
-  if (currentUser?.language) {
-    languageSelect.value = currentUser.language;
-  }
-
-  const languageSaveButton = document.createElement('button');
-  languageSaveButton.textContent = t('common.save');
-  languageSaveButton.className = 'settings-save';
-
-  const languageMessage = document.createElement('div');
-  languageMessage.setAttribute('role', 'status');
-  languageMessage.className = 'settings-status';
-
-  languageSection.appendChild(languageTitle);
-  languageSection.appendChild(languageSelect);
-  languageSection.appendChild(languageSaveButton);
-  languageSection.appendChild(languageMessage);
 
   // Email Section
   const emailSection = document.createElement('div');
   emailSection.className = 'settings-section';
 
-  const emailTitle = document.createElement('h2');
-  emailTitle.textContent = t('settings.change_email');
+  let currentPasswordInput!: HTMLInputElement;
+  let newEmailInput!: HTMLInputElement;
+  let emailSaveButton!: HTMLButtonElement;
+  let emailMessage!: HTMLElement;
 
-  const currentPasswordLabel = document.createElement('label');
-  currentPasswordLabel.textContent = t('settings.email_current_password');
-  currentPasswordLabel.className = 'settings-label';
-
-  const currentPasswordInput = document.createElement('input');
-  currentPasswordInput.type = 'password';
-  currentPasswordInput.id = 'settings-email-current-password';
-  currentPasswordLabel.htmlFor = currentPasswordInput.id;
-  currentPasswordInput.autocomplete = 'current-password';
-  currentPasswordInput.placeholder = t('settings.email_current_password_placeholder');
-  currentPasswordInput.className = 'settings-input';
-
-  const newEmailLabel = document.createElement('label');
-  newEmailLabel.textContent = t('settings.email_new_email');
-  newEmailLabel.className = 'settings-label';
-
-  const newEmailInput = document.createElement('input');
-  newEmailInput.type = 'email';
-  newEmailInput.id = 'settings-new-email';
-  newEmailLabel.htmlFor = newEmailInput.id;
-  newEmailInput.autocomplete = 'email';
-  newEmailInput.placeholder = t('settings.email_new_email_placeholder');
-  newEmailInput.className = 'settings-input';
-
-  const emailSaveButton = document.createElement('button');
-  emailSaveButton.textContent = t('common.save');
-  emailSaveButton.className = 'settings-save';
-
-  const emailMessage = document.createElement('div');
-  emailMessage.setAttribute('role', 'status');
-  emailMessage.className = 'settings-status';
-
-  emailSection.appendChild(emailTitle);
-  emailSection.appendChild(currentPasswordLabel);
-  emailSection.appendChild(currentPasswordInput);
-  emailSection.appendChild(newEmailLabel);
-  emailSection.appendChild(newEmailInput);
-  emailSection.appendChild(emailSaveButton);
-  emailSection.appendChild(emailMessage);
+  displayMounts.push(
+    mount(
+      emailSection,
+      () => html`
+        <h2>${t('settings.change_email')}</h2>
+        <label class="settings-label" for="settings-email-current-password">
+          ${t('settings.email_current_password')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-email-current-password"
+          type="password"
+          autocomplete="current-password"
+          placeholder=${t('settings.email_current_password_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) currentPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-new-email">${t('settings.email_new_email')}</label>
+        <input
+          class="settings-input"
+          id="settings-new-email"
+          type="email"
+          autocomplete="email"
+          placeholder=${t('settings.email_new_email_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) newEmailInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) emailSaveButton = element as unknown as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) emailMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   // Password Section
   const passwordSection = document.createElement('div');
   passwordSection.className = 'settings-section';
 
-  const passwordTitle = document.createElement('h2');
-  passwordTitle.textContent = t('settings.change_password');
+  const recoveryMode = sessionStorage.getItem('flaxia.recovery-login') === '1';
 
-  const currentPasswordLabel2 = document.createElement('label');
-  currentPasswordLabel2.textContent = t('settings.password_current');
-  currentPasswordLabel2.className = 'settings-label';
+  let currentPasswordInput2!: HTMLInputElement;
+  let newPasswordInput!: HTMLInputElement;
+  let confirmPasswordInput!: HTMLInputElement;
+  let passwordSaveButton!: HTMLButtonElement;
+  let passwordMessage!: HTMLElement;
 
-  const currentPasswordInput2 = document.createElement('input');
-  currentPasswordInput2.type = 'password';
-  currentPasswordInput2.id = 'settings-password-current';
-  currentPasswordLabel2.htmlFor = currentPasswordInput2.id;
-  currentPasswordInput2.autocomplete = 'current-password';
-  currentPasswordInput2.placeholder = t('settings.password_current_placeholder');
-  if (sessionStorage.getItem('flaxia.recovery-login') === '1') {
-    currentPasswordLabel2.textContent = t('settings.recovery_code_label');
-    currentPasswordInput2.placeholder = t('login.recovery_code_placeholder');
-  }
-  currentPasswordInput2.className = 'settings-input';
-
-  const newPasswordLabel = document.createElement('label');
-  newPasswordLabel.textContent = t('settings.password_new');
-  newPasswordLabel.className = 'settings-label';
-
-  const newPasswordInput = document.createElement('input');
-  newPasswordInput.type = 'password';
-  newPasswordInput.id = 'settings-new-password';
-  newPasswordLabel.htmlFor = newPasswordInput.id;
-  newPasswordInput.autocomplete = 'new-password';
-  newPasswordInput.placeholder = t('settings.password_new_placeholder');
-  newPasswordInput.className = 'settings-input';
-
-  const confirmPasswordLabel = document.createElement('label');
-  confirmPasswordLabel.textContent = t('settings.password_confirm');
-  confirmPasswordLabel.className = 'settings-label';
-
-  const confirmPasswordInput = document.createElement('input');
-  confirmPasswordInput.type = 'password';
-  confirmPasswordInput.id = 'settings-confirm-password';
-  confirmPasswordLabel.htmlFor = confirmPasswordInput.id;
-  confirmPasswordInput.autocomplete = 'new-password';
-  confirmPasswordInput.placeholder = t('settings.password_confirm_placeholder');
-  confirmPasswordInput.className = 'settings-input';
-
-  const passwordSaveButton = document.createElement('button');
-  passwordSaveButton.textContent = t('common.save');
-  passwordSaveButton.className = 'settings-save';
-
-  const passwordMessage = document.createElement('div');
-  passwordMessage.setAttribute('role', 'status');
-  passwordMessage.className = 'settings-status';
-
-  passwordSection.appendChild(passwordTitle);
-  passwordSection.appendChild(currentPasswordLabel2);
-  passwordSection.appendChild(currentPasswordInput2);
-  passwordSection.appendChild(newPasswordLabel);
-  passwordSection.appendChild(newPasswordInput);
-  passwordSection.appendChild(confirmPasswordLabel);
-  passwordSection.appendChild(confirmPasswordInput);
-  passwordSection.appendChild(passwordSaveButton);
-  passwordSection.appendChild(passwordMessage);
+  displayMounts.push(
+    mount(
+      passwordSection,
+      () => html`
+        <h2>${t('settings.change_password')}</h2>
+        <label class="settings-label" for="settings-password-current">
+          ${recoveryMode ? t('settings.recovery_code_label') : t('settings.password_current')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-password-current"
+          type="password"
+          autocomplete="current-password"
+          placeholder=${
+            recoveryMode ? t('login.recovery_code_placeholder') : t('settings.password_current_placeholder')
+          }
+          ref=${(element: Element | null) => {
+            if (element) currentPasswordInput2 = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-new-password">${t('settings.password_new')}</label>
+        <input
+          class="settings-input"
+          id="settings-new-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder=${t('settings.password_new_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) newPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-confirm-password">
+          ${t('settings.password_confirm')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-confirm-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder=${t('settings.password_confirm_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) confirmPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) passwordSaveButton = element as unknown as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) passwordMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   const recoveryButton = document.createElement('button');
   recoveryButton.type = 'button';
@@ -1390,89 +1424,76 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     billingTitle.textContent = t('settings.billing') || 'Billing & Plans';
     billingSection.appendChild(billingTitle);
 
-    // Current plan display
-    const planInfo = document.createElement('div');
-    planInfo.style.cssText = `
-      padding: 1rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      margin-bottom: 1rem;
-      background: var(--bg-secondary);
-    `;
-    const planLabel = document.createElement('div');
-    planLabel.style.cssText = 'font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;';
-    planLabel.textContent = t('settings.current_plan') || 'Current Plan';
-    const planName = document.createElement('div');
-    planName.style.cssText = 'font-weight: 600; font-size: 1.125rem; color: var(--text-primary);';
-    planName.textContent = t('settings.loading') || 'Loading...';
-    const planMeta = document.createElement('div');
-    planMeta.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;';
-    planInfo.appendChild(planLabel);
-    planInfo.appendChild(planName);
-    planInfo.appendChild(planMeta);
-    billingSection.appendChild(planInfo);
+    // Current plan + Flaxia+ card. `renderPlan()` writes the refs; the feature
+    // list is static, so it renders once through `each`.
+    let planName!: HTMLElement;
+    let planMeta!: HTMLElement;
+    let actionBtn!: HTMLButtonElement;
 
-    // Flaxia+ plan card
-    const plusCard = document.createElement('div');
-    plusCard.style.cssText = `
-      border: 2px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-    `;
-    const plusName = document.createElement('div');
-    plusName.style.cssText = 'font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;';
-    plusName.textContent = 'Flaxia+';
-    const plusPrice = document.createElement('div');
-    plusPrice.style.cssText = 'margin-bottom: 0.75rem;';
-    const plusPriceNum = document.createElement('span');
-    plusPriceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
-    plusPriceNum.textContent = '¥300';
-    const plusPricePeriod = document.createElement('span');
-    plusPricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
-    plusPricePeriod.textContent = '/mo';
-    plusPrice.appendChild(plusPriceNum);
-    plusPrice.appendChild(plusPricePeriod);
-
-    const plusFeatures = document.createElement('ul');
-    plusFeatures.style.cssText = 'list-style: none; padding: 0; margin: 0 0 0.5rem;';
-    const plusFeatureLabels = [
+    const plusFeatures = signal<string[]>([
       t('settings.plan_plus_f1') || 'Unlimited custom stamps',
       t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
       t('settings.plan_plus_f3') || 'Flaxia+ avatar checkmark badge',
-    ];
-    plusFeatureLabels.forEach((feature) => {
-      const li = document.createElement('li');
-      li.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;';
-      li.textContent = `✓ ${feature}`;
-      plusFeatures.appendChild(li);
-    });
+    ]);
 
-    const actionBtn = document.createElement('button');
-    actionBtn.style.cssText = `
-      width: 100%;
-      padding: 0.5rem;
-      border: none;
-      border-radius: 6px;
-      background: #8b5cf6;
-      color: white;
-      font-weight: 600;
-      font-size: 0.875rem;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    `;
+    displayMounts.push(
+      mount(
+        billingSection,
+        () => html`
+          <div
+            style="padding: 1rem; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; background: var(--bg-secondary);"
+          >
+            <div style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+              ${t('settings.current_plan') || 'Current Plan'}
+            </div>
+            <div
+              style="font-weight: 600; font-size: 1.125rem; color: var(--text-primary);"
+              ref=${(element: Element | null) => {
+                if (element) planName = element as HTMLElement;
+              }}
+            >
+              ${t('settings.loading') || 'Loading...'}
+            </div>
+            <div
+              style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;"
+              ref=${(element: Element | null) => {
+                if (element) planMeta = element as HTMLElement;
+              }}
+            ></div>
+          </div>
+          <div style="border: 2px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;">Flaxia+</div>
+            <div style="margin-bottom: 0.75rem;">
+              <span style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">¥300</span>
+              <span style="font-size: 0.875rem; color: var(--text-muted);">/mo</span>
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 0.5rem;">
+              ${each(
+                () => plusFeatures(),
+                (feature) => feature,
+                (feature) =>
+                  html`<li style="font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;">
+                    ${() => `✓ ${feature()}`}
+                  </li>`,
+              )}
+            </ul>
+            <button
+              style="width: 100%; padding: 0.5rem; border: none; border-radius: 6px; background: #8b5cf6; color: white; font-weight: 600; font-size: 0.875rem; cursor: pointer; transition: opacity 0.2s;"
+              ref=${(element: Element | null) => {
+                if (element) actionBtn = element as unknown as HTMLButtonElement;
+              }}
+            ></button>
+          </div>
+        `,
+      ),
+    );
+
     actionBtn.addEventListener('mouseenter', () => {
       if (!actionBtn.disabled) actionBtn.style.opacity = '0.85';
     });
     actionBtn.addEventListener('mouseleave', () => {
       if (!actionBtn.disabled) actionBtn.style.opacity = '1';
     });
-
-    plusCard.appendChild(plusName);
-    plusCard.appendChild(plusPrice);
-    plusCard.appendChild(plusFeatures);
-    plusCard.appendChild(actionBtn);
-    billingSection.appendChild(plusCard);
 
     // Billing history
     const historySection = document.createElement('div');
