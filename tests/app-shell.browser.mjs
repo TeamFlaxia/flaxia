@@ -742,9 +742,30 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(typed.submitDisabled, false, 'submit should enable once there is content');
     assert.equal(typed.charCount, '9/200');
 
-    // Mention suggestions are a keyed list fed by the search endpoint. Set the
-    // value and caret explicitly: WebKit's fill() can leave the selection at 0,
-    // which makes the @-query parser see no mention.
+    // Mention suggestions are a keyed list fed by the search endpoint. Stub
+    // the request in the page: WebKit does not reliably route this fetch
+    // through Playwright's request router, and the static server would answer
+    // with index.html.
+    await page.evaluate(() => {
+      const nativeFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
+        if (url.includes('/api/search') && url.includes('type=users')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                results: [{ username: 'quoted', display_name: 'Quoted', avatar_key: null }],
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } },
+            ),
+          );
+        }
+        return nativeFetch(input, init);
+      };
+    });
+
+    // Set the value and caret explicitly: WebKit's fill() can leave the
+    // selection at 0, which makes the @-query parser see no mention.
     await page.evaluate(() => {
       const textarea = document.querySelector('.reply-composer-textarea');
       if (!(textarea instanceof HTMLTextAreaElement)) return;
