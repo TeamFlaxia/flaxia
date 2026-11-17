@@ -725,11 +725,18 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(typed.submitDisabled, false, 'submit should enable once there is content');
     assert.equal(typed.charCount, '9/200');
 
-    // Mention suggestions are a keyed list fed by the search endpoint. Type
-    // instead of filling so the caret is at the end in every engine.
-    await page.fill('.reply-composer-textarea', '');
-    await page.type('.reply-composer-textarea', 'Hi @qu');
-    await page.waitForSelector('.mention-dropdown .mention-item', { timeout: 10_000 });
+    // Mention suggestions are a keyed list fed by the search endpoint. Set the
+    // value and caret explicitly: WebKit's fill() can leave the selection at 0,
+    // which makes the @-query parser see no mention.
+    await page.evaluate(() => {
+      const textarea = document.querySelector('.reply-composer-textarea');
+      if (!(textarea instanceof HTMLTextAreaElement)) return;
+      textarea.focus();
+      textarea.value = 'Hi @qu';
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForSelector('.mention-dropdown .mention-item', { state: 'attached', timeout: 10_000 });
 
     const suggestions = await page.evaluate(() => ({
       items: [...document.querySelectorAll('.mention-dropdown .mention-item')].map((item) => ({
