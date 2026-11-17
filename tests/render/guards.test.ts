@@ -31,3 +31,26 @@ describe('render/guards', () => {
     assert.doesNotMatch(shim, /from '\.\/signal\.ts'/);
   });
 });
+
+describe('render/media-box-guards', () => {
+  it('reserves media ratios with fx-box instead of padding tricks', () => {
+    const saver = read('src/lib/data-saver.ts');
+    assert.match(saver, /data-saver-placeholder fx-box/);
+    assert.match(saver, /--fx-ratio:\s*16\s*\/\s*9/);
+    assert.doesNotMatch(saver, /padding-bottom/);
+
+    const linkPreview = read('src/lib/link-preview.ts');
+    assert.match(linkPreview, /--fx-ratio:\s*1\.914/);
+    assert.match(linkPreview, /imgContainer\.classList\.add\('fx-box'\)/);
+    assert.doesNotMatch(linkPreview, /padding-bottom/);
+
+    const carousel = read('src/components/MediaCarousel.ts');
+    assert.match(carousel, /slide\.classList\.add\('fx-box'\)/);
+
+    const imagePreview = read('src/components/ImagePreview.ts');
+    assert.match(imagePreview, /container\.classList\.add\('fx-box'\)/);
+
+    const stage = read('src/components/PostStage.ts');
+    assert.match(stage, /--fx-ratio/);
+  });
+});

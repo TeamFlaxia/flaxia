@@ -82,12 +82,15 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
     imgContainer.className = 'link-preview-image-container';
 
     if (thumbnailSrc) {
+      // 1.914 (was 52.25% of the card width) is the thumbnail banner height.
+      // `aspect-ratio` reserves it, so the card cannot grow when the image
+      // lands.
+      imgContainer.classList.add('fx-box');
       imgContainer.style.cssText = `
-        position: relative;
+        --fx-ratio: 1.914;
+        --fx-min: 0px;
         min-width: 0;
-        padding-bottom: 52.25%;
         background: var(--bg-input);
-        overflow: hidden;
         border-bottom: 1px solid var(--border);
       `;
 
@@ -136,11 +139,9 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
       img.onerror = () => {
         imgContainer.innerHTML = '';
         imgContainer.style.cssText = `
-          position: relative;
+          --fx-ratio: 4;
           min-width: 0;
-          padding-bottom: 25%;
           background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input);
-          overflow: hidden;
           border-bottom: 1px solid var(--border);
         `;
         const fallbackIcon = document.createElement('div');
@@ -213,12 +214,13 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
         });
       }
     } else {
+      // Text cards without an OG image still reserve a shallow banner.
+      imgContainer.classList.add('fx-box');
       imgContainer.style.cssText = `
-        position: relative;
+        --fx-ratio: 4;
+        --fx-min: 0px;
         min-width: 0;
-        padding-bottom: 25%;
         background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input);
-        overflow: hidden;
         border-bottom: 1px solid var(--border);
       `;
 

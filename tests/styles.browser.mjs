@@ -40,6 +40,11 @@ const html = `<!doctype html>
   <div class="image-preview fx-box" id="image-box" style="width:320px; --fx-ratio:16 / 9">
     <img class="image-preview-img" alt="">
   </div>
+  <div class="link-preview-image-container fx-box" id="link-box" style="width:320px; --fx-ratio:1.914"></div>
+  <div class="data-saver-placeholder fx-box" id="saver-box" style="width:320px; --fx-ratio:16 / 9"></div>
+  <div class="media-carousel-track" style="width:320px">
+    <div class="media-carousel-slide fx-box" id="slide-box" style="--fx-ratio:16 / 9"></div>
+  </div>
 </div>
 </body>
 </html>`;
@@ -121,6 +126,7 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
           aspectRatio: computed.aspectRatio,
           paddingBottom: computed.paddingBottom,
           overflow: computed.overflow,
+          borderRadius: computed.borderTopLeftRadius,
         };
       };
 
@@ -130,6 +136,9 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
         box: measure('ratio-box'),
         stage: measure('stage-box'),
         image: measure('image-box'),
+        link: measure('link-box'),
+        saver: measure('saver-box'),
+        slide: measure('slide-box'),
         imageChild: (() => {
           const img = document.querySelector('#image-box .image-preview-img');
           if (!img) return null;

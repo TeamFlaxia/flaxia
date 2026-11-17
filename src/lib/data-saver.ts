@@ -4,21 +4,24 @@
 // components show a tap-to-load placeholder instead of fetching bytes
 // immediately. The real media is only created after the user taps.
 
-import { t } from './i18n.js';
+// `.ts` specifier: this module is imported directly by Node unit tests
+// (`tests/render/media-boxes.test.ts`), where `.js` does not resolve.
+import { t } from './i18n.ts';
 
 /**
  * Creates a tap-to-load placeholder that occupies the same 16:9 box as a
  * typical image/video preview. `onLoad` is invoked once on first tap; the
  * caller is expected to replace this element with the real media.
+ *
+ * The reserved box comes from `.fx-box`, so replacing the placeholder with the
+ * real media does not change the post's height.
  */
 export function createDataSaverPlaceholder(buttonLabel: string, onLoad: () => void): HTMLElement {
   const container = document.createElement('div');
-  container.className = 'data-saver-placeholder';
+  container.className = 'data-saver-placeholder fx-box';
   container.style.cssText = `
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    overflow: hidden;
+    --fx-ratio: 16 / 9;
+    --fx-min: 0px;
     background: var(--bg-input);
     border-radius: var(--radius-md);
     display: flex;

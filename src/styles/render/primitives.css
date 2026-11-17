@@ -138,3 +138,23 @@ html {
   inset: auto;
   overflow: clip;
 }
+
+/* Link previews: keep the card's square top edge; the ratio comes from the box. */
+.link-preview-image-container.fx-box {
+  border-radius: 0;
+  min-block-size: 0;
+}
+
+/* Carousel slides own the reserved frame, not the media inside them. The track
+   already paints the surface and clips the strip. */
+.media-carousel-slide.fx-box {
+  background: transparent;
+  border-radius: 0;
+  min-block-size: 0;
+}
+
+/* The data-saver gate reuses the media box, so it inherits the ratio rather
+   than duplicating an inline aspect-ratio. */
+.data-saver-placeholder.fx-box {
+  min-block-size: 0;
+}

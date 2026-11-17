@@ -52,6 +52,13 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
     const slide = document.createElement('div');
     slide.className = 'media-carousel-slide';
 
+    // Image and video slides reserve their 16:9 frame on the slide itself, so
+    // the track height is fixed before any child media has loaded.
+    if (att.kind === 'image' || att.kind === 'video') {
+      slide.classList.add('fx-box');
+      slide.style.setProperty('--fx-ratio', '16 / 9');
+    }
+
     if (att.kind === 'image') {
       const galleryIndex = imageIndex++;
       slide.appendChild(
