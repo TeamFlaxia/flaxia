@@ -221,6 +221,9 @@ Implemented:
 - MailPage keeps status states (login, locked, loading, error, empty) outside a
   keyed thread list. Folder/search changes reuse rows; read and star actions
   update the existing row instead of rebuilding the mailbox;
+- MailThreadPage keeps its status, message list and reply composer in separate
+  hosts. Messages are keyed by id, so a thread refresh reuses cards and their
+  asynchronously rendered HTML/attachments;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
