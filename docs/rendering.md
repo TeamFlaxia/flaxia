@@ -226,6 +226,9 @@ Implemented:
   asynchronously rendered HTML/attachments;
 - MailComposePage keys its attachment list by file identity, and
   MailSettingsPage renders its security rows through a keyed list;
+- SettingsPage's Titles and Custom Emoji sections use keyed lists (title id /
+  stamp id, plus explicit empty/error/add entries). Their mounts are released in
+  the page's `destroy()`. Other Settings sections are still imperative;
 - Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
   are still unlayered.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;

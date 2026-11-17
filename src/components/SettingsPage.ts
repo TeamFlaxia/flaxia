@@ -26,6 +26,7 @@ import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '..
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
+import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import {
   getDataSaverMode,
   getReplyStyle,
@@ -64,6 +65,26 @@ interface SettingsPageProps {
     email?: string;
   };
 }
+
+interface SettingsTitle {
+  id: string;
+  icon: string;
+  name: string;
+  name_ja?: string | null;
+  description: string;
+  description_ja?: string | null;
+  equipped?: boolean;
+}
+
+type TitleEntry = { kind: 'title'; title: SettingsTitle } | { kind: 'empty' } | { kind: 'error' };
+
+interface SettingsStamp {
+  id: string;
+  name: string;
+  url: string;
+}
+
+type StampEntry = { kind: 'stamp'; stamp: SettingsStamp } | { kind: 'add' } | { kind: 'error' };
 
 interface SettingsCategory {
   id: string;
@@ -197,6 +218,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   let emojiSection: HTMLDivElement | undefined;
   let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
+  let titlesMount: Mounted | undefined;
+  let stampsMount: Mounted | undefined;
 
   // Account Section
   if (currentUser) {
@@ -1068,83 +1091,83 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     titlesSection.appendChild(titlesDesc);
     titlesSection.appendChild(titlesGrid);
 
+    const titlesSignal = signal<TitleEntry[]>([]);
+
+    const renderTitleEntry = (entry: TitleEntry): HTMLElement => {
+      if (entry.kind === 'empty' || entry.kind === 'error') {
+        const message = document.createElement('p');
+        message.textContent =
+          entry.kind === 'empty'
+            ? t('settings.titles_empty') || 'You have not earned any titles yet.'
+            : t('settings.titles_load_failed') || 'Failed to load titles.';
+        message.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+        return message;
+      }
+
+      const title = entry.title;
+      const card = document.createElement('div');
+      card.style.cssText = `
+        display: flex;
+        align-items: flex-start;
+        gap: 0.875rem;
+        padding: 0.875rem 1rem;
+        border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
+        border-radius: 8px;
+        background: var(--bg-secondary);
+      `;
+
+      const iconEl = createTitleIcon(title.icon, 'settings-title-icon');
+
+      const text = document.createElement('div');
+      text.style.cssText = 'min-width: 0; flex: 1;';
+
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
+
+      const name = document.createElement('strong');
+      name.textContent = titleName(title);
+      name.style.cssText = 'color: var(--text-primary);';
+      nameRow.appendChild(name);
+
+      if (title.equipped) {
+        const equipped = document.createElement('span');
+        equipped.textContent = t('settings.titles_equipped') || 'Equipped';
+        equipped.style.cssText =
+          'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
+        nameRow.appendChild(equipped);
+      }
+
+      const description = document.createElement('div');
+      description.textContent = titleDescription(title);
+      description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
+
+      text.appendChild(nameRow);
+      text.appendChild(description);
+      if (iconEl) card.appendChild(iconEl);
+      card.appendChild(text);
+      return card;
+    };
+
+    titlesMount = mount(titlesGrid, () =>
+      each(
+        () => titlesSignal(),
+        (entry) => (entry.kind === 'title' ? entry.title.id : entry.kind),
+        (entry) => legacy(renderTitleEntry(entry())),
+      ),
+    );
+
     fetch('/api/titles/me', { credentials: 'include' })
       .then((response) =>
         response.ok
-          ? (response.json() as Promise<{
-              titles?: Array<{
-                id: string;
-                icon: string;
-                name: string;
-                name_ja?: string | null;
-                description: string;
-                description_ja?: string | null;
-                equipped?: boolean;
-              }>;
-            }>)
+          ? (response.json() as Promise<{ titles?: SettingsTitle[] }>)
           : Promise.reject(new Error(String(response.status))),
       )
       .then((data) => {
         const titles = data.titles ?? [];
-        titlesGrid.replaceChildren();
-        if (titles.length === 0) {
-          const empty = document.createElement('p');
-          empty.textContent = t('settings.titles_empty') || 'You have not earned any titles yet.';
-          empty.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
-          titlesGrid.appendChild(empty);
-          return;
-        }
-
-        for (const title of titles) {
-          const card = document.createElement('div');
-          card.style.cssText = `
-            display: flex;
-            align-items: flex-start;
-            gap: 0.875rem;
-            padding: 0.875rem 1rem;
-            border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
-            border-radius: 8px;
-            background: var(--bg-secondary);
-          `;
-
-          const icon = createTitleIcon(title.icon, 'settings-title-icon');
-
-          const text = document.createElement('div');
-          text.style.cssText = 'min-width: 0; flex: 1;';
-
-          const nameRow = document.createElement('div');
-          nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
-
-          const name = document.createElement('strong');
-          name.textContent = titleName(title);
-          name.style.cssText = 'color: var(--text-primary);';
-          nameRow.appendChild(name);
-
-          if (title.equipped) {
-            const equipped = document.createElement('span');
-            equipped.textContent = t('settings.titles_equipped') || 'Equipped';
-            equipped.style.cssText =
-              'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
-            nameRow.appendChild(equipped);
-          }
-
-          const description = document.createElement('div');
-          description.textContent = titleDescription(title);
-          description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
-
-          text.appendChild(nameRow);
-          text.appendChild(description);
-          if (icon) card.appendChild(icon);
-          card.appendChild(text);
-          titlesGrid.appendChild(card);
-        }
+        titlesSignal.set(titles.length === 0 ? [{ kind: 'empty' }] : titles.map((title) => ({ kind: 'title', title })));
       })
       .catch(() => {
-        titlesGrid.replaceChildren();
-        const failed = document.createElement('p');
-        failed.textContent = t('settings.titles_load_failed') || 'Failed to load titles.';
-        failed.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
-        titlesGrid.appendChild(failed);
+        titlesSignal.set([{ kind: 'error' }]);
       });
   }
 
@@ -1187,114 +1210,136 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     stampsGrid.style.cssText =
       'display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.75rem; width: 100%;';
 
+    const stampsSignal = signal<StampEntry[]>([]);
+
+    const renderStampEntry = (entry: StampEntry): HTMLElement => {
+      if (entry.kind === 'error') {
+        const failed = document.createElement('div');
+        failed.style.cssText = 'grid-column:1/-1;text-align:center;color:var(--text-muted);padding:1rem;';
+        failed.textContent = t('settings.custom_emoji_load_failed') || 'Failed to load stamps';
+        return failed;
+      }
+
+      if (entry.kind === 'add') {
+        const addCard = document.createElement('div');
+        addCard.style.cssText = `
+          border: 2px dashed var(--border);
+          border-radius: 6px;
+          padding: 0.5rem;
+          text-align: center;
+          background: var(--bg-secondary);
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          gap: 0.25rem;
+          min-height: 80px;
+          transition: border-color 0.2s, background 0.2s;
+        `;
+        const addIcon = document.createElement('div');
+        addIcon.textContent = '+';
+        addIcon.style.cssText = 'font-size: 1.5rem; line-height: 1; color: var(--text-muted);';
+        const addLabel = document.createElement('div');
+        addLabel.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
+        addLabel.textContent = t('settings.add_stamp_tap_to_add') || 'Tap to add';
+        addCard.appendChild(addIcon);
+        addCard.appendChild(addLabel);
+
+        addCard.addEventListener('mouseenter', () => {
+          addCard.style.borderColor = 'var(--accent)';
+          addCard.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))';
+        });
+        addCard.addEventListener('mouseleave', () => {
+          addCard.style.borderColor = 'var(--border)';
+          addCard.style.background = 'var(--bg-secondary)';
+        });
+        addCard.addEventListener('click', () => {
+          createAddStampModal({ onUploaded: loadStamps });
+        });
+        return addCard;
+      }
+
+      const stamp = entry.stamp;
+      const card = document.createElement('div');
+      card.style.cssText = `
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.5rem;
+        text-align: center;
+        background: var(--bg-secondary);
+        overflow: hidden;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+      `;
+      const img = document.createElement('img');
+      img.src = stamp.url;
+      img.alt = stamp.name;
+      img.style.cssText = 'width: 48px; height: 48px; object-fit: contain; margin-bottom: 0.25rem; flex-shrink: 0;';
+      const label = document.createElement('div');
+      label.style.cssText =
+        'font-size: 0.75rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;';
+      label.textContent = stamp.name;
+      label.title = stamp.name;
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕';
+      delBtn.style.cssText = `
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        background: var(--danger-strong, #b91c1c);
+        color: #fff;
+        border: none;
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        font-size: 9px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        padding: 0;
+        flex-shrink: 0;
+      `;
+      delBtn.addEventListener('click', async () => {
+        if (!confirm(t('settings.custom_emoji_delete_confirm', { name: stamp.name }) || `Delete ${stamp.name}?`)) {
+          return;
+        }
+        const res = await fetch(`/api/stamps/${stamp.id}`, { method: 'DELETE', credentials: 'include' });
+        if (res.ok) loadStamps();
+      });
+      card.appendChild(delBtn);
+      card.appendChild(img);
+      card.appendChild(label);
+      return card;
+    };
+
+    stampsMount = mount(stampsGrid, () =>
+      each(
+        () => stampsSignal(),
+        (entry) => (entry.kind === 'stamp' ? entry.stamp.id : entry.kind),
+        (entry) => legacy(renderStampEntry(entry())),
+      ),
+    );
+
     function loadStamps() {
       fetch('/api/stamps', { credentials: 'include' })
-        .then((r) => r.json() as Promise<{ stamps: Array<{ id: string; name: string; url: string }> }>)
+        .then((r) => r.json() as Promise<{ stamps: SettingsStamp[] }>)
         .then((data) => {
-          stampsGrid.innerHTML = '';
           const unlimited = !!currentPlan.plan && ['active', 'trialing'].includes(currentPlan.status || '');
           emojiCountValue.textContent = unlimited ? `${data.stamps.length} / ∞` : `${data.stamps.length} / 5`;
-          for (const stamp of data.stamps) {
-            const card = document.createElement('div');
-            card.style.cssText = `
-              border: 1px solid var(--border);
-              border-radius: 6px;
-              padding: 0.5rem;
-              text-align: center;
-              background: var(--bg-secondary);
-              overflow: hidden;
-              min-width: 0;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              position: relative;
-            `;
-            const img = document.createElement('img');
-            img.src = stamp.url;
-            img.alt = stamp.name;
-            img.style.cssText =
-              'width: 48px; height: 48px; object-fit: contain; margin-bottom: 0.25rem; flex-shrink: 0;';
-            const label = document.createElement('div');
-            label.style.cssText =
-              'font-size: 0.75rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;';
-            label.textContent = stamp.name;
-            label.title = stamp.name;
-            const delBtn = document.createElement('button');
-            delBtn.textContent = '✕';
-            delBtn.style.cssText = `
-              position: absolute;
-              top: 2px;
-              right: 2px;
-              background: var(--danger-strong, #b91c1c);
-              color: #fff;
-              border: none;
-              border-radius: 50%;
-              width: 16px;
-              height: 16px;
-              font-size: 9px;
-              cursor: pointer;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              line-height: 1;
-              padding: 0;
-              flex-shrink: 0;
-            `;
-            delBtn.addEventListener('click', async () => {
-              if (!confirm(t('settings.custom_emoji_delete_confirm', { name: stamp.name }) || `Delete ${stamp.name}?`))
-                return;
-              const res = await fetch(`/api/stamps/${stamp.id}`, { method: 'DELETE', credentials: 'include' });
-              if (res.ok) loadStamps();
-            });
-            card.appendChild(delBtn);
-            card.appendChild(img);
-            card.appendChild(label);
-            stampsGrid.appendChild(card);
-          }
-
-          // Add "add" card
-          const addCard = document.createElement('div');
-          addCard.style.cssText = `
-            border: 2px dashed var(--border);
-            border-radius: 6px;
-            padding: 0.5rem;
-            text-align: center;
-            background: var(--bg-secondary);
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            gap: 0.25rem;
-            min-height: 80px;
-            transition: border-color 0.2s, background 0.2s;
-          `;
-          const addIcon = document.createElement('div');
-          addIcon.textContent = '+';
-          addIcon.style.cssText = 'font-size: 1.5rem; line-height: 1; color: var(--text-muted);';
-          const addLabel = document.createElement('div');
-          addLabel.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
-          addLabel.textContent = t('settings.add_stamp_tap_to_add') || 'Tap to add';
-          addCard.appendChild(addIcon);
-          addCard.appendChild(addLabel);
-
-          addCard.addEventListener('mouseenter', () => {
-            addCard.style.borderColor = 'var(--accent)';
-            addCard.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))';
-          });
-          addCard.addEventListener('mouseleave', () => {
-            addCard.style.borderColor = 'var(--border)';
-            addCard.style.background = 'var(--bg-secondary)';
-          });
-          addCard.addEventListener('click', () => {
-            createAddStampModal({ onUploaded: loadStamps });
-          });
-
-          stampsGrid.appendChild(addCard);
+          stampsSignal.set([
+            ...data.stamps.map((stamp) => ({ kind: 'stamp' as const, stamp })),
+            { kind: 'add' as const },
+          ]);
         })
         .catch(() => {
-          stampsGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:1rem;">${t('settings.custom_emoji_load_failed') || 'Failed to load stamps'}</div>`;
+          stampsSignal.set([{ kind: 'error' }]);
         });
     }
 
@@ -1759,6 +1804,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     getElement: () => container,
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+      titlesMount?.dispose();
+      stampsMount?.dispose();
       vaultSection?.destroy();
       bugReportForm.destroy();
       container.remove();
