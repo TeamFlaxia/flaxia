@@ -192,6 +192,8 @@ Implemented:
 - `BillingResultPage` and `DownloadPage` render through `mount()`/`html`.
   DownloadPage keeps its platform-card helpers as Node values, and both pages
   dispose their mount on `destroy()`;
+- `LegalPage` composes its header, article and footer through `mount()`; the
+  async markdown loader writes into the captured article element;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
