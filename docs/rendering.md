@@ -296,6 +296,10 @@ RENDER_BROWSER=firefox npm run test:render:browser
 npm run test:styles:browser
 STYLES_BROWSER=firefox npm run test:styles:browser
 STYLES_BROWSER=webkit npm run test:styles:browser
+
+# Real-app shell smoke: boots dist/ with a stubbed /api and blocked third parties
+npm run test:app:browser
+APP_BROWSER=firefox npm run test:app:browser
 ```
 
 The renderer browser test checks keyed element identity, text-node identity,
@@ -304,4 +308,7 @@ layout shift. The styles smoke test loads the real build output, asserts both
 `legacy` and `primitives` layers, verifies that `primitives` wins on a
 same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with
-`playwright install --with-deps webkit` and runs the same smoke test.
+`playwright install --with-deps webkit` and runs the same smoke test. The app
+shell smoke asserts that the real build still renders the 240px / content /
+350px shell from the layered stylesheet, without the initial loader and without
+horizontal overflow; it also runs under WebKit in CI.
