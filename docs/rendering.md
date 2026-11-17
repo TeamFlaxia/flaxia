@@ -242,7 +242,13 @@ Implemented:
 - CSS is loaded through `src/styles/index.css`. Legacy `main.css` and
   `redesign/*` are in an explicit `legacy` layer; render primitives are in a
   later `primitives` layer. `main.ts` imports only that entry, and
-  `tests/render/css-layers.test.ts` guards the order.
+  `tests/render/css-layers.test.ts` guards the order;
+- media ratios are reserved with `.fx-box` rather than hand-rolled aspect
+  tricks. PostStage ZIP/SWF stages set `--fx-ratio` (16/9 and 4/3), and
+  ImagePreview's 16:9 mode reuses `.fx-box` instead of an inline
+  `aspect-ratio` container; `src/styles/render/primitives.css` resets the
+  legacy absolute fill. `tests/styles.browser.mjs` asserts the real geometry
+  of both boxes against the built CSS.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

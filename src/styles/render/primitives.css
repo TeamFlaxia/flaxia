@@ -128,3 +128,13 @@ html {
   aspect-ratio: var(--fx-ratio, auto);
   min-block-size: 0;
 }
+
+/* ImagePreview's 16:9 mode keeps its legacy class for the lightbox hooks, but
+   the reserved box comes from fx-box. Reset the legacy absolute fill so the
+   aspect ratio owns the height. */
+.image-preview.fx-box {
+  display: block;
+  height: auto;
+  inset: auto;
+  overflow: clip;
+}

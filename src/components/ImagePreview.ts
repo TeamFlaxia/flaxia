@@ -78,14 +78,10 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   // loads can never push the timeline down. Fill the frame by default, cropping
   // the edges while preserving the image's aspect ratio.
   if (props.ratio === '16:9') {
+    container.classList.add('fx-box');
     container.style.cssText = `
-      position: relative;
-      width: 100%;
-      height: auto;
-      aspect-ratio: 16 / 9;
-      overflow: hidden;
-      display: block;
-      background: var(--bg-input);
+      --fx-ratio: 16 / 9;
+      --fx-min: 0px;
       ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
     `;
 

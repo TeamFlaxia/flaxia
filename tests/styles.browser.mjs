@@ -37,6 +37,9 @@ const html = `<!doctype html>
     <div class="fx-box__inner"></div>
   </div>
   <div class="post-stage post-stage--zip fx-box" id="stage-box" style="width:320px; --fx-ratio:16 / 9"></div>
+  <div class="image-preview fx-box" id="image-box" style="width:320px; --fx-ratio:16 / 9">
+    <img class="image-preview-img" alt="">
+  </div>
 </div>
 </body>
 </html>`;
@@ -104,20 +107,35 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
       probe.textContent = 'probe';
       document.body.appendChild(probe);
 
-      const box = document.getElementById('ratio-box');
-      if (!box) return { error: 'ratio box missing' };
-      const style = getComputedStyle(box);
-      const rect = box.getBoundingClientRect();
+      const measure = (id) => {
+        const element = document.getElementById(id);
+        if (!element) return null;
+        const computed = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        return {
+          width: bounds.width,
+          height: bounds.height,
+          position: computed.position,
+          display: computed.display,
+          contain: computed.contain,
+          aspectRatio: computed.aspectRatio,
+          paddingBottom: computed.paddingBottom,
+          overflow: computed.overflow,
+        };
+      };
+
       return {
         layers: layerNames,
         probeColor: getComputedStyle(probe).color,
-        box: {
-          width: rect.width,
-          height: rect.height,
-          position: style.position,
-          contain: style.contain,
-          aspectRatio: style.aspectRatio,
-        },
+        box: measure('ratio-box'),
+        stage: measure('stage-box'),
+        image: measure('image-box'),
+        imageChild: (() => {
+          const img = document.querySelector('#image-box .image-preview-img');
+          if (!img) return null;
+          const bounds = img.getBoundingClientRect();
+          return { width: bounds.width, height: bounds.height };
+        })(),
       };
     });
 
@@ -125,11 +143,32 @@ test('built app CSS keeps legacy/primitives layers and primitive geometry', { ti
     assert.ok(result.layers.includes('legacy'), `legacy layer missing: ${result.layers.join(',')}`);
     assert.ok(result.layers.includes('primitives'), `primitives layer missing: ${result.layers.join(',')}`);
     assert.equal(result.probeColor, 'rgb(4, 5, 6)', 'primitives layer must win over legacy');
+
+    assert.ok(result.box, 'ratio box missing');
     assert.ok(Math.abs(result.box.width - 320) < 1, `unexpected width: ${result.box.width}`);
     assert.ok(Math.abs(result.box.height - 180) < 1, `16:9 aspect ratio not reserved: ${result.box.height}`);
     assert.equal(result.box.position, 'relative');
     assert.match(result.box.contain, /layout/);
     assert.match(result.box.contain, /paint/);
+
+    // PostStage ZIP/SWF: primitives must beat the legacy padding-bottom box.
+    assert.ok(result.stage, 'stage box missing');
+    assert.ok(Math.abs(result.stage.width - 320) < 1, `unexpected stage width: ${result.stage.width}`);
+    assert.ok(Math.abs(result.stage.height - 180) < 2, `stage 16:9 not reserved: ${result.stage.height}`);
+    assert.equal(result.stage.paddingBottom, '0px', 'legacy padding-bottom must be overridden');
+    assert.match(result.stage.aspectRatio, /16\s*\/\s*9|1\.77/);
+
+    // ImagePreview 16:9: fx-box owns the height, not the legacy absolute fill.
+    assert.ok(result.image, 'image box missing');
+    assert.ok(Math.abs(result.image.width - 320) < 1, `unexpected image width: ${result.image.width}`);
+    assert.ok(Math.abs(result.image.height - 180) < 2, `image 16:9 not reserved: ${result.image.height}`);
+    assert.equal(result.image.display, 'block');
+    assert.equal(result.image.position, 'relative');
+    assert.equal(result.image.overflow, 'clip');
+    // The box owns the height: the image itself must not overflow the reserved
+    // frame (the legacy rule made it 100% of a padded parent).
+    assert.ok(result.imageChild, 'image child missing');
+    assert.ok(result.imageChild.height <= 181, `image child overflows the reserved box: ${result.imageChild.height}`);
   } finally {
     await browser?.close();
     await new Promise((resolve) => server.close(resolve));
