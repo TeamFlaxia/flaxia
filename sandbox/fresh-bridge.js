@@ -18,9 +18,10 @@
   }
   function applyAudioContexts() {
     var i;
+    var result;
     for (i = 0; i < contexts.length; i++) {
       try {
-        var result = null;
+        result = null;
         if (MUTED && contexts[i].state === 'running') result = contexts[i].suspend();
         else if (!MUTED && contexts[i].state === 'suspended') result = contexts[i].resume();
         if (result && typeof result.catch === 'function') result.catch(function () {});
@@ -32,10 +33,11 @@
     if (!Native || typeof Reflect === 'undefined' || !Reflect.construct) return;
     function WrappedAudioContext() {
       var context = Reflect.construct(Native, arguments);
+      var suspended;
       contexts.push(context);
       if (MUTED) {
         try {
-          var suspended = context.suspend();
+          suspended = context.suspend();
           if (suspended && typeof suspended.catch === 'function') suspended.catch(function () {});
         } catch (e) {}
       }
