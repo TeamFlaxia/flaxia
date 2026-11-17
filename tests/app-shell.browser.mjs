@@ -370,6 +370,8 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
 
     // The stubbed timeline post exercises PostCard's header, actions and quote.
     await page.waitForSelector('.post-card', { timeout: 20_000 });
+    // Rich text is rendered on idle after the plain-text placeholder.
+    await page.waitForSelector('.post-card .post-text.post-text--rich', { timeout: 20_000 });
     const post = await page.evaluate(() => ({
       username: document.querySelector('.post-card .post-username')?.textContent?.trim() ?? '',
       displayName: document.querySelector('.post-card .post-display-name')?.textContent?.trim() ?? '',
@@ -576,11 +578,19 @@ test('the mobile viewport keeps the bottom nav and the left drawer', { timeout: 
     );
 
     // Opening the drawer slides it in; the overlay closes it again. The slide
-    // is a 300ms CSS transition, so wait it out instead of sampling mid-flight.
+    // is a 300ms CSS transition, so wait for the settled position instead of
+    // sampling after a fixed delay (WebKit can still be a couple of px out).
     await page.evaluate(() => {
       document.dispatchEvent(new CustomEvent('openLeftNav'));
     });
-    await page.waitForTimeout(500);
+    await page.waitForFunction(
+      () => {
+        const leftNav = document.querySelector('.left-nav');
+        if (!leftNav || !leftNav.classList.contains('left-nav--open')) return false;
+        return Math.abs(leftNav.getBoundingClientRect().left) < 1;
+      },
+      { timeout: 5_000 },
+    );
 
     const opened = await page.evaluate(() => {
       const leftNav = document.querySelector('.left-nav');
@@ -715,8 +725,10 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(typed.submitDisabled, false, 'submit should enable once there is content');
     assert.equal(typed.charCount, '9/200');
 
-    // Mention suggestions are a keyed list fed by the search endpoint.
-    await page.fill('.reply-composer-textarea', 'Hi @qu');
+    // Mention suggestions are a keyed list fed by the search endpoint. Type
+    // instead of filling so the caret is at the end in every engine.
+    await page.fill('.reply-composer-textarea', '');
+    await page.type('.reply-composer-textarea', 'Hi @qu');
     await page.waitForSelector('.mention-dropdown .mention-item', { timeout: 10_000 });
 
     const suggestions = await page.evaluate(() => ({
