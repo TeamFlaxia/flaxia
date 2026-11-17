@@ -208,6 +208,9 @@ Implemented:
 - Arcade's game feed is a single-active swipe viewport, not a grid. Its comments
   list is keyed (`each` + `legacy`) for both flat and tree reply modes, with one
   mount per comment panel and generation-checked fetches;
+- Profile's posts/freshs/bookmarks tabs share `UserPostList`, which now keeps a
+  keyed post list. Initial load, paging, `addPost` and delete all update the
+  signal, so existing cards (and their running stages) are reused;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

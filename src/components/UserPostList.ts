@@ -1,6 +1,7 @@
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createLoadingSpinner } from '../lib/loading-ui.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { each, legacy, mount, signal } from '../lib/render/index.ts';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -26,6 +27,7 @@ export function createUserPostList(props: {
   let hasMore = true;
   let loading = false;
   const postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  const postsSignal = signal<Post[]>([]);
 
   // Create main container
   const container = document.createElement('div');
@@ -35,6 +37,10 @@ export function createUserPostList(props: {
   const postList = document.createElement('div');
   postList.className = 'post-list';
   container.appendChild(postList);
+
+  const emptyState = document.createElement('p');
+  emptyState.className = 'font-mono';
+  emptyState.hidden = true;
 
   // Create load more section
   const loadMoreContainer = document.createElement('div');
@@ -65,29 +71,35 @@ export function createUserPostList(props: {
       },
     });
 
+  const postsMount = mount(postList, () =>
+    each(
+      () => postsSignal(),
+      (post) => post.id,
+      (post) => {
+        const value = post();
+        const card = buildCard(value);
+        postCards.set(value.id, card);
+        return legacy(card.getElement(), () => {
+          card.destroy();
+          postCards.delete(value.id);
+        });
+      },
+    ),
+  );
+  // Empty state lives alongside the engine range, not inside it.
+  postList.appendChild(emptyState);
+
   // Render posts
   const renderPosts = () => {
-    postList.innerHTML = '';
-
-    if (posts.length === 0 && !loading) {
-      const emptyState = document.createElement('p');
-      emptyState.className = 'font-mono';
-      postList.appendChild(emptyState);
-      return;
-    }
-
-    posts.forEach((post) => {
-      const postCard = buildCard(post);
-
-      postCards.set(post.id, postCard);
-      postList.appendChild(postCard.getElement());
-    });
+    postsSignal.set([...posts]);
+    emptyState.hidden = posts.length > 0 || loading;
   };
 
   // Update loading spinner visibility
   const updateLoadingSpinner = () => {
     loadingSpinner.style.display = loading ? 'block' : 'none';
     infiniteScroll.sentinel.style.display = hasMore ? 'block' : 'none';
+    emptyState.hidden = posts.length > 0 || loading;
   };
 
   // Load initial posts
@@ -193,24 +205,12 @@ export function createUserPostList(props: {
     getElement: () => container,
     addPost: (post) => {
       posts = [post, ...posts];
-      postList.innerHTML = '';
-      const card = buildCard(post);
-      postCards.set(post.id, card);
-      postList.appendChild(card.getElement());
-      // Re-append existing cards
-      for (let i = 1; i < posts.length; i++) {
-        let card = postCards.get(posts[i].id);
-        if (!card) {
-          card = buildCard(posts[i]);
-          postCards.set(posts[i].id, card);
-        }
-        postList.appendChild(card.getElement());
-      }
+      renderPosts();
     },
     destroy: () => {
       window.removeEventListener('postUpdated', postUpdatedHandler);
       infiniteScroll.disconnect();
-      postCards.forEach((card) => void card.destroy());
+      postsMount.dispose();
       postCards.clear();
       container.remove();
     },
