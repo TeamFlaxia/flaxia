@@ -297,9 +297,14 @@ Remaining maintenance (not part of the stabilization contract above):
    already exists: `tests/app-shell.browser.mjs` installs
    `PerformanceObserver`s before any app script, delays the stubbed media by
    600ms, and asserts CLS < 0.02 and a recorded LCP for the timeline at
-   1400x1000 and 390x844 and for `/settings` at 1400x1000. Current headless
-   numbers are CLS 0.0000-0.0007 and LCP 80-550ms; the only measured shift is a
-   ~22px move of the right-rail shortcuts block as its async content lands.
+   1400x1000 and 390x844, for `/settings`, and for a rail loaded with trending
+   tags, a weather forecast and follow suggestions. Current headless numbers are
+   **CLS 0.0000 everywhere** and LCP 180-500ms. The former 0.0007 shift came from
+   the right rail: the weather card grew one line and the trending/follow cards
+   filled in after first paint. The rail now stays `visibility: hidden` (with a
+   1.5s watchdog) until those two cards have their content, the weather card
+   renders its loaded shape from the start, and its body reserves the maximum
+   height (current row + humidity/wind note + forecast note).
 
 ## Tests
 
@@ -333,7 +338,9 @@ edge, off-canvas left drawer, drawer open/close, right rail hidden, no
 horizontal overflow) and across 768/900/1024px (drawer breakpoint stays sharp,
 right rail hidden at and below 1024px, left nav in flow above 768px). A final
 case records layout-shift and LCP entries with delayed media and enforces the
-CLS budget at desktop and mobile. The styles smoke test loads the real build output, asserts both
+CLS budget at desktop and mobile, including one run where the right rail's
+async cards (trending tags, weather forecast, follow suggestions) land after
+first paint; it also asserts the rail becomes visible and filled. The styles smoke test loads the real build output, asserts both
 `legacy` and `primitives` layers, verifies that `primitives` wins on a
 same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with

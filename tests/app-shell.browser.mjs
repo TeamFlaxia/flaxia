@@ -116,6 +116,35 @@ const MEDIA_STUBS = {
   '/api/posts/recommended': { body: { posts: [MEDIA_POST], nextCursor: null } },
 };
 
+// Async right-rail payloads: trending tags, a weather forecast and follow
+// suggestions all land after first paint.
+const BUSY_STUBS = {
+  ...MEDIA_STUBS,
+  '/api/tags/trending': {
+    body: {
+      tags: [
+        { tag: 'flaxia', count: 120, percentage: 42 },
+        { tag: 'indiegame', count: 80, percentage: 30 },
+        { tag: 'pixelart', count: 55, percentage: 18 },
+        { tag: 'webgl', count: 31, percentage: 10 },
+      ],
+    },
+  },
+  '/api/maps/weather': {
+    body: {
+      lat: 35.68,
+      lon: 139.65,
+      points: [
+        { time: '2026-11-17T09:00:00Z', temperature: 18, humidity: 55, windSpeed: 3, symbol: 'partlycloudy_day' },
+        { time: '2026-11-17T15:00:00Z', temperature: 20, humidity: 48, windSpeed: 2, symbol: 'clearsky_day' },
+      ],
+    },
+  },
+  '/api/users/suggestions': {
+    body: { users: [{ username: 'quoted', display_name: 'Quoted', avatar_key: null }] },
+  },
+};
+
 const SIGNED_IN_STUBS = {
   ...GUEST_STUBS,
   '/api/me': {
@@ -712,6 +741,12 @@ test('layout stays put while async panels and media settle (CLS / LCP budget)', 
         viewport: { width: 1400, height: 1000 },
       },
       { label: 'timeline 390x844', path: '/', stubs: MEDIA_STUBS, viewport: { width: 390, height: 844 } },
+      {
+        label: 'timeline+async rail 1400x1000',
+        path: '/',
+        stubs: BUSY_STUBS,
+        viewport: { width: 1400, height: 1000 },
+      },
     ];
 
     for (const testCase of cases) {
@@ -745,6 +780,22 @@ test('layout stays put while async panels and media settle (CLS / LCP budget)', 
         });
         assert.ok(media.loaded, `${testCase.label}: stubbed image never loaded`);
         assert.ok(media.boxHeight > 100, `${testCase.label}: media box has no reserved height`);
+      }
+
+      if (testCase.stubs === BUSY_STUBS) {
+        // The rail reveals itself once the variable-height cards are filled.
+        const rail = await page.evaluate(() => ({
+          visibility: getComputedStyle(document.querySelector('.right-panel')).visibility,
+          pending: document.querySelector('.right-panel')?.classList.contains('right-panel--pending'),
+          tags: document.querySelectorAll('.trending-list .trending-item').length,
+          weather: (document.querySelector('.maps-weather-section .right-card-body')?.textContent ?? '').trim(),
+          followVisible: getComputedStyle(document.querySelector('.follow-section')).display !== 'none',
+        }));
+        assert.equal(rail.visibility, 'visible', `${testCase.label}: rail stayed hidden`);
+        assert.equal(rail.pending, false, `${testCase.label}: rail still marked pending`);
+        assert.equal(rail.tags, 4, `${testCase.label}: expected 4 trending tags, got ${rail.tags}`);
+        assert.ok(rail.weather.length > 0, `${testCase.label}: weather body empty`);
+        assert.ok(rail.followVisible, `${testCase.label}: follow card never revealed`);
       }
 
       assert.ok(perf.lcp > 0, `${testCase.label}: no LCP entry recorded`);
