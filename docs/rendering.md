@@ -279,9 +279,17 @@ npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
 npx playwright install chromium firefox
 npm run test:render:browser
 RENDER_BROWSER=firefox npm run test:render:browser
+
+# Built-CSS layer/geometry smoke (uses dist/assets/main-*.css)
+npm run test:styles:browser
+STYLES_BROWSER=firefox npm run test:styles:browser
+STYLES_BROWSER=webkit npm run test:styles:browser
 ```
 
-The browser test checks keyed element identity, text-node identity, in-place
-iframe browsing-context preservation, hidden-iframe preservation and layout
-shift. Chromium and Firefox are covered; WebKit needs the host libraries listed
-by `npx playwright install webkit` (libicu, flite, gstreamer) and is optional.
+The renderer browser test checks keyed element identity, text-node identity,
+in-place iframe browsing-context preservation, hidden-iframe preservation and
+layout shift. The styles smoke test loads the real build output, asserts both
+`legacy` and `primitives` layers, verifies that `primitives` wins on a
+same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
+Firefox run locally; the `styles-webkit` CI job installs WebKit with
+`playwright install --with-deps webkit` and runs the same smoke test.
