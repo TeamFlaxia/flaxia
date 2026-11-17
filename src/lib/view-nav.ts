@@ -1,6 +1,10 @@
 // View → bottom-nav item mapping (split out of main.ts).
 //
 // Pure function: which bottom-bar tab is active for a given router view.
+//
+// Views that live only in the drawer or behind a detail link (Maps, Translate,
+// Mail, Admin, Docs, Download, legal pages) return '' so the bar clears its
+// highlight instead of keeping whatever tab the user came from.
 export function viewToBottomNavId(view: string): string {
   switch (view) {
     case 'timeline':
@@ -17,11 +21,20 @@ export function viewToBottomNavId(view: string): string {
       return 'account';
     case 'notifications':
       return 'notifications';
+    // Detail/drawer-only surfaces: no bottom tab owns them, so the bar must
+    // clear (returning '' here is what prevents a stale "Arcade" highlight).
+    case 'maps':
+    case 'translate':
     case 'mail':
     case 'mail-thread':
     case 'mail-compose':
     case 'mail-settings':
-      return 'mail';
+    case 'admin':
+    case 'docs':
+    case 'legal':
+    case 'download':
+    case 'login':
+    case 'register':
     default:
       return '';
   }

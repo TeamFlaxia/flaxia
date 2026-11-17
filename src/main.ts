@@ -294,10 +294,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const leftNavInstances: Set<LeftNav> = new Set();
 
+    /**
+     * Which bottom tab is active for a route. The URL is authoritative here:
+     * this runs while the router is still building the next view.
+     */
+    const bottomNavIdForRoute = (view?: RouteView): string => {
+      const resolved = view ?? parseCurrentRoute()?.view;
+      return resolved ? viewToBottomNavId(resolved) : '';
+    };
+
+    const syncBottomNavActiveItem = (view?: RouteView): void => {
+      getBottomNav()?.setActiveItem(bottomNavIdForRoute(view));
+    };
+
     /** Deps for the mobile bottom bar (see src/lib/bottom-nav-setup.ts). */
     const bottomNavDeps = (): BottomNavDeps => ({
       navigate: navigateTo,
       getCurrentUser: () => currentUser,
+      getActiveItem: () => bottomNavIdForRoute(),
     });
     let currentUser: {
       username: string;
@@ -460,6 +474,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Create/update the mobile bottom nav with the signed-in user
           (await ensureBottomNav(bottomNavDeps())).updateUser(currentUser);
+          // The bar is created lazily during this check, after navigateTo()
+          // already asked for a sync, so re-apply the current route.
+          syncBottomNavActiveItem();
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           refreshNotificationBadges();
@@ -493,6 +510,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Create/update the mobile bottom nav for the guest state
       (await ensureBottomNav(bottomNavDeps())).updateUser(null);
+      syncBottomNavActiveItem();
 
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
@@ -609,12 +627,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Close mobile nav if open
       closeLeftNav();
 
-      // Sync active item on the mobile bottom nav
-      const syncedNav = getBottomNav();
-      if (syncedNav) {
-        const navId = viewToBottomNavId(view);
-        if (navId) syncedNav.setActiveItem(navId);
-      }
+      // Sync active item on the mobile bottom nav. An empty id clears the
+      // highlight for views that have no tab (Maps, Translate, Mail, ...);
+      // skipping the call would leave the previous tab lit.
+      syncBottomNavActiveItem(view);
 
       {
         // Auth guard for protected routes

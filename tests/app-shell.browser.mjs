@@ -107,6 +107,7 @@ const GUEST_STUBS = {
     body: { results: [{ username: 'quoted', display_name: 'Quoted', avatar_key: null }] },
   },
   '/api/tags/suggest': { body: { tags: [{ tag: 'flaxia', count: 12 }] } },
+  '/api/games': { body: { games: [], next_cursor: null } },
 };
 
 // Same stubs, but the feed is one post whose image arrives late.
@@ -820,5 +821,51 @@ test('layout stays put while async panels and media settle (CLS / LCP budget)', 
       );
       await page.close();
     }
+  });
+});
+
+test('the bottom nav follows the route instead of keeping the Arcade tab', { timeout: 120_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/arcade`, SIGNED_IN_STUBS, {
+      width: 390,
+      height: 844,
+    });
+
+    await page.waitForSelector('.bottom-nav', { state: 'attached', timeout: 30_000 });
+
+    const activeTabs = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('.bottom-nav-item--active')].map((item) => item.getAttribute('data-nav-id')),
+      );
+    const navigateTo = async (path) => {
+      await page.evaluate((target) => {
+        window.history.pushState({}, '', target);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }, path);
+      // The router renders lazily (Maps pulls the MapLibre chunk).
+      await page.waitForTimeout(1500);
+    };
+
+    // The bar is created during the first auth check, after the initial
+    // navigateTo(); it must still start on the Arcade tab.
+    assert.deepEqual(await activeTabs(), ['arcade'], 'initial /arcade should light the Arcade tab');
+
+    // Maps has no tab: the highlight has to clear, not stay on Arcade.
+    await navigateTo('/maps');
+    assert.deepEqual(await activeTabs(), [], 'Maps must not keep the Arcade tab lit');
+
+    await navigateTo('/translate');
+    assert.deepEqual(await activeTabs(), [], 'Translate must not keep the Arcade tab lit');
+
+    await navigateTo('/home');
+    assert.deepEqual(await activeTabs(), ['home']);
+
+    await navigateTo('/arcade');
+    assert.deepEqual(await activeTabs(), ['arcade']);
+
+    await navigateTo('/explore');
+    assert.deepEqual(await activeTabs(), ['explore']);
+
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
   });
 });

@@ -267,6 +267,14 @@ Implemented:
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
   navigation cannot be overwritten by an older one;
+- the mobile bottom bar is a single global instance, so every navigation calls
+  `setActiveItem(viewToBottomNavId(view))`. Views with no tab (Maps, Translate,
+  Mail, Admin, Docs, Download, legal, auth) return `''` and the bar clears
+  instead of keeping the previous tab; the bar is created lazily during the
+  first auth check, so it is re-synced right after creation (Arcade no longer
+  starts on Home). `tests/render/view-nav.test.ts` covers the mapping and
+  `tests/app-shell.browser.mjs` drives Arcade → Maps → Translate → Home in a
+  real browser;
 - the whole current view is parked in a hidden in-document host when opening a
   thread or Arcade, then restored without rebuilding. Iframes keep their
   browsing context and the timeline scroll position is preserved;
