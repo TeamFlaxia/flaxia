@@ -9,6 +9,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
@@ -18,6 +19,16 @@ export interface ExplorePageProps {
   tag?: string;
   sandboxOrigin: string;
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+}
+
+interface ExploreUser {
+  id: string;
+  username: string;
+  display_name?: string;
+  avatar_key?: string;
+  badge_type?: string | null;
+  name_color?: string | null;
+  bio?: string;
 }
 
 interface ArcadeGame {
@@ -42,15 +53,7 @@ export class ExplorePage {
   private props: ExplorePageProps;
   private posts: Post[] = [];
   private arcadePosts: ArcadeGame[] = [];
-  private userSuggestions: Array<{
-    id: string;
-    username: string;
-    display_name?: string;
-    avatar_key?: string;
-    badge_type?: string | null;
-    name_color?: string | null;
-    bio?: string;
-  }> = [];
+  private userSuggestions: ExploreUser[] = [];
   private cursor?: string;
   private loading = false;
   private hasMore = true;
@@ -65,9 +68,22 @@ export class ExplorePage {
   private static readonly MAX_HISTORY = 10;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private postUpdatedHandler?: (e: Event) => void;
+  private postsSignal: Signal<Post[]>;
+  private arcadeSignal: Signal<ArcadeGame[]>;
+  private usersSignal: Signal<ExploreUser[]>;
+  private postsHost!: HTMLElement;
+  private arcadeHost!: HTMLElement;
+  private usersHost!: HTMLElement;
+  private usersEmpty!: HTMLElement;
+  private postsMount!: Mounted;
+  private arcadeMount!: Mounted;
+  private usersMount!: Mounted;
 
   constructor(props: ExplorePageProps) {
     this.props = props;
+    this.postsSignal = signal<Post[]>([]);
+    this.arcadeSignal = signal<ArcadeGame[]>([]);
+    this.usersSignal = signal<ExploreUser[]>([]);
     this.infiniteScroll = createInfiniteScroll({
       onLoadMore: () => this.loadMorePosts(),
       canLoadMore: () => !this.loading && this.hasMore,
@@ -111,6 +127,7 @@ export class ExplorePage {
       const postsContainer = document.createElement('div');
       postsContainer.className = 'explore-posts';
       container.appendChild(postsContainer);
+      this.setupPostsHost(postsContainer);
     } else {
       const contentContainer = document.createElement('div');
       contentContainer.className = 'explore-content';
@@ -122,6 +139,9 @@ export class ExplorePage {
       const postsContainer = document.createElement('div');
       postsContainer.className = 'explore-posts';
       contentContainer.appendChild(postsContainer);
+      this.setupPostsHost(postsContainer);
+      this.setupArcadeHost(postsContainer);
+      this.setupUsersHost(postsContainer);
 
       container.appendChild(contentContainer);
     }
@@ -146,6 +166,69 @@ export class ExplorePage {
     }
 
     return container;
+  }
+
+  private setupPostsHost(container: HTMLElement): void {
+    this.postsHost = document.createElement('div');
+    container.appendChild(this.postsHost);
+    this.postsMount = mount(this.postsHost, () =>
+      each(
+        () => this.postsSignal(),
+        (post) => post.id,
+        (post) => {
+          const value = post();
+          const card = createPostCard({
+            post: value,
+            sandboxOrigin: this.props.sandboxOrigin,
+            currentUser: this.props.currentUser || undefined,
+            depth: value.depth,
+          });
+          this.postCards.set(value.id, card);
+          return legacy(card.getElement(), () => {
+            card.destroy();
+            this.postCards.delete(value.id);
+          });
+        },
+      ),
+    );
+  }
+
+  private setupArcadeHost(container: HTMLElement): void {
+    this.arcadeHost = document.createElement('div');
+    this.arcadeHost.hidden = true;
+    container.appendChild(this.arcadeHost);
+    this.arcadeMount = mount(this.arcadeHost, () =>
+      each(
+        () => this.arcadeSignal(),
+        (game) => game.postId,
+        (game) => legacy(this.createArcadeRow(game())),
+      ),
+    );
+  }
+
+  private setupUsersHost(container: HTMLElement): void {
+    this.usersHost = document.createElement('div');
+    this.usersHost.hidden = true;
+    container.appendChild(this.usersHost);
+    this.usersMount = mount(this.usersHost, () =>
+      each(
+        () => this.usersSignal(),
+        (user) => user.id,
+        (user) => legacy(this.createUserRow(user())),
+      ),
+    );
+
+    this.usersEmpty = document.createElement('div');
+    this.usersEmpty.className = 'page-empty';
+    this.usersEmpty.hidden = true;
+    const icon = document.createElement('span');
+    icon.className = 'page-empty-icon';
+    const title = document.createElement('p');
+    title.className = 'page-empty-title fx-display';
+    title.textContent = t('explore.no_users');
+    this.usersEmpty.appendChild(icon);
+    this.usersEmpty.appendChild(title);
+    container.appendChild(this.usersEmpty);
   }
 
   private createSearchSection(): HTMLElement {
@@ -634,14 +717,12 @@ export class ExplorePage {
       trendingTags.style.display = filter === 'posts' ? 'block' : 'none';
     }
 
-    // Reset and load content for the new filter
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (postsContainer) {
-      postsContainer.innerHTML = '';
-    }
-
     // If in tag view, tag view only shows posts
     if (this.props.tag && filter !== 'posts') {
+      if (this.postsHost) this.postsHost.hidden = true;
+      if (this.arcadeHost) this.arcadeHost.hidden = true;
+      if (this.usersHost) this.usersHost.hidden = true;
+      if (this.usersEmpty) this.usersEmpty.hidden = true;
       const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement;
       if (loadingElement) {
         loadingElement.style.display = 'block';
@@ -660,7 +741,14 @@ export class ExplorePage {
     this.userSuggestions = [];
     this.cursor = undefined;
     this.hasMore = true;
-    this.postCards.clear();
+
+    this.postsSignal.set([]);
+    this.arcadeSignal.set([]);
+    this.usersSignal.set([]);
+    if (this.postsHost) this.postsHost.hidden = filter !== 'posts';
+    if (this.arcadeHost) this.arcadeHost.hidden = filter !== 'arcade';
+    if (this.usersHost) this.usersHost.hidden = filter !== 'users';
+    if (this.usersEmpty) this.usersEmpty.hidden = true;
 
     void this.loadContent();
   }
@@ -738,30 +826,7 @@ export class ExplorePage {
   }
 
   private renderPosts(): void {
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (!postsContainer) return;
-
-    // If initial load, clear container
-    if (this.posts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
-      postsContainer.innerHTML = '';
-      this.postCards.clear();
-    }
-
-    const fragment = document.createDocumentFragment();
-    const startIndex = postsContainer.children.length;
-
-    this.posts.slice(startIndex).forEach((post) => {
-      const postCard = createPostCard({
-        post,
-        sandboxOrigin: this.props.sandboxOrigin,
-        currentUser: this.props.currentUser || undefined,
-        depth: post.depth,
-      });
-      this.postCards.set(post.id, postCard);
-      fragment.appendChild(postCard.getElement());
-    });
-
-    postsContainer.appendChild(fragment);
+    this.postsSignal.set([...this.posts]);
   }
 
   private renderTrendingTags(tags: Array<{ tag: string; count: number; percentage?: number }>): void {
@@ -815,132 +880,102 @@ export class ExplorePage {
   }
 
   private renderArcadePosts(): void {
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (!postsContainer) return;
+    this.arcadeSignal.set([...this.arcadePosts]);
+  }
 
-    if (this.arcadePosts.length === postsContainer.children.length && postsContainer.children.length > 0) {
-      return;
+  private createArcadeRow(game: ArcadeGame): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'explore-arcade-row';
+    row.onclick = () => {
+      pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
+    };
+
+    const thumb = document.createElement('div');
+    thumb.className = 'explore-arcade-thumb';
+
+    if (game.thumbnailKey) {
+      const img = document.createElement('img');
+      img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
+      img.alt = '';
+      img.loading = 'lazy';
+      img.width = 180;
+      img.height = 101;
+      thumb.appendChild(img);
+    } else {
+      const fallback = document.createElement('div');
+      fallback.style.cssText =
+        'width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+      fallback.textContent = '🎮';
+      thumb.appendChild(fallback);
     }
 
-    if (postsContainer.children.length === 0 || this.arcadePosts.length <= postsContainer.children.length) {
-      if (this.arcadePosts.length <= 10) {
-        postsContainer.innerHTML = '';
-      }
-    }
+    const info = document.createElement('div');
+    info.className = 'explore-arcade-info';
 
-    const fragment = document.createDocumentFragment();
-    const startIndex = postsContainer.children.length;
+    const title = document.createElement('div');
+    title.className = 'explore-arcade-title';
+    title.textContent = game.title;
 
-    this.arcadePosts.slice(startIndex).forEach((game) => {
-      const row = document.createElement('div');
-      row.className = 'explore-arcade-row';
-      row.onclick = () => {
-        pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
-      };
+    const meta = document.createElement('div');
+    meta.className = 'explore-arcade-meta';
 
-      const thumb = document.createElement('div');
-      thumb.className = 'explore-arcade-thumb';
+    const author = document.createElement('span');
+    author.textContent = `@${game.username}`;
 
-      if (game.thumbnailKey) {
-        const img = document.createElement('img');
-        img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
-        img.alt = '';
-        img.loading = 'lazy';
-        img.width = 180;
-        img.height = 101;
-        thumb.appendChild(img);
-      } else {
-        const fallback = document.createElement('div');
-        fallback.style.cssText =
-          'width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
-        fallback.textContent = '🎮';
-        thumb.appendChild(fallback);
-      }
+    const engagement = document.createElement('span');
+    const freshStr = Number.isNaN(game.freshCount) ? '0' : formatCount(game.freshCount);
+    engagement.textContent = `${freshStr} 💚`;
 
-      const info = document.createElement('div');
-      info.className = 'explore-arcade-info';
+    meta.appendChild(author);
+    meta.appendChild(engagement);
+    info.appendChild(title);
+    info.appendChild(meta);
 
-      const title = document.createElement('div');
-      title.className = 'explore-arcade-title';
-      title.textContent = game.title;
-
-      const meta = document.createElement('div');
-      meta.className = 'explore-arcade-meta';
-
-      const author = document.createElement('span');
-      author.textContent = `@${game.username}`;
-
-      const engagement = document.createElement('span');
-      const freshStr = Number.isNaN(game.freshCount) ? '0' : formatCount(game.freshCount);
-      engagement.textContent = `${freshStr} 💚`;
-
-      meta.appendChild(author);
-      meta.appendChild(engagement);
-      info.appendChild(title);
-      info.appendChild(meta);
-
-      row.appendChild(thumb);
-      row.appendChild(info);
-      fragment.appendChild(row);
-    });
-
-    postsContainer.appendChild(fragment);
+    row.appendChild(thumb);
+    row.appendChild(info);
+    return row;
   }
 
   private renderUserSuggestions(): void {
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (!postsContainer) return;
-    postsContainer.innerHTML = '';
+    this.usersSignal.set([...this.userSuggestions]);
+    this.usersHost.hidden = this.userSuggestions.length === 0;
+    this.usersEmpty.hidden = this.userSuggestions.length > 0;
+  }
 
-    if (this.userSuggestions.length === 0) {
-      const msg = document.createElement('div');
-      msg.className = 'page-empty';
-      const icon = document.createElement('span');
-      icon.className = 'page-empty-icon';
-      const title = document.createElement('p');
-      title.className = 'page-empty-title fx-display';
-      title.textContent = t('explore.no_users');
-      msg.appendChild(icon);
-      msg.appendChild(title);
-      postsContainer.appendChild(msg);
-      return;
+  private createUserRow(user: ExploreUser): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'explore-user-row';
+    item.onclick = () => {
+      window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
+    };
+
+    const avatar = document.createElement('div');
+    avatar.className = 'explore-avatar';
+    if (user.avatar_key) {
+      avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
     }
+    if (!user.avatar_key) {
+      avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
+    }
+    attachPlusBadge(avatar, user.badge_type);
 
-    this.userSuggestions.forEach((user) => {
-      const item = document.createElement('div');
-      item.className = 'explore-user-row';
-      item.onclick = () => {
-        window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
-      };
+    const userInfo = document.createElement('div');
+    userInfo.className = 'explore-user-info';
+    const usernameEl = document.createElement('div');
+    usernameEl.className = 'explore-user-name';
+    usernameEl.textContent = `@${user.username}`;
+    const displayNameEl = document.createElement('div');
+    displayNameEl.className = 'explore-user-display';
+    displayNameEl.textContent = user.display_name || '';
+    applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
-      const avatar = document.createElement('div');
-      avatar.className = 'explore-avatar';
-      if (user.avatar_key) {
-        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
-      }
-      if (!user.avatar_key) {
-        avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
-      }
-      attachPlusBadge(avatar, user.badge_type);
-
-      const userInfo = document.createElement('div');
-      userInfo.className = 'explore-user-info';
-      const usernameEl = document.createElement('div');
-      usernameEl.className = 'explore-user-name';
-      usernameEl.textContent = `@${user.username}`;
-      const displayNameEl = document.createElement('div');
-      displayNameEl.className = 'explore-user-display';
-      displayNameEl.textContent = user.display_name || '';
-      applyNameColor(displayNameEl, user.name_color, user.badge_type);
-
-      userInfo.appendChild(usernameEl);
-      userInfo.appendChild(displayNameEl);
-      item.appendChild(avatar);
-      item.appendChild(userInfo);
-      postsContainer.appendChild(item);
-    });
+    userInfo.appendChild(usernameEl);
+    userInfo.appendChild(displayNameEl);
+    item.appendChild(avatar);
+    item.appendChild(userInfo);
+    return item;
   }
 
   private updateLoadingState(isLoading: boolean): void {
@@ -1013,17 +1048,7 @@ export class ExplorePage {
 
   private handleNewPost(post: Post): void {
     this.posts = [post, ...this.posts];
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (postsContainer) {
-      postsContainer.insertBefore(
-        createPostCard({
-          post,
-          sandboxOrigin: this.props.sandboxOrigin,
-          currentUser: this.props.currentUser || undefined,
-        }).getElement(),
-        postsContainer.firstChild,
-      );
-    }
+    this.postsSignal.set([...this.posts]);
     this.updateTagCount();
   }
 
@@ -1042,7 +1067,9 @@ export class ExplorePage {
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
-    this.postCards.forEach((card) => void card.destroy());
+    this.postsMount?.dispose();
+    this.arcadeMount?.dispose();
+    this.usersMount?.dispose();
     this.postCards.clear();
     this.infiniteScroll.disconnect();
   }

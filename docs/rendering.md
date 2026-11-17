@@ -202,6 +202,9 @@ Implemented:
   keyed list, so a new query or filter change updates items in place instead of
   clearing the content area; the horizontal and grid Arcade variants share the
   same arcade signal;
+- `ExplorePage` keeps posts, Arcade games and user suggestions in three keyed
+  hosts. Post cards are wrapped with `legacy()` and disposed on filter change or
+  unmount, while tag pages reuse the same post list;
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer
