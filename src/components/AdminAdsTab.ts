@@ -2,6 +2,7 @@ import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { showToast } from '../lib/toast.js';
 
 export interface AdminAd {
@@ -28,6 +29,10 @@ export interface AdminAdsTabProps {
 export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
   let element: HTMLElement;
   let ads: AdminAd[] = [];
+  const adsSignal: Signal<AdminAd[]> = signal<AdminAd[]>([]);
+  let adsMount: Mounted | undefined;
+  let adsTable: HTMLElement | undefined;
+  let adsEmpty: HTMLElement | undefined;
   let everyN = 8;
   let modalOpen = false;
   let unregisterModalFn: (() => void) | null = null;
@@ -248,6 +253,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     return section;
   };
 
+  const refreshAdsRows = () => {
+    adsSignal.set([...ads]);
+    if (adsTable) adsTable.hidden = ads.length === 0;
+    if (adsEmpty) adsEmpty.hidden = ads.length > 0;
+  };
+
   const createAdsTable = () => {
     const section = document.createElement('div');
     section.style.cssText = 'margin-bottom: 24px;';
@@ -286,15 +297,6 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     title.appendChild(newAdBtn);
 
-    if (ads.length === 0) {
-      const empty = document.createElement('div');
-      empty.textContent = t('admin_ads.no_ads');
-      empty.style.cssText =
-        'color: #64748b; font-size: 14px; padding: 24px; text-align: center; background: #1e293b; border-radius: 8px;';
-      section.appendChild(empty);
-      return section;
-    }
-
     const table = document.createElement('div');
     table.style.cssText = `
       background: #1e293b;
@@ -328,8 +330,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `;
     table.appendChild(header);
 
-    // Rows
-    ads.forEach((ad) => {
+    const buildAdRow = (ad: AdminAd): HTMLElement => {
       const row = document.createElement('div');
       row.style.cssText = `
         display: grid;
@@ -380,8 +381,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const success = await updateAdActive(ad.id, newActive);
         if (success) {
           ad.active = newActive ? 1 : 0;
-          active.textContent = newActive ? t('admin_ads.active_yes') : t('admin_ads.active_no');
-          active.style.background = newActive ? '#065f46' : '#dc2626';
+          refreshAdsRows();
         }
       });
       row.appendChild(active);
@@ -470,16 +470,34 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const success = await deleteAd(ad.id);
         if (success) {
           ads = ads.filter((a) => a.id !== ad.id);
-          render();
+          refreshAdsRows();
         }
       });
       actions.appendChild(deleteBtn);
 
       row.appendChild(actions);
-      table.appendChild(row);
-    });
+      return row;
+    };
 
+    const rowsHost = document.createElement('div');
+    table.appendChild(rowsHost);
     section.appendChild(table);
+
+    adsTable = table;
+    adsEmpty = document.createElement('div');
+    adsEmpty.textContent = t('admin_ads.no_ads');
+    adsEmpty.style.cssText =
+      'color: #64748b; font-size: 14px; padding: 24px; text-align: center; background: #1e293b; border-radius: 8px;';
+    section.appendChild(adsEmpty);
+
+    adsMount = mount(rowsHost, () =>
+      each(
+        () => adsSignal(),
+        (ad) => `${ad.id}:${ad.active ? '1' : '0'}`,
+        (ad) => legacy(buildAdRow(ad())),
+      ),
+    );
+    refreshAdsRows();
     return section;
   };
 
@@ -934,6 +952,8 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
   };
 
   const render = async () => {
+    adsMount?.dispose();
+    adsMount = undefined;
     element.innerHTML = '';
 
     // Settings section
@@ -964,6 +984,8 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       await render();
     },
     destroy: () => {
+      adsMount?.dispose();
+      adsMount = undefined;
       if (element && element.parentNode) {
         element.parentNode.removeChild(element);
       }

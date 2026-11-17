@@ -236,6 +236,9 @@ Implemented:
   row through the signal, and the empty state is toggled outside the list;
 - AdminAlertsTab keys report rows by alert id. Hide/dismiss removes only the
   affected row, while the NSFW and embedding controls stay outside the list;
+- AdminAdsTab keys ad rows by `id:active-state`. Toggling active recreates only
+  that row, and deleting removes it through the signal; the settings section and
+  modal remain outside the keyed list;
 - Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
   are still unlayered.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
