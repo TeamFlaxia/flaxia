@@ -1,6 +1,7 @@
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { createPageHeader } from '../lib/page-header.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 
 export interface Notification {
   id: string;
@@ -47,9 +48,12 @@ export interface NotificationsPageProps {
 export class NotificationsPage {
   private element: HTMLElement;
   private props: NotificationsPageProps;
+  private notificationsSignal: Signal<Notification[]>;
+  private listMount?: Mounted;
 
   constructor(props: NotificationsPageProps) {
     this.props = props;
+    this.notificationsSignal = signal<Notification[]>(props.notifications);
     this.element = this.createElement();
   }
 
@@ -92,10 +96,13 @@ export class NotificationsPage {
       const list = document.createElement('div');
       list.className = 'notifications-list';
 
-      this.props.notifications.forEach((notification) => {
-        const row = this.createNotificationRow(notification);
-        list.appendChild(row);
-      });
+      this.listMount = mount(list, () =>
+        each(
+          () => this.notificationsSignal(),
+          (notification) => notification.id,
+          (notification) => legacy(this.createNotificationRow(notification())),
+        ),
+      );
 
       container.appendChild(list);
     }
@@ -384,6 +391,8 @@ export class NotificationsPage {
   }
 
   public destroy(): void {
+    this.listMount?.dispose();
+    this.listMount = undefined;
     this.element.remove();
   }
 }
