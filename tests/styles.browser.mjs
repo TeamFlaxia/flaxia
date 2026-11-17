@@ -36,6 +36,7 @@ const html = `<!doctype html>
   <div class="fx-box" id="ratio-box" style="width:320px; --fx-ratio:16 / 9">
     <div class="fx-box__inner"></div>
   </div>
+  <div class="post-stage post-stage--zip fx-box" id="stage-box" style="width:320px; --fx-ratio:16 / 9"></div>
 </div>
 </body>
 </html>`;

@@ -119,3 +119,12 @@ html {
   background: var(--bg-tertiary, #f1f5f9);
   contain: layout paint;
 }
+
+/* PostStage ZIP/SWF: replace the legacy padding-bottom aspect box with the
+   shared reserved box. The higher-specificity rule lives in the primitives
+   layer, so it wins over .post-stage--zip / --flash without !important. */
+.post-stage.fx-box {
+  padding-bottom: 0;
+  aspect-ratio: var(--fx-ratio, auto);
+  min-block-size: 0;
+}

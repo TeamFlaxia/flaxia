@@ -518,6 +518,17 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
 
   setStageClass(container, stageClassFor(props.post));
 
+  // ZIP and SWF stages reserve their aspect ratio with fx-box instead of the
+  // legacy padding-bottom trick. Other media keep their existing sizing.
+  const boxRatio = isZipGame(props.post.payload_key)
+    ? '16 / 9'
+    : props.post.swf_key?.startsWith('swf/')
+      ? '4 / 3'
+      : null;
+  container.classList.toggle('fx-box', boxRatio !== null);
+  if (boxRatio) container.style.setProperty('--fx-ratio', boxRatio);
+  else container.style.removeProperty('--fx-ratio');
+
   if (!hasMedia) {
     disposeLayers(state);
     return;
