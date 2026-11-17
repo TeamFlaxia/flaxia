@@ -272,6 +272,13 @@ Implemented:
   and its blob URLs survive; `PostCard.destroy()` releases the handles;
 - `Timeline` reuses cards by post id and moves only the nodes whose position
   changed; ads and link previews reserve their box before loading;
+- `PostHeader` and `QuotedPostCard` compose their markup through `mount`/`html`
+  and apply the shared helpers (plus badge, name colour, title badge, avatar
+  loading) to `ref`-captured nodes. `PostActions` renders its reaction chips as
+  a keyed `each` (emoji key); the action buttons and the positioned reload
+  dropdown stay imperative because the dropdown owns document-level pointer and
+  scroll listeners plus focus restore, and `PostCard` rebuilds the row only when
+  its signature changes;
 - the full-page loader was removed; `tests/render/guards.test.ts` prevents it
   and `#app.innerHTML = ''` from coming back;
 - font loading uses `display=optional`, and desktop scrollbars reserve their
@@ -309,7 +316,11 @@ APP_BROWSER=firefox npm run test:app:browser
 
 The renderer browser test checks keyed element identity, text-node identity,
 in-place iframe browsing-context preservation, hidden-iframe preservation and
-layout shift. The styles smoke test loads the real build output, asserts both
+layout shift. The app smoke boots the real build at 1400x1000 (guest shell +
+a stubbed timeline post for `PostHeader`/`PostActions`/`QuotedPostCard`, and
+`/settings` for a signed-in user) and at 390x844 (bottom nav on the viewport
+edge, off-canvas left drawer, drawer open/close, right rail hidden, no
+horizontal overflow). The styles smoke test loads the real build output, asserts both
 `legacy` and `primitives` layers, verifies that `primitives` wins on a
 same-specificity probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with

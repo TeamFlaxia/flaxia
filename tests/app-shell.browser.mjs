@@ -47,13 +47,48 @@ const CONTENT_TYPES = {
   '.wasm': 'application/wasm',
 };
 
+const TIMELINE_POST = {
+  id: 'p1',
+  user_id: 'u2',
+  username: 'author',
+  display_name: 'Author',
+  text: 'Hello from the built app smoke test.',
+  hashtags: '',
+  created_at: new Date(Date.now() - 60_000).toISOString(),
+  fresh_count: 3,
+  reply_count: 1,
+  reload_count: 0,
+  bookmark_count: 0,
+  impressions: 42,
+  depth: 0,
+  quoted_post_id: 'q1',
+  quoted_post: {
+    id: 'q1',
+    user_id: 'u3',
+    username: 'quoted',
+    display_name: 'Quoted',
+    text: 'An older quoted post.',
+    hashtags: '',
+    created_at: new Date(Date.now() - 120_000).toISOString(),
+  },
+  reactions: [
+    { emoji: '💚', count: 2, reacted: false },
+    { emoji: '🎉', count: 1, reacted: true },
+  ],
+};
+
+const TIMELINE_RESPONSE = { body: { posts: [TIMELINE_POST], nextCursor: null } };
+
 const GUEST_STUBS = {
   '/api/me': { status: 401, body: {} },
-  '/api/posts': { body: { posts: [], nextCursor: null } },
-  '/api/posts/recommended': { body: { posts: [], nextCursor: null } },
+  '/api/posts': TIMELINE_RESPONSE,
+  '/api/posts/recommended': TIMELINE_RESPONSE,
   '/api/trending': { body: { tags: [] } },
   '/api/users/suggested': { body: { users: [] } },
   '/api/ads': { body: { ads: [] } },
+  '/api/ads/active': { body: { ads: [] } },
+  '/api/tags/trending': { body: { tags: [] } },
+  '/api/users/suggestions': { body: { users: [] } },
 };
 
 const SIGNED_IN_STUBS = {
@@ -122,8 +157,8 @@ async function launchBrowser() {
  * Third-party requests (fonts, AdSense, the crowd node bundle) are aborted: the
  * app must render without them.
  */
-async function openApp(browser, url, stubs) {
-  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+async function openApp(browser, url, stubs, viewport = { width: 1400, height: 1000 }) {
+  const page = await browser.newPage({ viewport });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
 
@@ -221,6 +256,34 @@ test('the built app boots into the layered three-column shell', { timeout: 90_00
     assert.equal(result.bodyBackground, 'rgb(255, 255, 255)');
     assert.equal(result.textColor, 'rgb(15, 23, 42)');
 
+    // The stubbed timeline post exercises PostCard's header, actions and quote.
+    await page.waitForSelector('.post-card', { timeout: 20_000 });
+    const post = await page.evaluate(() => ({
+      username: document.querySelector('.post-card .post-username')?.textContent?.trim() ?? '',
+      displayName: document.querySelector('.post-card .post-display-name')?.textContent?.trim() ?? '',
+      timestamp: !!document.querySelector('.post-card .post-timestamp'),
+      freshButton: !!document.querySelector('.post-card .action-button--fresh'),
+      replyButton: !!document.querySelector('.post-card .action-button--reply'),
+      bookmarkButton: !!document.querySelector('.post-card .action-button--bookmark'),
+      impressionCount:
+        document.querySelector('.post-card .action-button--impressions .action-count')?.textContent?.trim() ?? '',
+      reactionChips: document.querySelectorAll('.post-card .post-reaction-chip').length,
+      reactionAdd: !!document.querySelector('.post-card .post-reaction-add'),
+      quotedText: document.querySelector('.post-card .quoted-post-text')?.textContent?.trim() ?? '',
+      quotedAuthor: document.querySelector('.post-card .quoted-post-username')?.textContent?.trim() ?? '',
+    }));
+
+    assert.equal(post.username, '@author');
+    assert.equal(post.displayName, 'Author');
+    assert.ok(post.timestamp, 'post timestamp missing');
+    assert.ok(post.freshButton && post.replyButton && post.bookmarkButton, 'action buttons missing');
+    // PostCard records a local impression when the card enters the timeline.
+    assert.match(post.impressionCount, /^4[23]$/);
+    assert.equal(post.reactionChips, 2);
+    assert.ok(post.reactionAdd, 'add-reaction button missing');
+    assert.match(post.quotedText, /An older quoted post/);
+    assert.equal(post.quotedAuthor, '@quoted');
+
     // No horizontal overflow at desktop width.
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -309,6 +372,108 @@ test('/settings mounts the engine-rendered sections for a signed-in user', { tim
     assert.ok(result.hasPlusPlan, 'Flaxia+ plan card missing');
     assert.ok(result.hasBillingRow, 'billing history row missing');
     assert.ok(result.crowdStatus.length > 0, 'crowd status text missing');
+
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('the mobile viewport keeps the bottom nav and the left drawer', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const viewport = { width: 390, height: 844 };
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, GUEST_STUBS, viewport);
+
+    await page.waitForSelector('.main-container', { timeout: 30_000 });
+    // The bar is created by the deferred nav module after the first auth check.
+    await page.waitForSelector('.bottom-nav', { timeout: 30_000 });
+
+    const layout = await page.evaluate(() => {
+      const rect = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+          width: bounds.width,
+          height: bounds.height,
+        };
+      };
+      const nav = document.querySelector('.bottom-nav');
+      const leftNav = document.querySelector('.left-nav');
+      return {
+        bottomNav: rect('.bottom-nav'),
+        bottomNavDisplay: nav ? getComputedStyle(nav).display : null,
+        bottomNavItems: document.querySelectorAll('.bottom-nav-item').length,
+        leftNav: rect('.left-nav'),
+        leftNavTransform: leftNav ? getComputedStyle(leftNav).transform : null,
+        content: rect('.timeline, .main-content'),
+        rightPanelDisplay: (() => {
+          const panel = document.querySelector('.right-panel');
+          return panel ? getComputedStyle(panel).display : null;
+        })(),
+        overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+
+    assert.ok(layout.bottomNav, 'bottom nav missing');
+    assert.equal(layout.bottomNavDisplay, 'flex');
+    assert.ok(layout.bottomNavItems >= 3, `bottom nav items: ${layout.bottomNavItems}`);
+    assert.ok(
+      Math.abs(layout.bottomNav.bottom - viewport.height) < 1,
+      `bottom nav should sit on the viewport edge: ${layout.bottomNav.bottom}`,
+    );
+    // A classic scrollbar can shrink the fixed bar by its width; it must still
+    // cover the viewport rather than collapsing to its content.
+    assert.ok(
+      layout.bottomNav.width >= viewport.width - 20,
+      `bottom nav should span the viewport: ${layout.bottomNav.width}`,
+    );
+
+    // The left nav is an off-canvas drawer on mobile.
+    assert.ok(layout.leftNav, 'left nav missing');
+    assert.ok(layout.leftNav.right <= 1, `drawer should start off-canvas: right=${layout.leftNav.right}`);
+
+    // The right rail is hidden, and nothing overflows horizontally.
+    assert.equal(layout.rightPanelDisplay, 'none');
+    assert.ok(layout.overflow <= 1, `mobile layout overflows by ${layout.overflow}px`);
+    assert.ok(layout.content, 'content column missing');
+    assert.ok(
+      layout.content.width <= viewport.width + 1,
+      `content column wider than the viewport: ${layout.content.width}`,
+    );
+
+    // Opening the drawer slides it in; the overlay closes it again. The slide
+    // is a 300ms CSS transition, so wait it out instead of sampling mid-flight.
+    await page.evaluate(() => {
+      document.dispatchEvent(new CustomEvent('openLeftNav'));
+    });
+    await page.waitForTimeout(500);
+
+    const opened = await page.evaluate(() => {
+      const leftNav = document.querySelector('.left-nav');
+      const overlay = document.querySelector('.left-nav-overlay');
+      return {
+        open: leftNav?.classList.contains('left-nav--open') ?? false,
+        left: leftNav?.getBoundingClientRect().left ?? -1,
+        overlayVisible: overlay?.classList.contains('left-nav-overlay--visible') ?? false,
+      };
+    });
+
+    assert.ok(opened.open, 'drawer did not open');
+    assert.ok(Math.abs(opened.left) < 1, `drawer did not slide in: left=${opened.left}`);
+    assert.ok(opened.overlayVisible, 'drawer overlay stayed hidden');
+
+    await page.evaluate(() => {
+      document.querySelector('.left-nav-overlay')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await page.waitForTimeout(500);
+
+    const closed = await page.evaluate(
+      () => !(document.querySelector('.left-nav')?.classList.contains('left-nav--open') ?? false),
+    );
+    assert.ok(closed, 'drawer did not close from the overlay');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
   });

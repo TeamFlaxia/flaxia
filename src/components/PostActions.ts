@@ -2,6 +2,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { createMenuItem } from '../lib/modal-overlay.js';
+import { each, html, legacy, mount } from '../lib/render/index.ts';
 import { type PostActionsProps, type ReactionSummary } from '../types/post.js';
 import { openStampPicker } from './StampPicker.js';
 
@@ -206,43 +207,54 @@ function createReactionsRow(
   const row = document.createElement('div');
   row.className = 'post-reactions';
 
-  for (const reaction of reactions) {
-    const chip = createReactionChip(reaction, onToggle);
-    chip.dataset.emoji = reaction.emoji;
-    row.appendChild(chip);
-    if (popReaction && reaction.emoji === popReaction) {
-      playOneShotPop(chip);
-    }
-  }
+  // The chips are keyed by emoji. The row is rebuilt by PostCard only when its
+  // signature changes, so this mostly makes the initial render declarative and
+  // keeps the picker button outside the keyed range.
+  mount(
+    row,
+    () =>
+      html`
+      ${each(
+        () => reactions,
+        (reaction) => reaction.emoji,
+        (reaction) => legacy(createReactionChip(reaction(), onToggle, popReaction)),
+      )}
+      <button
+        class="post-reaction-add"
+        aria-label=${t('post.reactions_add')}
+        title=${t('post.reactions_add')}
+      >
+        <span class="post-reaction-add-icon">${icon('smile-plus')}</span>
+      </button>
+    `,
+  );
 
   // Add-reaction button that opens the emoji picker
-  const addButton = document.createElement('button');
-  addButton.className = 'post-reaction-add';
-  addButton.setAttribute('aria-label', t('post.reactions_add'));
-  addButton.setAttribute('title', t('post.reactions_add'));
-  const iconEl = document.createElement('span');
-  iconEl.className = 'post-reaction-add-icon';
-  iconEl.appendChild(icon('smile-plus'));
-  addButton.appendChild(iconEl);
-
-  addButton.addEventListener('click', (e) => {
+  const addButton = row.querySelector<HTMLButtonElement>('.post-reaction-add');
+  addButton?.addEventListener('click', (e) => {
     e.stopPropagation();
     openEmojiPicker(addButton, onToggle);
   });
 
-  row.appendChild(addButton);
-
   return row;
 }
 
-function createReactionChip(reaction: ReactionSummary, onToggle: (emoji: string) => void): HTMLElement {
+function createReactionChip(
+  reaction: ReactionSummary,
+  onToggle: (emoji: string) => void,
+  popReaction?: string,
+): HTMLElement {
   const chip = document.createElement('button');
   chip.className = `post-reaction-chip${reaction.reacted ? ' reacted' : ''}`;
+  chip.dataset.emoji = reaction.emoji;
   chip.setAttribute('aria-pressed', String(reaction.reacted));
   chip.addEventListener('click', (e) => {
     e.stopPropagation();
     onToggle(reaction.emoji);
   });
+  if (popReaction && reaction.emoji === popReaction) {
+    playOneShotPop(chip);
+  }
 
   const emojiSpan = document.createElement('span');
   emojiSpan.className = 'post-reaction-emoji';

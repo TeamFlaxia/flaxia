@@ -3,6 +3,7 @@ import { t } from '../lib/i18n.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
+import { html, mount } from '../lib/render/index.ts';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import { PostHeaderProps } from '../types/post.js';
 
@@ -10,56 +11,17 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   const header = document.createElement('div');
   header.className = 'post-header';
 
-  // Outer element paints the gradient ring; the inner disc holds the
-  // initials or the lazily loaded photo, so the ring survives both.
-  const avatar = document.createElement('div');
-  avatar.className = 'post-avatar';
+  // The avatar ring, name colour and title badge are applied to the rendered
+  // nodes after mount, so the parts that touch shared helpers stay imperative.
+  let avatar!: HTMLElement;
+  let avatarInner!: HTMLElement;
+  let displayName!: HTMLElement;
 
-  const avatarInner = document.createElement('div');
-  avatarInner.className = 'post-avatar-inner';
-
-  // 優先的に初期文字を表示（アバター画像は後で非同期読み込み）
-  const initial = document.createElement('span');
-  initial.className = 'avatar-initial';
-  initial.textContent = props.username.charAt(0).toUpperCase();
-  avatarInner.appendChild(initial);
-
-  avatar.appendChild(avatarInner);
-
-  attachPlusBadge(avatar, props.badge_type);
-
-  // アバター画像は遅延読み込み（テキスト表示を優先）
-  if (props.avatar_url) {
-    scheduleAvatarLoad(() => loadAvatarUrl(avatarInner, props.avatar_url!));
-  } else if (props.avatar_key) {
-    scheduleAvatarLoad(() => loadAvatarImage(avatarInner, props.avatar_key!));
-  }
-
-  const displayName = document.createElement('span');
-  displayName.className = 'post-display-name';
-  displayName.textContent = props.display_name || props.username;
-  applyNameColor(displayName, props.name_color, props.badge_type);
-
-  const username = document.createElement('span');
-  username.className = 'post-username';
-  username.textContent = `@${props.username}`;
-
-  const timestamp = document.createElement('span');
-  timestamp.className = 'post-timestamp';
-  timestamp.textContent = formatTimestamp(props.createdAt);
-  if (props.editedAt) {
-    const editedBadge = document.createElement('span');
-    editedBadge.className = 'post-edited-badge';
-    editedBadge.textContent = t('post.edited');
-    timestamp.appendChild(editedBadge);
-  }
-
-  header.appendChild(avatar);
-  header.appendChild(displayName);
-  header.appendChild(username);
+  const initial = props.username.charAt(0).toUpperCase();
+  const displayNameText = props.display_name || props.username;
+  const timestampText = formatTimestamp(props.createdAt);
   const titleBadge = createUserTitleBadge(props);
-  if (titleBadge) header.appendChild(titleBadge);
-  header.appendChild(timestamp);
+  const editedBadge = props.editedAt ? createEditedBadge() : null;
 
   // Make avatar and names clickable to navigate to profile. A remote actor
   // lives on another instance, so its profile opens there.
@@ -75,23 +37,63 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
       }),
     );
   };
-
-  avatar.addEventListener('click', (e) => {
-    e.stopPropagation();
+  const onProfileClick = (event: Event) => {
+    event.stopPropagation();
     navigateToProfile();
-  });
+  };
 
-  displayName.addEventListener('click', (e) => {
-    e.stopPropagation();
-    navigateToProfile();
-  });
+  mount(
+    header,
+    () => html`
+      <div
+        class="post-avatar"
+        @click=${onProfileClick}
+        ref=${(element: Element | null) => {
+          if (element) avatar = element as HTMLElement;
+        }}
+      >
+        <div
+          class="post-avatar-inner"
+          ref=${(element: Element | null) => {
+            if (element) avatarInner = element as HTMLElement;
+          }}
+        >
+          <span class="avatar-initial">${initial}</span>
+        </div>
+      </div>
+      <span
+        class="post-display-name"
+        @click=${onProfileClick}
+        ref=${(element: Element | null) => {
+          if (element) displayName = element as HTMLElement;
+        }}
+      >
+        ${displayNameText}
+      </span>
+      <span class="post-username" @click=${onProfileClick}>@${props.username}</span>
+      ${titleBadge ?? ''}
+      <span class="post-timestamp">${timestampText}${editedBadge ?? ''}</span>
+    `,
+  );
 
-  username.addEventListener('click', (e) => {
-    e.stopPropagation();
-    navigateToProfile();
-  });
+  attachPlusBadge(avatar, props.badge_type);
+  applyNameColor(displayName, props.name_color, props.badge_type);
+
+  // アバター画像は遅延読み込み（テキスト表示を優先）
+  if (props.avatar_url) {
+    scheduleAvatarLoad(() => loadAvatarUrl(avatarInner, props.avatar_url!));
+  } else if (props.avatar_key) {
+    scheduleAvatarLoad(() => loadAvatarImage(avatarInner, props.avatar_key!));
+  }
 
   return header;
+}
+
+function createEditedBadge(): HTMLElement {
+  const badge = document.createElement('span');
+  badge.className = 'post-edited-badge';
+  badge.textContent = t('post.edited');
+  return badge;
 }
 
 function scheduleAvatarLoad(load: () => void): void {
