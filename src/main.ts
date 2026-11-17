@@ -1,16 +1,4 @@
-import './styles/main.css';
-import './styles/redesign/foundation.css';
-import './styles/redesign/shell.css';
-import './styles/redesign/timeline.css';
-import './styles/redesign/composer.css';
-import './styles/redesign/overlays.css';
-import './styles/redesign/pages.css';
-import './styles/redesign/maps.css';
-import './styles/redesign/mail.css';
-import './styles/redesign/command.css';
-import './styles/redesign/rail.css';
-import './styles/redesign/motion.css';
-import './styles/render/primitives.css';
+import './styles/index.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
 import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';

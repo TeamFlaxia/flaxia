@@ -239,8 +239,10 @@ Implemented:
 - AdminAdsTab keys ad rows by `id:active-state`. Toggling active recreates only
   that row, and deleting removes it through the signal; the settings section and
   modal remain outside the keyed list;
-- Phase 5 CSS layer consolidation remains; legacy `main.css` and `redesign/*`
-  are still unlayered.
+- CSS is loaded through `src/styles/index.css`. Legacy `main.css` and
+  `redesign/*` are in an explicit `legacy` layer; render primitives are in a
+  later `primitives` layer. `main.ts` imports only that entry, and
+  `tests/render/css-layers.test.ts` guards the order.
 - `viewport-fit=cover` so `env(safe-area-inset-*)` reports real values on iOS;
 - navigation builds the next view in a detached staging root and swaps it in one
   `replaceChildren()`, so the content column is not blanked and a newer

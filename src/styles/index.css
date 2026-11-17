@@ -1,0 +1,25 @@
+/**
+ * Phase 5 stylesheet entry.
+ *
+ * Existing styles are unlayered today, which makes cascade order depend on
+ * import order. Keep them in a `legacy` layer while new render primitives live in
+ * a later `primitives` layer. Unlayered rules (for example the small inline
+ * boot styles in index.html) still win, as they did before.
+ *
+ * Layer order, not selector specificity, decides legacy-vs-primitives conflicts.
+ */
+@layer legacy, primitives;
+
+@import "./main.css" layer(legacy);
+@import "./redesign/foundation.css" layer(legacy);
+@import "./redesign/shell.css" layer(legacy);
+@import "./redesign/timeline.css" layer(legacy);
+@import "./redesign/composer.css" layer(legacy);
+@import "./redesign/overlays.css" layer(legacy);
+@import "./redesign/pages.css" layer(legacy);
+@import "./redesign/maps.css" layer(legacy);
+@import "./redesign/mail.css" layer(legacy);
+@import "./redesign/command.css" layer(legacy);
+@import "./redesign/rail.css" layer(legacy);
+@import "./redesign/motion.css" layer(legacy);
+@import "./render/primitives.css" layer(primitives);
