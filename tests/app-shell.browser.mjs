@@ -253,28 +253,31 @@ async function openApp(browser, url, stubs, viewport = { width: 1400, height: 10
     await page.addInitScript(PERFORMANCE_INIT_SCRIPT);
   }
 
-  await page.route('**/*', (route) => {
+  // One handler for every request: WebKit does not consistently apply two
+  // overlapping route globs in the same order as Chromium, so /api requests
+  // could fall through to the static server and receive index.html as JSON.
+  await page.route('**/*', async (route) => {
     const requestUrl = new URL(route.request().url());
-    if (requestUrl.hostname === '127.0.0.1') return route.continue();
-    return route.abort();
-  });
+    if (requestUrl.hostname !== '127.0.0.1') return route.abort();
 
-  await page.route('**/api/**', async (route) => {
-    const requestUrl = new URL(route.request().url());
-    // Media goes through /api/images/*; answer with a real PNG (optionally
-    // delayed) so late image loads can be measured against the reserved box.
-    if (requestUrl.pathname.startsWith('/api/images/')) {
-      if (options.imageDelayMs) {
-        await new Promise((resolve) => setTimeout(resolve, options.imageDelayMs));
+    if (requestUrl.pathname.startsWith('/api/')) {
+      // Media goes through /api/images/*; answer with a real PNG (optionally
+      // delayed) so late image loads are measured against the reserved box.
+      if (requestUrl.pathname.startsWith('/api/images/')) {
+        if (options.imageDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, options.imageDelayMs));
+        }
+        return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
       }
-      return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
+      const stub = stubs[requestUrl.pathname];
+      return route.fulfill({
+        status: stub?.status ?? 200,
+        contentType: 'application/json; charset=utf-8',
+        body: JSON.stringify(stub?.body ?? {}),
+      });
     }
-    const stub = stubs[requestUrl.pathname];
-    return route.fulfill({
-      status: stub?.status ?? 200,
-      contentType: 'application/json; charset=utf-8',
-      body: JSON.stringify(stub?.body ?? {}),
-    });
+
+    return route.continue();
   });
 
   await page.goto(url, { waitUntil: 'load' });
