@@ -1,10 +1,15 @@
 import { Hono } from 'hono';
 import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../../lib/activitypub/actor.ts';
 import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
+import { fetchFederationDocument, isPrivatePeerAllowed } from '../../lib/activitypub/fetch.ts';
+import { importRemoteOutbox, OutboxImportError } from '../../lib/activitypub/import.ts';
 import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
-import { ensureActorKey } from '../../lib/activitypub/keys';
+import { actorSignOptions, ensureActorKey } from '../../lib/activitypub/keys';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { webfingerResponse } from '../../lib/activitypub/webfinger';
+import { checkRateLimit } from '../../lib/rate-limit';
+import { parsePublicHttpUrl } from '../../lib/url-guard';
+import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -421,6 +426,100 @@ app.get('/api/actors/:username/outbox', async (c) => {
   if (current > 1) document.prev = `${collections.outbox}?page=${current - 1}`;
 
   return jsonLd(activityContentType(c.req.header('accept')), document);
+});
+
+/** Resolve `@user@domain` or an actor URL to a canonical actor URL. */
+async function resolveActorUrl(
+  env: Bindings,
+  input: string,
+  signOptions: { privateKeyPem?: string; keyId?: string } = {},
+): Promise<string | null> {
+  const trimmed = input.trim().replace(/^@/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return parsePublicHttpUrl(trimmed).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  const match = trimmed.match(/^([^@]+)@([^@]+)$/);
+  if (!match) return null;
+  const [, username, domain] = match;
+
+  // A federated peer that runs next to this instance may serve plain http.
+  // `fetchFederationDocument` applies the SSRF guard to every hop.
+  const origins = [`https://${domain}`];
+  if (isPrivatePeerAllowed(env, domain)) origins.push(`http://${domain}`);
+
+  for (const origin of origins) {
+    const webfinger = `${origin}/.well-known/webfinger?resource=acct:${encodeURIComponent(username)}@${encodeURIComponent(domain)}`;
+    const response = await fetchFederationDocument(webfinger, env, {
+      headers: { Accept: 'application/jrd+json, application/json' },
+      timeoutMs: 10_000,
+      ...signOptions,
+    });
+    if (!response?.ok) continue;
+    const document = (await response.json().catch(() => null)) as {
+      links?: Array<{ rel?: string; href?: string }>;
+    } | null;
+    const self = document?.links?.find((link) => link.rel === 'self' && typeof link.href === 'string');
+    if (!self?.href) return null;
+    try {
+      return parsePublicHttpUrl(self.href).toString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// POST /api/activitypub/import - import a remote actor's public outbox
+//
+// The outbox is the only place where a remote actor's public history is still
+// readable. Imported Notes are stored with `user_id = ''` (the same shape the
+// inbox uses for remote posts), so the recommendation feed can rank them
+// without pretending a local account wrote them.
+app.post('/api/activitypub/import', requireAuth, requireAdmin, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = (await c.req.json().catch(() => null)) as { actor?: unknown; limit?: unknown } | null;
+  if (!body || typeof body.actor !== 'string' || body.actor.trim() === '') {
+    return c.json({ error: 'actor is required' }, 400);
+  }
+  if (body.limit !== undefined && typeof body.limit !== 'number') {
+    return c.json({ error: 'limit must be a number' }, 400);
+  }
+
+  const allowed = await checkRateLimit(c.env.CACHE, `ap-import:${user.id}`, {
+    maxRequests: 5,
+    windowSeconds: 3600,
+  });
+  if (!allowed) return c.json({ error: 'Rate limit exceeded' }, 429);
+
+  // Outbox and WebFinger requests are signed. Without a key a secure-mode
+  // instance answers 403 and the import would silently store nothing.
+  await ensureActorKey(c.env.DB, user.id);
+  const signOptions = await actorSignOptions(c.env.DB, c.env.BASE_URL, user.username);
+
+  const actorUrl = await resolveActorUrl(c.env, body.actor, signOptions);
+  if (!actorUrl) return c.json({ error: 'Could not resolve actor' }, 400);
+
+  try {
+    const result = await importRemoteOutbox(c.env, {
+      actorUrl,
+      username: user.username,
+      limit: body.limit,
+    });
+    return c.json({ ok: true, ...result });
+  } catch (error) {
+    if (error instanceof OutboxImportError) {
+      return c.json({ error: error.message }, error.status);
+    }
+    console.error('Outbox import failed:', error);
+    return c.json({ error: 'Import failed' }, 502);
+  }
 });
 
 // GET /api/notes/:noteId - ActivityPub Note endpoint (no /api prefix)

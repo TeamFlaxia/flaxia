@@ -10,6 +10,13 @@
  * fragment is escaped before it is re-inserted.
  */
 
+/**
+ * Longest plain-text body a post may contain. Kept in one place because the
+ * `posts.text` column enforces the same limit and remote content is clamped to
+ * it before it is stored.
+ */
+export const MAX_POST_TEXT_LENGTH = 200;
+
 const NAMED_ENTITIES: Record<string, string> = {
   amp: '&',
   lt: '<',

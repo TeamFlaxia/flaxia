@@ -35,16 +35,24 @@ import {
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, type PostMediaInput, screenPostImages, tagPost } from '../../lib/crowd';
+import { type FeedOrigin, mixFeedOrigins } from '../../lib/feed-mix';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../lib/post-visibility';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import {
+  loadRecommendationSourceRows,
+  RECOMMENDATION_ENGAGEMENT_FORMULA,
+  RECOMMENDATION_TRUST_FILTER,
+  RECOMMENDED_SELECT,
+  TRENDING_CANDIDATE_WINDOW_DAYS,
+} from '../../lib/recommendation-sources';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { deleteGameTitlesForPosts, USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
-import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
+import { refreshUserTrustSafe } from '../../lib/trust';
 import {
   enrichPostsForFeed,
   enrichPostsWithPolls,
@@ -538,29 +546,8 @@ posts.get('/posts/trending', async (c) => {
   }
 });
 
-function diversifyPosts(
-  items: Array<{ post: Record<string, unknown>; score: number }>,
-  maxCount: number,
-  maxPerUser: number,
-): Array<{ post: Record<string, unknown>; score: number }> {
-  const userCounts = new Map<string, number>();
-  const result: Array<{ post: Record<string, unknown>; score: number }> = [];
-  for (const item of items) {
-    if (result.length >= maxCount) break;
-    const userId = String(item.post.user_id || '');
-    const count = userCounts.get(userId) || 0;
-    if (count >= maxPerUser) continue;
-    userCounts.set(userId, count + 1);
-    result.push(item);
-  }
-  return result;
-}
-
 // Independent sources keep the feed useful while embeddings are pending or a
 // user has not built an interest profile yet.
-const RECENT_CANDIDATE_WINDOW_HOURS = 72;
-const TRENDING_CANDIDATE_WINDOW_DAYS = 14;
-
 function compareScoredPosts(
   a: { post: Record<string, unknown>; score: number },
   b: { post: Record<string, unknown>; score: number },
@@ -594,11 +581,6 @@ function decayingRecommendationPenalty(
   return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
-  COALESCE(p.reply_count, 0) as reply_count, 
-  COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
-
-const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
 
 async function attachRecommendationVectors(
@@ -639,6 +621,7 @@ async function loadClientRankedCandidatePage(
   asOfMs: number,
   seenIds: Set<string>,
   isArchiveCursor: boolean,
+  cursorOrigin: FeedOrigin,
 ): Promise<{
   posts: Array<Record<string, unknown>>;
   next_cursor: string | null;
@@ -646,8 +629,6 @@ async function loadClientRankedCandidatePage(
   vector_meta: { dim: number; encoding: 'int8' };
   base_scores: Record<string, number>;
 }> {
-  const asOfIso = new Date(asOfMs).toISOString();
-  const asOfUnixSeconds = Math.floor(asOfMs / 1000);
   const vectorMeta = { dim: RECOMMENDATION_VECTOR_DIM, encoding: 'int8' as const };
 
   if (isArchiveCursor) {
@@ -658,55 +639,20 @@ async function loadClientRankedCandidatePage(
     return { ...archive, vectors, vector_meta: vectorMeta, base_scores: baseScores };
   }
 
-  const visibilityFilter = currentUserId
-    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
-    : '';
-  const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
-  const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
-  const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-  const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
-  const sourceLimit = Math.min(limit * 2, 200);
-
-  const [recentResult, trendingResult, followingResult] = await Promise.all([
-    db
-      .prepare(
-        `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
-         LEFT JOIN titles t ON t.id = u.equipped_title_id
-         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
-         ORDER BY p.created_at DESC LIMIT ?`,
-      )
-      .bind(...visibilityParams, recentCutoff, asOfIso, sourceLimit)
-      .all<Record<string, unknown>>(),
-    db
-      .prepare(
-        `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
-         LEFT JOIN titles t ON t.id = u.equipped_title_id
-         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
-         ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
-      )
-      .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
-      .all<Record<string, unknown>>(),
-    currentUserId
-      ? db
-          .prepare(
-            `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
-             LEFT JOIN titles t ON t.id = u.equipped_title_id
-             WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-               AND p.created_at >= ? AND p.created_at <= ?
-               AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-               ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
-             ORDER BY p.created_at DESC LIMIT ?`,
-          )
-          .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, sourceLimit)
-          .all<Record<string, unknown>>()
-      : Promise.resolve(null),
-  ]);
-
-  const recentPosts = recentResult.results ?? [];
-  const trendingPosts = trendingResult.results ?? [];
-  const followingPosts = followingResult?.results ?? [];
+  const sourceLimit = Math.min(limit * 4, 200);
+  const sources = await loadRecommendationSourceRows(db, currentUserId, sourceLimit, asOfMs);
+  const {
+    recentLocal,
+    recentExternal,
+    trendingLocal,
+    trendingExternal,
+    following: followingPosts,
+    asOfIso,
+    trendingCutoff,
+    asOfUnixSeconds,
+  } = sources;
+  const recentPosts = [...recentLocal, ...recentExternal];
+  const trendingPosts = [...trendingLocal, ...trendingExternal];
   const candidateIds = [
     ...new Set([
       ...followingPosts.map((post) => String(post.id)),
@@ -715,21 +661,31 @@ async function loadClientRankedCandidatePage(
     ]),
   ];
   if (candidateIds.length === 0) {
-    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+    return loadClientRankedCandidatePage(
+      db,
+      currentUserId,
+      limit,
+      undefined,
+      undefined,
+      asOfMs,
+      seenIds,
+      true,
+      cursorOrigin,
+    );
   }
 
   const serializedCandidateIds = JSON.stringify(candidateIds);
   const candidateResult = await db
     .prepare(
-      `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+      `${RECOMMENDED_SELECT}, (${RECOMMENDATION_ENGAGEMENT_FORMULA}) as eng_score
        FROM posts p LEFT JOIN users u ON p.user_id = u.id
        LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (SELECT value FROM json_each(?))
          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at >= ? AND p.created_at <= ?`,
     )
-    .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+    .bind(asOfUnixSeconds, serializedCandidateIds, trendingCutoff, asOfIso)
     .all<Record<string, unknown>>();
   const candidatePosts = candidateResult.results ?? [];
 
@@ -796,10 +752,26 @@ async function loadClientRankedCandidatePage(
     .sort(compareScoredPosts);
 
   if (scored.length === 0) {
-    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+    return loadClientRankedCandidatePage(
+      db,
+      currentUserId,
+      limit,
+      undefined,
+      undefined,
+      asOfMs,
+      seenIds,
+      true,
+      cursorOrigin,
+    );
   }
 
-  const page = scored.slice(0, limit);
+  // The candidate batch is already mixed 1:1. The browser may re-rank it with
+  // vector similarity, but the composition of the batch stays balanced.
+  const mixed = mixFeedOrigins(scored, (entry) => entry.post, limit, {
+    maxPerAuthor: 2,
+    first: cursorOrigin,
+  });
+  const page = mixed.items;
   const posts = await enrichRecommendedPosts(
     page.map(({ post }) => post),
     db,
@@ -817,7 +789,7 @@ async function loadClientRankedCandidatePage(
       ? null
       : seenIds.size >= 700
         ? `archive,,,${asOfMs}`
-        : `${lastScore},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
+        : `${lastScore},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')},${mixed.nextOrigin}`;
 
   return { posts, next_cursor: nextCursor, vectors, vector_meta: vectorMeta, base_scores: baseScores };
 }
@@ -847,10 +819,9 @@ posts.get('/posts/recommended', async (c) => {
     if (seenIds.size > 700 || [...seenIds].some((id) => !/^[A-Za-z0-9_-]{1,36}$/.test(id))) {
       return c.json({ error: 'Invalid recommendation cursor' }, 400);
     }
-    const asOfUnixSeconds = Math.floor(asOfMs / 1000);
-    // Exclude posts and embeddings created after the feed began. The delivered
-    // ID set below also protects against changes to existing candidate ranks.
-    const asOfIso = new Date(asOfMs).toISOString();
+    // The cursor carries the origin of the next slot so the 1:1 pattern is
+    // kept across page boundaries.
+    const cursorOrigin: FeedOrigin = cursorParts[5] === 'external' ? 'external' : 'local';
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const db = c.env.DB;
@@ -866,6 +837,7 @@ posts.get('/posts/recommended', async (c) => {
           asOfMs,
           seenIds,
           isArchiveCursor,
+          cursorOrigin,
         ),
       );
     }
@@ -874,54 +846,21 @@ posts.get('/posts/recommended', async (c) => {
       return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
     }
 
-    const visibilityFilter = currentUserId
-      ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
-      : '';
-    const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
-    const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
-    const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-    const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
-
-    const [recentResult, trendingResult, followingResult] = await Promise.all([
-      db
-        .prepare(
-          `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id
-           WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
-           ORDER BY p.created_at DESC LIMIT ?`,
-        )
-        .bind(...visibilityParams, recentCutoff, asOfIso, limit * 4)
-        .all<Record<string, unknown>>(),
-      db
-        .prepare(
-          `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id
-           WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
-           ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
-        )
-        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
-        .all<Record<string, unknown>>(),
-      currentUserId
-        ? db
-            .prepare(
-              `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id
-               WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-                 AND p.created_at >= ? AND p.created_at <= ?
-                 AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-                 ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
-               ORDER BY p.created_at DESC LIMIT ?`,
-            )
-            .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
-            .all<Record<string, unknown>>()
-        : Promise.resolve(null),
-    ]);
-
-    const recentPosts = recentResult.results || [];
-    const trendingPosts = trendingResult.results || [];
-    const followingPosts = followingResult?.results || [];
+    // Exclude posts and embeddings created after the feed began. The delivered
+    // ID set below also protects against changes to existing candidate ranks.
+    const sources = await loadRecommendationSourceRows(db, currentUserId, Math.min(limit * 4, 200), asOfMs);
+    const {
+      recentLocal,
+      recentExternal,
+      trendingLocal,
+      trendingExternal,
+      following: followingPosts,
+      asOfIso,
+      trendingCutoff,
+      asOfUnixSeconds,
+    } = sources;
+    const recentPosts = [...recentLocal, ...recentExternal];
+    const trendingPosts = [...trendingLocal, ...trendingExternal];
     const candidateIds = [
       ...new Set([
         ...followingPosts.map((post) => String(post.id)),
@@ -936,15 +875,15 @@ posts.get('/posts/recommended', async (c) => {
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
     // so D1's 100-parameter ceiling does not turn a populated feed into a 500.
     const serializedCandidateIds = JSON.stringify(candidateIds);
-    const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+    const candidateQuery = `${RECOMMENDED_SELECT}, (${RECOMMENDATION_ENGAGEMENT_FORMULA}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${RECOMMENDATION_TRUST_FILTER}
         AND p.created_at >= ? AND p.created_at <= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+      .bind(asOfUnixSeconds, serializedCandidateIds, trendingCutoff, asOfIso)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
 
@@ -1028,21 +967,27 @@ posts.get('/posts/recommended', async (c) => {
     }
 
     filteredPosts.sort(compareScoredPosts);
-    const pagePosts = diversifyPosts(filteredPosts, limit, 2).map(({ post, score }) => {
+    // Local and external candidates are interleaved 1:1 while each side keeps
+    // its own relevance order. Carrying `nextOrigin` keeps the pattern across
+    // pages even when a page length is odd.
+    const mixed = mixFeedOrigins(filteredPosts, (entry) => entry.post, limit, {
+      maxPerAuthor: 2,
+      first: cursorOrigin,
+    });
+    const pagePosts = mixed.items.map(({ post, score }) => {
       post.score = score;
       return post;
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
-    // At most 700 candidates come from the four sources (100 vector + 3*200).
     // Bound cursor growth well below Cloudflare's URL ceiling before moving
     // into the chronological archive, whose cursor does not need an ID set.
     const nextCursor = !lastPost
       ? null
       : seenIds.size >= 700
         ? `archive,,,${asOfMs}`
-        : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
+        : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')},${mixed.nextOrigin}`;
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
@@ -1083,9 +1028,14 @@ async function loadRecommendedArchivePage(
     .all<Record<string, unknown>>();
   const rows = result.results || [];
   const hasMore = rows.length > limit;
-  const posts = await enrichRecommendedPosts(rows.slice(0, limit), db, currentUserId);
-  const lastPost = posts.at(-1);
-  const nextCursor = hasMore && lastPost ? `archive,${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
+  const pageRows = rows.slice(0, limit);
+  // Reorder the page so the two origins alternate, but keep every row of the
+  // chronological window. The cursor advances by the oldest fetched row, not
+  // by the last displayed row.
+  const mixed = mixFeedOrigins(pageRows, (post) => post, limit, { first: 'local' });
+  const posts = await enrichRecommendedPosts(mixed.items, db, currentUserId);
+  const oldest = pageRows.at(-1);
+  const nextCursor = hasMore && oldest ? `archive,${oldest.created_at},${oldest.id},${asOfMs}` : null;
 
   return { posts, next_cursor: nextCursor };
 }
