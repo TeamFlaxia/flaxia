@@ -241,7 +241,7 @@ function extractPublicKey(document: Record<string, unknown> | null): ExtractedKe
 }
 
 /** Compare two actor URLs without a trailing slash or fragment. */
-const canonicalActorUrl = (value: string): string => {
+export const canonicalActorUrl = (value: string): string => {
   try {
     const url = new URL(value);
     url.hash = '';
@@ -375,6 +375,8 @@ export interface RemoteActor {
   displayName: string | null;
   iconUrl: string | null;
   domain: string;
+  /** Public outbox advertised by the actor, on the actor's own origin. */
+  outbox: string | null;
 }
 
 /**
@@ -428,5 +430,6 @@ export async function resolveRemoteActor(
     displayName: typeof document.name === 'string' ? document.name : null,
     iconUrl,
     domain,
+    outbox: typeof document.outbox === 'string' ? document.outbox : null,
   };
 }

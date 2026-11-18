@@ -1,14 +1,15 @@
 import { Hono } from 'hono';
 import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../../lib/activitypub/actor.ts';
 import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
-import { importRemoteOutbox } from '../../lib/activitypub/import';
+import { fetchFederationDocument, isPrivatePeerAllowed } from '../../lib/activitypub/fetch.ts';
+import { importRemoteOutbox, OutboxImportError } from '../../lib/activitypub/import.ts';
 import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
-import { ensureActorKey } from '../../lib/activitypub/keys';
+import { actorSignOptions, ensureActorKey } from '../../lib/activitypub/keys';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { webfingerResponse } from '../../lib/activitypub/webfinger';
 import { checkRateLimit } from '../../lib/rate-limit';
-import { fetchWithSsrfGuard, parsePublicHttpUrl } from '../../lib/url-guard';
-import { requireAuth } from '../helpers';
+import { parsePublicHttpUrl } from '../../lib/url-guard';
+import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -428,7 +429,11 @@ app.get('/api/actors/:username/outbox', async (c) => {
 });
 
 /** Resolve `@user@domain` or an actor URL to a canonical actor URL. */
-async function resolveActorUrl(input: string): Promise<string | null> {
+async function resolveActorUrl(
+  env: Bindings,
+  input: string,
+  signOptions: { privateKeyPem?: string; keyId?: string } = {},
+): Promise<string | null> {
   const trimmed = input.trim().replace(/^@/, '');
   if (/^https?:\/\//i.test(trimmed)) {
     try {
@@ -441,19 +446,32 @@ async function resolveActorUrl(input: string): Promise<string | null> {
   const match = trimmed.match(/^([^@]+)@([^@]+)$/);
   if (!match) return null;
   const [, username, domain] = match;
-  const webfinger = `https://${domain}/.well-known/webfinger?resource=acct:${encodeURIComponent(username)}@${encodeURIComponent(domain)}`;
-  try {
-    const response = await fetchWithSsrfGuard(webfinger, {
+
+  // A federated peer that runs next to this instance may serve plain http.
+  // `fetchFederationDocument` applies the SSRF guard to every hop.
+  const origins = [`https://${domain}`];
+  if (isPrivatePeerAllowed(env, domain)) origins.push(`http://${domain}`);
+
+  for (const origin of origins) {
+    const webfinger = `${origin}/.well-known/webfinger?resource=acct:${encodeURIComponent(username)}@${encodeURIComponent(domain)}`;
+    const response = await fetchFederationDocument(webfinger, env, {
       headers: { Accept: 'application/jrd+json, application/json' },
       timeoutMs: 10_000,
+      ...signOptions,
     });
-    if (!response.ok) return null;
-    const document = (await response.json()) as { links?: Array<{ rel?: string; href?: string }> };
-    const self = document.links?.find((link) => link.rel === 'self' && typeof link.href === 'string');
-    return self?.href ? parsePublicHttpUrl(self.href).toString() : null;
-  } catch {
-    return null;
+    if (!response?.ok) continue;
+    const document = (await response.json().catch(() => null)) as {
+      links?: Array<{ rel?: string; href?: string }>;
+    } | null;
+    const self = document?.links?.find((link) => link.rel === 'self' && typeof link.href === 'string');
+    if (!self?.href) return null;
+    try {
+      return parsePublicHttpUrl(self.href).toString();
+    } catch {
+      return null;
+    }
   }
+  return null;
 }
 
 // POST /api/activitypub/import - import a remote actor's public outbox
@@ -462,10 +480,9 @@ async function resolveActorUrl(input: string): Promise<string | null> {
 // readable. Imported Notes are stored with `user_id = ''` (the same shape the
 // inbox uses for remote posts), so the recommendation feed can rank them
 // without pretending a local account wrote them.
-app.post('/api/activitypub/import', requireAuth, async (c) => {
+app.post('/api/activitypub/import', requireAuth, requireAdmin, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  if (user.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
 
   const body = (await c.req.json().catch(() => null)) as { actor?: unknown; limit?: unknown } | null;
   if (!body || typeof body.actor !== 'string' || body.actor.trim() === '') {
@@ -481,7 +498,12 @@ app.post('/api/activitypub/import', requireAuth, async (c) => {
   });
   if (!allowed) return c.json({ error: 'Rate limit exceeded' }, 429);
 
-  const actorUrl = await resolveActorUrl(body.actor);
+  // Outbox and WebFinger requests are signed. Without a key a secure-mode
+  // instance answers 403 and the import would silently store nothing.
+  await ensureActorKey(c.env.DB, user.id);
+  const signOptions = await actorSignOptions(c.env.DB, c.env.BASE_URL, user.username);
+
+  const actorUrl = await resolveActorUrl(c.env, body.actor, signOptions);
   if (!actorUrl) return c.json({ error: 'Could not resolve actor' }, 400);
 
   try {
@@ -492,6 +514,9 @@ app.post('/api/activitypub/import', requireAuth, async (c) => {
     });
     return c.json({ ok: true, ...result });
   } catch (error) {
+    if (error instanceof OutboxImportError) {
+      return c.json({ error: error.message }, error.status);
+    }
     console.error('Outbox import failed:', error);
     return c.json({ error: 'Import failed' }, 502);
   }
