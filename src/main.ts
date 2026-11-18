@@ -1,15 +1,4 @@
-import './styles/main.css';
-import './styles/redesign/foundation.css';
-import './styles/redesign/shell.css';
-import './styles/redesign/timeline.css';
-import './styles/redesign/composer.css';
-import './styles/redesign/overlays.css';
-import './styles/redesign/pages.css';
-import './styles/redesign/maps.css';
-import './styles/redesign/mail.css';
-import './styles/redesign/command.css';
-import './styles/redesign/rail.css';
-import './styles/redesign/motion.css';
+import './styles/index.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
 import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
@@ -34,6 +23,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { pauseMediaIn, setMediaMuted } from './lib/media-mute.js';
 import { isModalOpen } from './lib/modal-state.js';
 import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
 import { createNativeFetch } from './lib/native-fetch.js';
@@ -45,13 +35,14 @@ import {
   setNativeBadge,
 } from './lib/native-notify.js';
 import { initOfflineGames } from './lib/native-offline-games.js';
+import { hideNavigationSpinner, showNavigationSpinner } from './lib/nav-loading.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
 import { isOffline, setOffline } from './lib/offline-status.js';
 import { createOfflineStore } from './lib/offline-store.js';
-import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
+import { startRenderDiagnostics } from './lib/render-diagnostics.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
@@ -65,8 +56,26 @@ interface PageComponent {
   destroy(): void;
 }
 
+type ParkableView = 'timeline' | 'profile' | 'explore' | 'search' | 'bookmarks' | 'notifications';
+type ParkedSearchType = 'posts' | 'users' | 'arcade' | 'web';
+
+interface ParkedView {
+  key: string;
+  view: ParkableView;
+  component: PageComponent;
+  nodes: Node[];
+  scrollY: number;
+  postId: string | null;
+  username: string | null;
+  tag: string | null;
+  searchQuery?: string;
+  searchType?: ParkedSearchType;
+}
+
 // Initialize performance monitoring
 initPerformanceMonitoring();
+// Opt-in layout diagnostics (`?render-debug=1`); no-op otherwise.
+startRenderDiagnostics();
 
 // Capture Capacitor's patched fetch; local assets stay in the bundle.
 const nativeClient = isNativeApp();
@@ -121,6 +130,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app');
   if (app) {
     history.scrollRestoration = 'manual';
+    const appRoot = app;
+
+    // A hidden parking element keeps a cached view in the document. `display:
+    // none` does not destroy an iframe's browsing context, unlike removing it.
+    const parkedHost = document.createElement('div');
+    parkedHost.id = 'app-parking';
+    parkedHost.style.display = 'none';
+    document.body.appendChild(parkedHost);
 
     await initI18n();
 
@@ -154,8 +171,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'mail-compose'
       | 'mail-settings' = 'timeline';
     let currentPostId: string | null = null;
+    // Only the newest navigation may commit its staging tree.
+    let navigationToken = 0;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
+    let currentSearchQuery: string | undefined;
+    let currentSearchType: ParkedSearchType | undefined;
     let currentAdminTab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
@@ -176,7 +197,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let mailSettingsPage: PageComponent | null = null;
     let mailThreadPage: PageComponent | null = null;
     let mailComposePage: PageComponent | null = null;
-    let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
+    let parkedView: ParkedView | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
       | null = null;
@@ -184,12 +205,122 @@ document.addEventListener('DOMContentLoaded', async () => {
     let adminHiddenTab: PageComponent | null = null;
     let adminUsersTab: PageComponent | null = null;
     let adminAdsTab: PageComponent | null = null;
+
+    function parkingKey(
+      view: string,
+      postId?: string | null,
+      username?: string | null,
+      tag?: string | null,
+      searchQuery?: string,
+      searchType?: ParkedSearchType,
+    ): string {
+      switch (view) {
+        case 'timeline':
+          return 'timeline';
+        case 'profile':
+          return `profile:${username ?? ''}`;
+        case 'explore':
+          return `explore:${tag ?? ''}`;
+        case 'search':
+          return `search:${searchQuery ?? ''}:${searchType ?? ''}`;
+        case 'bookmarks':
+          return 'bookmarks';
+        case 'notifications':
+          return 'notifications';
+        default:
+          return `${view}:${postId ?? ''}:${username ?? ''}:${tag ?? ''}`;
+      }
+    }
+
+    function restoreParkedComponent(parked: ParkedView): void {
+      switch (parked.view) {
+        case 'timeline':
+          timeline = parked.component as Timeline;
+          break;
+        case 'profile':
+          profilePage = parked.component;
+          break;
+        case 'explore':
+          explorePage = parked.component as ExplorePage;
+          break;
+        case 'search':
+          searchPage = parked.component;
+          break;
+        case 'bookmarks':
+          bookmarksPage = parked.component as BookmarksPage;
+          break;
+        case 'notifications':
+          notificationsPage = parked.component as NotificationsPage;
+          break;
+      }
+    }
+
+    function disposeParkedView(): void {
+      if (!parkedView) return;
+      // A detached media element can keep playing; stop it before the component
+      // (and its DOM) is released.
+      pauseMediaIn(parkedHost);
+      parkedView.component.destroy();
+      parkedView = null;
+      parkedHost.replaceChildren();
+    }
+
+    function parkCurrentView(view: ParkableView, component: PageComponent, scrollY: number): void {
+      if (parkedView) disposeParkedView();
+      // Keep games/videos alive but silent while the view is off screen.
+      setMediaMuted(appRoot, true);
+      const nodes = [...appRoot.childNodes];
+      parkedView = {
+        key: parkingKey(view, currentPostId, _currentUsername, currentTag, currentSearchQuery, currentSearchType),
+        view,
+        component,
+        nodes,
+        scrollY,
+        postId: currentPostId,
+        username: _currentUsername,
+        tag: currentTag,
+        searchQuery: currentSearchQuery,
+        searchType: currentSearchType,
+      };
+      parkedHost.replaceChildren(...nodes);
+    }
+
+    function restoreParkedView(parked: ParkedView): void {
+      appRoot.replaceChildren(...parked.nodes);
+      parkedHost.replaceChildren();
+      // Undo the parking mute (user-muted players keep their own state).
+      setMediaMuted(appRoot, false);
+      currentView = parked.view;
+      currentPostId = parked.postId;
+      _currentUsername = parked.username;
+      currentTag = parked.tag;
+      currentSearchQuery = parked.searchQuery;
+      currentSearchType = parked.searchType;
+      restoreParkedComponent(parked);
+      const leftNavElement = appRoot.querySelector<HTMLElement>('.left-nav');
+      if (leftNavElement) setupMobileLeftNav(leftNavElement);
+      window.scrollTo(0, parked.scrollY);
+    }
     const leftNavInstances: Set<LeftNav> = new Set();
+
+    /**
+     * Which bottom tab is active for a route. The URL is authoritative here:
+     * this runs while the router is still building the next view.
+     */
+    const bottomNavIdForRoute = (view?: RouteView): string => {
+      const resolved = view ?? parseCurrentRoute()?.view;
+      return resolved ? viewToBottomNavId(resolved) : '';
+    };
+
+    const syncBottomNavActiveItem = (view?: RouteView): void => {
+      getBottomNav()?.setActiveItem(bottomNavIdForRoute(view));
+    };
 
     /** Deps for the mobile bottom bar (see src/lib/bottom-nav-setup.ts). */
     const bottomNavDeps = (): BottomNavDeps => ({
       navigate: navigateTo,
       getCurrentUser: () => currentUser,
+      getActiveItem: () => bottomNavIdForRoute(),
     });
     let currentUser: {
       username: string;
@@ -352,6 +483,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Create/update the mobile bottom nav with the signed-in user
           (await ensureBottomNav(bottomNavDeps())).updateUser(currentUser);
+          // The bar is created lazily during this check, after navigateTo()
+          // already asked for a sync, so re-apply the current route.
+          syncBottomNavActiveItem();
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           refreshNotificationBadges();
@@ -385,6 +519,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Create/update the mobile bottom nav for the guest state
       (await ensureBottomNav(bottomNavDeps())).updateUser(null);
+      syncBottomNavActiveItem();
 
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
@@ -462,8 +597,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // URL routing (see src/lib/router.ts)
 
-    // Page loading overlay (see src/lib/page-loader.ts)
-
     // Navigate to view
     const navigateTo = async (
       view: RouteView,
@@ -474,6 +607,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade' | 'web',
     ) => {
+      // Invalidate any in-flight navigation as soon as a new one starts. This
+      // also covers the parked-view restore path below, which returns early.
+      const navigation = ++navigationToken;
+
       // Authentication UI lives on auth.flaxia.app. A full navigation keeps the
       // login flow out of this SPA and returns through /api/auth/callback.
       if (view === 'login' || view === 'register') {
@@ -501,12 +638,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Close mobile nav if open
       closeLeftNav();
 
-      // Sync active item on the mobile bottom nav
-      const syncedNav = getBottomNav();
-      if (syncedNav) {
-        const navId = viewToBottomNavId(view);
-        if (navId) syncedNav.setActiveItem(navId);
-      }
+      // Sync active item on the mobile bottom nav. An empty id clears the
+      // highlight for views that have no tab (Maps, Translate, Mail, ...);
+      // skipping the call would leave the previous tab lit.
+      syncBottomNavActiveItem(view);
 
       {
         // Auth guard for protected routes
@@ -515,25 +650,32 @@ document.addEventListener('DOMContentLoaded', async () => {
           return; // Auth guard will redirect to login
         }
 
-        // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
+        if (view === 'search') {
+          currentSearchQuery = searchQuery;
+          currentSearchType = searchType;
+        }
+
+        // Park the current view when opening a detail view. The whole app DOM
+        // is kept hidden instead of being rebuilt, so iframes and scroll state
+        // survive the round trip.
         if ((view === 'thread' || view === 'arcade') && currentView !== view) {
           if (currentView === 'timeline' && timeline) {
-            cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
+            parkCurrentView('timeline', timeline, window.scrollY);
             timeline = null;
           } else if (currentView === 'profile' && profilePage) {
-            cachedContentComponent = { view: 'profile', component: profilePage, scrollY: window.scrollY };
+            parkCurrentView('profile', profilePage, window.scrollY);
             profilePage = null;
           } else if (currentView === 'explore' && explorePage) {
-            cachedContentComponent = { view: 'explore', component: explorePage, scrollY: window.scrollY };
+            parkCurrentView('explore', explorePage, window.scrollY);
             explorePage = null;
           } else if (currentView === 'search' && searchPage) {
-            cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
+            parkCurrentView('search', searchPage, window.scrollY);
             searchPage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
-            cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
+            parkCurrentView('bookmarks', bookmarksPage, window.scrollY);
             bookmarksPage = null;
           } else if (currentView === 'notifications' && notificationsPage) {
-            cachedContentComponent = { view: 'notifications', component: notificationsPage, scrollY: window.scrollY };
+            parkCurrentView('notifications', notificationsPage, window.scrollY);
             notificationsPage = null;
           }
         }
@@ -607,10 +749,30 @@ document.addEventListener('DOMContentLoaded', async () => {
           mailComposePage = null;
         }
       }
-      showPageLoader();
-      app.innerHTML = '';
+      // A previously parked view is restored without rebuilding it. Its DOM
+      // stayed in the document (hidden), so iframes did not reload.
+      const targetKey = parkingKey(view, postId, username, tag, searchQuery, searchType);
+      if (parkedView && parkedView.key === targetKey) {
+        const parked = parkedView;
+        parkedView = null;
+        hideNavigationSpinner();
+        restoreParkedView(parked);
+        return;
+      }
+      if (parkedView && view !== 'thread' && view !== 'arcade') {
+        disposeParkedView();
+      }
 
-      // Wrap rendering in try-catch so errors don't leave the loader stuck
+      // Build the next view in a detached staging root. The current view stays
+      // visible until the new one is ready. When the current view was parked
+      // (or on the first render) `#app` is empty, so show the inline spinner
+      // instead of leaving a blank content column.
+      const staging = document.createElement('div');
+      if (appRoot.childNodes.length === 0) showNavigationSpinner(appRoot);
+      // Scroll restoration for the synchronous branches; the deferred
+      // requestAnimationFrame paths restore after the commit themselves.
+      let pendingScrollY: number | null = null;
+
       try {
         // Handle legal pages (public, no auth required, no layout)
         if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
@@ -624,8 +786,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             type: view,
           });
 
-          app.appendChild(legalPage.getElement());
-          hidePageLoader();
+          staging.appendChild(legalPage.getElement());
           return;
         }
 
@@ -641,8 +802,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             slug: postId || undefined,
           });
 
-          app.appendChild(docsPage.getElement());
-          hidePageLoader();
+          staging.appendChild(docsPage.getElement());
           return;
         }
 
@@ -658,8 +818,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             success: view === 'billing-success',
           });
 
-          app.appendChild(billingPage.getElement());
-          hidePageLoader();
+          staging.appendChild(billingPage.getElement());
           return;
         }
 
@@ -715,8 +874,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           mainContainer.appendChild(rightPanel.getElement());
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
           setupMobileLeftNav(leftNav.getElement());
           return;
         }
@@ -757,8 +915,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(downloadPage.getElement());
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -794,8 +951,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(translatePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -842,8 +998,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             onTabChange,
           });
 
-          app.appendChild(adminLayout.getElement());
-          hidePageLoader();
+          staging.appendChild(adminLayout.getElement());
 
           try {
             const access = await fetch('/api/admin/access', { credentials: 'include', cache: 'no-store' });
@@ -946,15 +1101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'explore') {
-            explorePage = cachedContentComponent.component as ExplorePage;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh explore page
             const { createExplorePage } = await import('./components/ExplorePage.js');
             explorePage = createExplorePage({
@@ -962,7 +1109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               sandboxOrigin,
               currentUser,
             });
-            window.scrollTo(0, 0);
+            pendingScrollY = 0;
           }
 
           // Create Right Panel
@@ -973,8 +1120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(explorePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1004,15 +1150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'search') {
-            searchPage = cachedContentComponent.component as PageComponent;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             const { createSearchPage } = await import('./components/SearchPage.js');
             searchPage = createSearchPage({
               query: searchQuery || '',
@@ -1028,8 +1166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1081,8 +1218,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(arcadePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1118,8 +1254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(mapsPage.getElement()));
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1150,15 +1285,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'profile') {
-            profilePage = cachedContentComponent.component as PageComponent;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh profile page
             const { createProfilePage } = await import('./components/ProfilePage.js');
             profilePage = createProfilePage({
@@ -1177,8 +1304,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(profilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1223,8 +1349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(remoteProfilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           setupMobileLeftNav(leftNav.getElement());
 
@@ -1256,21 +1381,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
           leftNavInstances.add(leftNav);
 
-          if (cachedContentComponent?.view === 'bookmarks') {
-            bookmarksPage = cachedContentComponent.component as BookmarksPage;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
             const { createBookmarksPage } = await import('./components/BookmarksPage.js');
             bookmarksPage = createBookmarksPage({
               sandboxOrigin,
               currentUser,
             });
-            window.scrollTo(0, 0);
+            pendingScrollY = 0;
           }
 
           const rightPanel = await lazyCreateRightPanel({
@@ -1281,8 +1399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
           setupMobileLeftNav(leftNav.getElement());
           return;
         }
@@ -1313,15 +1430,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page. Always rebuild from the freshly fetched
-          // data (only the scroll position is restored) so notifications that
-          // arrived while a thread/Arcade was open are not lost.
-          let notificationsScrollY = 0;
-          if (cachedContentComponent?.view === 'notifications') {
-            notificationsScrollY = cachedContentComponent.scrollY;
-            (cachedContentComponent.component as NotificationsPage).destroy();
-            cachedContentComponent = null;
-          }
+          // Create Notifications Page. This branch runs on a fresh navigation
+          // and uses the just-fetched data. Returning from a post restores the
+          // parked notifications DOM instead (see parkCurrentView), which is the
+          // faster path and keeps the user's scroll position; the unread badge
+          // is kept live by the notification socket.
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -1348,7 +1461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           requestAnimationFrame(() => {
-            window.scrollTo(0, notificationsScrollY);
+            window.scrollTo(0, 0);
           });
 
           // Create Right Panel
@@ -1359,8 +1472,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(notificationsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1444,8 +1556,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(markMainContent(settingsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
-          app.appendChild(mainContainer);
-          hidePageLoader();
+          staging.appendChild(mainContainer);
 
           // Setup mobile left nav
           setupMobileLeftNav(leftNav.getElement());
@@ -1511,15 +1622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'timeline') {
-            timeline = cachedContentComponent.component as Timeline;
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
+          {
             // Create fresh timeline
             const { createTimeline } = await import('./components/Timeline.js');
             timeline = createTimeline({
@@ -1564,11 +1667,26 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(rightPanel.getElement());
         }
 
-        app.appendChild(mainContainer);
-        hidePageLoader();
+        staging.appendChild(mainContainer);
       } catch (e) {
         console.error('Navigation error:', e);
-        showPageLoaderFailure();
+        // Drop the partial tree and keep the previous view on screen.
+        staging.replaceChildren();
+        if (navigation === navigationToken) {
+          showToast(t('common.error'), true);
+        }
+      } finally {
+        if (navigation === navigationToken) {
+          hideNavigationSpinner();
+          if (staging.childNodes.length > 0) {
+            appRoot.replaceChildren(...staging.childNodes);
+            if (pendingScrollY !== null) window.scrollTo(0, pendingScrollY);
+          } else if (appRoot.childNodes.length === 0 && parkedView) {
+            const parked = parkedView;
+            parkedView = null;
+            restoreParkedView(parked);
+          }
+        }
       }
     };
 
@@ -1592,8 +1710,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await navigateTo(view, postId, username, tag, adminTab, searchQuery, searchType);
       } catch (e) {
         console.error('Navigation failed:', e);
-        // Show error on the loading overlay if it's visible, otherwise reload
-        showPageLoaderFailure();
+        showToast(t('common.error'), true);
       }
     }
 

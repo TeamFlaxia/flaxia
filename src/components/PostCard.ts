@@ -3,6 +3,7 @@ import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
+import { pauseMediaIn } from '../lib/media-mute.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { stripMediaCues } from '../lib/post-cues.js';
@@ -25,7 +26,7 @@ import { createPollElement } from './PollWidget.js';
 import { type ActionPop, createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
 import { createMenuButton, createPostMenuDropdown, setupMenuCloseHandler } from './PostMenu.js';
-import { createPostStage, isZipGame, updatePostStage } from './PostStage.js';
+import { createPostStage, destroyPostStage, isZipGame, updatePostStage } from './PostStage.js';
 import { createPostText } from './PostText.js';
 import { createQuotedPostCard } from './QuotedPostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
@@ -1221,11 +1222,20 @@ export class PostCard {
       this.replyComposer = undefined;
     }
 
+    // Stop any inline game / flash player and release its blob URLs.
+    if (this.postStageElement) {
+      destroyPostStage(this.postStageElement);
+      this.postStageElement = undefined;
+    }
+
     // Cleanup menu dropdown
     if (this.menuDropdown) {
       this.menuDropdown.remove();
       this.menuDropdown = undefined;
     }
+
+    // Stop carousel audio/video; a detached media element can keep playing.
+    pauseMediaIn(this.element);
 
     // Cleanup event listeners
     this.element.remove();
@@ -1702,10 +1712,13 @@ export class PostCard {
     const oldStage = this.postStageElement;
 
     if (!hasMedia) {
+      if (oldStage) destroyPostStage(oldStage);
       oldStage?.remove();
       this.postStageElement = undefined;
       return;
     }
+
+    if (oldStage) destroyPostStage(oldStage);
 
     const newStage = createPostStage({
       post,

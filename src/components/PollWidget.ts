@@ -1,6 +1,20 @@
-import { formatCount } from '../lib/format.js';
-import { t } from '../lib/i18n.js';
-import { isPollExpired, shouldShowPollResults } from '../lib/poll-state.js';
+import { formatCount } from '../lib/format.ts';
+import { t } from '../lib/i18n.ts';
+import { isPollExpired, shouldShowPollResults } from '../lib/poll-state.ts';
+import {
+  type Accessor,
+  afterPaint,
+  computed,
+  each,
+  effect,
+  html,
+  mount,
+  onCleanup,
+  onMount,
+  type Renderable,
+  signal,
+  when,
+} from '../lib/render/index.ts';
 
 export interface PollData {
   id: string;
@@ -11,6 +25,8 @@ export interface PollData {
   endsAt?: string | null;
   options: Array<{ id: string; label: string; votes_count: number }>;
 }
+
+type PollOption = PollData['options'][number];
 
 function formatRemainingTime(endsAt: string): string {
   const diff = new Date(endsAt).getTime() - Date.now();
@@ -24,180 +40,186 @@ function formatRemainingTime(endsAt: string): string {
   return t('poll.remaining_less_minute');
 }
 
-export function createPollElement(poll: PollData): HTMLElement {
-  const totalVotes = poll.options.reduce(
-    (sum: number, opt: { id: string; label: string; votes_count: number }) => sum + Number(opt.votes_count || 0),
-    0,
+function PollOptionView(
+  option: Accessor<PollOption>,
+  state: Accessor<PollData>,
+  totalVotes: Accessor<number>,
+  maxVotes: Accessor<number>,
+  showResults: Accessor<boolean>,
+  expired: Accessor<boolean>,
+  isVoting: Accessor<boolean>,
+  castVote: (optionId: string) => void,
+): Renderable {
+  // Bars start at 0 and expand on the next paint, which gives the same entrance
+  // animation as the previous implementation without replacing the widget.
+  const revealed = signal(false);
+  onMount(() => {
+    const cancel = afterPaint(() => revealed.set(true));
+    onCleanup(cancel);
+  });
+
+  const isOwnVote = () => option().id === state().userVote;
+  const clickable = () => !expired() && !isOwnVote() && !isVoting();
+  const percentage = computed(() => {
+    const total = totalVotes();
+    return total > 0 ? Math.round((option().votes_count / total) * 100) : 0;
+  });
+  const isLeading = computed(
+    () =>
+      showResults() &&
+      totalVotes() > 0 &&
+      Number(option().votes_count) > 0 &&
+      Number(option().votes_count) === maxVotes(),
   );
-  const hasVoted = !!poll.userVote;
-  const isExpired = isPollExpired(poll);
-  const showResults = shouldShowPollResults(poll, hasVoted);
-  const canChangeVote = hasVoted && !isExpired;
-  const maxVotes = poll.options.reduce(
-    (max: number, opt: { votes_count: number }) => Math.max(max, Number(opt.votes_count || 0)),
-    0,
-  );
-
-  const container = document.createElement('div');
-  container.className = `post-poll${isExpired ? ' is-expired' : ''}`;
-
-  const question = document.createElement('div');
-  question.className = 'poll-question';
-  question.textContent = poll.question;
-  container.appendChild(question);
-
-  if (isExpired) {
-    const endedBadge = document.createElement('div');
-    endedBadge.className = 'poll-ended-badge';
-    endedBadge.textContent = t('poll.ended');
-    container.appendChild(endedBadge);
-  }
-
-  const optionsList = document.createElement('div');
-  optionsList.className = 'poll-options';
-  container.appendChild(optionsList);
-
-  // Bars render at 0% and are widened on the next frame so the fill
-  // animates in (and re-animates after a vote re-renders the widget).
-  const fills: Array<{ bar: HTMLElement; pct: number }> = [];
-
-  poll.options.forEach((opt: { id: string; label: string; votes_count: number }) => {
-    const optEl = document.createElement('div');
-    const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0;
-    const isOwnVote = opt.id === poll.userVote;
-    const isLeading =
-      showResults && totalVotes > 0 && Number(opt.votes_count || 0) > 0 && Number(opt.votes_count) === maxVotes;
-    const clickable = !isExpired && !isOwnVote;
-
-    optEl.className = [
-      'poll-option',
-      clickable ? 'is-clickable' : '',
-      isOwnVote ? 'is-voted' : '',
-      isLeading ? 'is-leading' : '',
-    ]
+  const className = () =>
+    ['poll-option', clickable() ? 'is-clickable' : '', isOwnVote() ? 'is-voted' : '', isLeading() ? 'is-leading' : '']
       .filter(Boolean)
       .join(' ');
 
-    const bar = document.createElement('div');
-    bar.className = 'poll-bar';
-    bar.style.width = '0%';
-    optEl.appendChild(bar);
-    if (showResults) fills.push({ bar, pct });
+  const activate = (event: Event): void => {
+    event.stopPropagation();
+    if (!clickable()) return;
+    castVote(option().id);
+  };
 
-    const label = document.createElement('span');
-    label.className = 'poll-option-label';
+  const activateFromKeyboard = (event: Event): void => {
+    const keyboardEvent = event as KeyboardEvent;
+    if (keyboardEvent.key !== 'Enter' && keyboardEvent.key !== ' ') return;
+    keyboardEvent.preventDefault();
+    keyboardEvent.stopPropagation();
+    if (!clickable()) return;
+    castVote(option().id);
+  };
 
-    const textSpan = document.createElement('span');
-    textSpan.className = 'poll-option-text';
-    textSpan.textContent = opt.label;
+  return html`<div
+    class=${className}
+    role=${() => (clickable() ? 'button' : null)}
+    tabindex=${() => (clickable() ? '0' : null)}
+    aria-label=${() => option().label}
+    @click=${activate}
+    @keydown=${activateFromKeyboard}
+  >
+    <div class="poll-bar" style=${() => `width:${revealed() ? percentage() : 0}%`}></div>
+    <span class="poll-option-label">
+      <span class="poll-option-text">${() => option().label}</span>
+      ${when(
+        showResults,
+        () =>
+          html`<span class="poll-option-pct"
+            >${() => `${percentage()}%`}${when(
+              isOwnVote,
+              () => html`<span class="poll-voted-check" aria-hidden="true">✓</span>`,
+            )}</span
+          >`,
+      )}
+    </span>
+  </div>`;
+}
 
-    const pctSpan = document.createElement('span');
-    pctSpan.className = 'poll-option-pct';
-    if (showResults) {
-      pctSpan.textContent = `${pct}%`;
-      if (isOwnVote) {
-        const check = document.createElement('span');
-        check.className = 'poll-voted-check';
-        check.textContent = '✓';
-        check.setAttribute('aria-hidden', 'true');
-        pctSpan.appendChild(check);
-      }
+function PollView(initial: PollData): Renderable {
+  const state = signal(initial);
+  const voting = signal(false);
+
+  const totalVotes = computed(() => state().options.reduce((sum, option) => sum + Number(option.votes_count || 0), 0));
+  const hasVoted = computed(() => Boolean(state().userVote));
+  const expired = computed(() => isPollExpired(state()));
+  const showResults = computed(() => shouldShowPollResults(state(), hasVoted()));
+  const canChangeVote = computed(() => hasVoted() && !expired());
+  const maxVotes = computed(() =>
+    state().options.reduce((maximum, option) => Math.max(maximum, Number(option.votes_count || 0)), 0),
+  );
+
+  const footerText = computed(() => {
+    const total = totalVotes();
+    const voteText =
+      total === 1
+        ? t('poll.votes', { count: formatCount(total) })
+        : t('poll.votes_plural', { count: formatCount(total) });
+    const votedText = hasVoted() ? ` · ${t('poll.voted')}` : '';
+    const changeHint = canChangeVote() ? ` · ${t('poll.click_to_change')}` : '';
+    let timeText = '';
+    const endsAt = state().endsAt;
+    if (endsAt && !expired()) {
+      timeText = ` · ${t('poll.remaining', { time: formatRemainingTime(endsAt) })}`;
     }
-
-    label.appendChild(textSpan);
-    label.appendChild(pctSpan);
-    optEl.appendChild(label);
-
-    if (clickable) {
-      const castVote = async (): Promise<void> => {
-        try {
-          const response = await fetch(`/api/polls/${poll.id}/vote`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ optionId: opt.id }),
-          });
-          if (response.status === 409) {
-            return;
-          }
-          if (!response.ok) {
-            const errBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-            if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
-            return;
-          }
-          const data = (await response.json()) as {
-            options: Array<{ id: string; label: string; votes_count: number }>;
-            userVote: string | null;
-          };
-          const newPoll = { ...poll, options: data.options, userVote: data.userVote };
-          container.replaceWith(createPollElement(newPoll));
-        } catch (e) {
-          console.error('Vote failed:', e);
-        }
-      };
-
-      // Keyboard parity for the div-based options (Enter / Space).
-      optEl.setAttribute('role', 'button');
-      optEl.setAttribute('tabindex', '0');
-      optEl.setAttribute('aria-label', opt.label);
-
-      optEl.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        await castVote();
-      });
-      optEl.addEventListener('keydown', (e) => {
-        if (e.key !== 'Enter' && e.key !== ' ') return;
-        e.preventDefault();
-        e.stopPropagation();
-        void castVote();
-      });
-    }
-
-    optionsList.appendChild(optEl);
+    return `${voteText}${votedText}${changeHint}${timeText}`;
   });
 
-  const footer = document.createElement('div');
-  footer.className = 'post-poll-footer';
+  const castVote = (optionId: string): void => {
+    if (voting.peek()) return;
+    voting.set(true);
 
-  const voteText =
-    totalVotes === 1
-      ? t('poll.votes', { count: formatCount(totalVotes) })
-      : t('poll.votes_plural', { count: formatCount(totalVotes) });
-  const votedText = hasVoted ? ` · ${t('poll.voted')}` : '';
-  const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : '';
-  let timeText = '';
-  if (poll.endsAt && !isExpired) {
-    const remaining = formatRemainingTime(poll.endsAt);
-    timeText = ` · ${t('poll.remaining', { time: remaining })}`;
-  }
+    void (async () => {
+      try {
+        const response = await fetch(`/api/polls/${state.peek().id}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ optionId }),
+        });
 
-  footer.textContent = `${voteText}${votedText}${changeHint}${timeText}`;
-  container.appendChild(footer);
-
-  if (fills.length > 0) {
-    requestAnimationFrame(() => {
-      for (const { bar, pct } of fills) {
-        bar.style.width = `${pct}%`;
-      }
-    });
-  }
-
-  if (!isExpired && poll.endsAt) {
-    const endTime = Date.parse(poll.endsAt);
-    if (Number.isFinite(endTime) && endTime > Date.now()) {
-      const scheduleExpiry = () => {
-        const remainingTime = endTime - Date.now();
-        if (remainingTime > 0) {
-          window.setTimeout(scheduleExpiry, Math.min(remainingTime, 2_147_483_647));
+        if (response.status === 409) return;
+        if (!response.ok) {
+          const errBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+          if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
           return;
         }
-        if (container.isConnected) {
-          container.replaceWith(createPollElement({ ...poll, expired: true }));
-        }
-      };
-      window.setTimeout(scheduleExpiry, Math.min(endTime - Date.now(), 2_147_483_647));
-    }
-  }
 
+        const data = (await response.json()) as {
+          options: Array<{ id: string; label: string; votes_count: number }>;
+          userVote: string | null;
+        };
+        state.set({ ...state.peek(), options: data.options, userVote: data.userVote });
+      } catch (error) {
+        console.error('Vote failed:', error);
+      } finally {
+        voting.set(false);
+      }
+    })();
+  };
+
+  // One timer for the current state. A vote resets it; expiry flips the state
+  // once and the next run returns early.
+  effect(() => {
+    const current = state();
+    if (!current.endsAt || isPollExpired(current)) return;
+
+    const endTime = Date.parse(current.endsAt);
+    if (!Number.isFinite(endTime)) return;
+
+    const remaining = endTime - Date.now();
+    if (remaining <= 0) {
+      state.set({ ...current, expired: true });
+      return;
+    }
+
+    const timer = window.setTimeout(
+      () => {
+        state.set({ ...state.peek(), expired: true });
+      },
+      Math.min(remaining, 2_147_483_647),
+    );
+
+    return () => window.clearTimeout(timer);
+  });
+
+  return html`<div class=${() => `post-poll${expired() ? ' is-expired' : ''}`}>
+    <div class="poll-question">${() => state().question}</div>
+    ${when(expired, () => html`<div class="poll-ended-badge">${t('poll.ended')}</div>`)}
+    <div class="poll-options">
+      ${each(
+        () => state().options,
+        (option) => option.id,
+        (option) => PollOptionView(option, state, totalVotes, maxVotes, showResults, expired, voting, castVote),
+      )}
+    </div>
+    <div class="post-poll-footer">${() => footerText()}</div>
+  </div>`;
+}
+
+export function createPollElement(poll: PollData): HTMLElement {
+  const container = document.createElement('div');
+  const mounted = mount(container, () => PollView(poll));
+  (container as HTMLElement & { destroy?: () => void }).destroy = () => mounted.dispose();
   return container;
 }

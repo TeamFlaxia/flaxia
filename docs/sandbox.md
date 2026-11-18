@@ -114,4 +114,18 @@ All cross-origin communication goes through typed messages defined in `src/lib/b
 
 The ZIP preview parent checks both `event.source` and the exact `sandbox.flaxia.app` origin, sends `PREVIEW_INIT` to that exact target, and transfers the bounded ZIP only after a matching `ZIP_PREVIEW_READY`. The wrapper replies to the validated parent's exact origin. The game iframe has an opaque origin and is never granted `allow-same-origin`.
 
-For other bridges, validate the expected iframe window as well as its origin before handling typed messages:
+For other bridges, validate the expected iframe window as well as its origin before handling typed messages.
+
+### Audio mute
+
+A post stage that is collapsed, and a view that is parked while a thread or
+Arcade is open, must not keep playing game audio. The app posts
+`{ type: 'FLAXIA_AUDIO_MUTE', muted: boolean }` to the game frame with a `'*'`
+target (the game's origin is opaque). `injectBaseTag` installs a small runtime
+into every WVFS game document before the game scripts run; it mutes existing
+`<audio>`/`<video>` elements, keeps later elements muted, and uses
+`event.source === window.parent` to ignore unrelated windows. The local ZIP
+preview shell injects the same runtime and forwards the message to its nested
+game frame. Existing and newly created `AudioContext`s are suspended while
+muted and resumed on unmute; audio that bypasses both `<audio>`/`<video>` and
+`AudioContext` (for example a native plugin) is outside this channel.

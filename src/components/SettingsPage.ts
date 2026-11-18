@@ -26,6 +26,7 @@ import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '..
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
+import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import {
   getDataSaverMode,
   getReplyStyle,
@@ -64,6 +65,32 @@ interface SettingsPageProps {
     email?: string;
   };
 }
+
+interface SettingsTitle {
+  id: string;
+  icon: string;
+  name: string;
+  name_ja?: string | null;
+  description: string;
+  description_ja?: string | null;
+  equipped?: boolean;
+}
+
+interface BillingHistoryRow {
+  key: string;
+  left: string;
+  right: string;
+}
+
+type TitleEntry = { kind: 'title'; title: SettingsTitle } | { kind: 'empty' } | { kind: 'error' };
+
+interface SettingsStamp {
+  id: string;
+  name: string;
+  url: string;
+}
+
+type StampEntry = { kind: 'stamp'; stamp: SettingsStamp } | { kind: 'add' } | { kind: 'error' };
 
 interface SettingsCategory {
   id: string;
@@ -197,6 +224,10 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   let emojiSection: HTMLDivElement | undefined;
   let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
+  let titlesMount: Mounted | undefined;
+  let stampsMount: Mounted | undefined;
+  let historyMount: Mounted | undefined;
+  const displayMounts: Mounted[] = [];
 
   // Account Section
   if (currentUser) {
@@ -335,15 +366,22 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     { value: '2ch', labelKey: 'settings.reply_style_2ch', descKey: 'settings.reply_style_2ch_desc' },
   ];
 
-  styles.forEach((s) => {
+  const createChoiceCard = (options: {
+    name: string;
+    value: string;
+    checked: boolean;
+    labelKey: string;
+    descKey: string;
+    onChange: () => void;
+  }): HTMLElement => {
     const label = document.createElement('label');
     label.className = 'settings-radio-card';
 
     const radio = document.createElement('input');
     radio.type = 'radio';
-    radio.name = 'reply-style';
-    radio.value = s.value;
-    radio.checked = currentStyle === s.value;
+    radio.name = options.name;
+    radio.value = options.value;
+    radio.checked = options.checked;
     radio.className = 'settings-radio';
 
     const textDiv = document.createElement('div');
@@ -351,24 +389,43 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'settings-radio-name';
-    nameSpan.textContent = t(s.labelKey);
+    nameSpan.textContent = t(options.labelKey);
 
     const descSpan = document.createElement('span');
     descSpan.className = 'settings-radio-desc';
-    descSpan.textContent = t(s.descKey);
+    descSpan.textContent = t(options.descKey);
 
     textDiv.appendChild(nameSpan);
     textDiv.appendChild(descSpan);
     label.appendChild(radio);
     label.appendChild(textDiv);
-    radioGroup.appendChild(label);
+    radio.addEventListener('change', options.onChange);
+    return label;
+  };
 
-    radio.addEventListener('change', () => {
-      setReplyStyle(s.value);
-      displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--accent-text)';
-    });
-  });
+  displayMounts.push(
+    mount(radioGroup, () =>
+      each(
+        () => styles,
+        (style) => style.value,
+        (style) =>
+          legacy(
+            createChoiceCard({
+              name: 'reply-style',
+              value: style().value,
+              checked: currentStyle === style().value,
+              labelKey: style().labelKey,
+              descKey: style().descKey,
+              onChange: () => {
+                setReplyStyle(style().value);
+                displayMessage.textContent = t('settings.display_saved');
+                displayMessage.style.color = 'var(--accent-text)';
+              },
+            }),
+          ),
+      ),
+    ),
+  );
 
   // NSFW toggle
   const nsfwLabel = document.createElement('label');
@@ -449,40 +506,29 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     { value: 'system', labelKey: 'settings.theme_system', descKey: 'settings.theme_system_desc' },
   ];
 
-  themes.forEach((st) => {
-    const label = document.createElement('label');
-    label.className = 'settings-radio-card';
-
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = 'theme';
-    radio.value = st.value;
-    radio.checked = currentTheme === st.value;
-    radio.className = 'settings-radio';
-
-    const textDiv = document.createElement('div');
-    textDiv.className = 'settings-radio-text';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'settings-radio-name';
-    nameSpan.textContent = t(st.labelKey);
-
-    const descSpan = document.createElement('span');
-    descSpan.className = 'settings-radio-desc';
-    descSpan.textContent = t(st.descKey);
-
-    textDiv.appendChild(nameSpan);
-    textDiv.appendChild(descSpan);
-    label.appendChild(radio);
-    label.appendChild(textDiv);
-    themeRadioGroup.appendChild(label);
-
-    radio.addEventListener('change', () => {
-      setTheme(st.value);
-      displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--accent-text)';
-    });
-  });
+  displayMounts.push(
+    mount(themeRadioGroup, () =>
+      each(
+        () => themes,
+        (theme) => theme.value,
+        (theme) =>
+          legacy(
+            createChoiceCard({
+              name: 'theme',
+              value: theme().value,
+              checked: currentTheme === theme().value,
+              labelKey: theme().labelKey,
+              descKey: theme().descKey,
+              onChange: () => {
+                setTheme(theme().value);
+                displayMessage.textContent = t('settings.display_saved');
+                displayMessage.style.color = 'var(--accent-text)';
+              },
+            }),
+          ),
+      ),
+    ),
+  );
 
   const displayMessage = document.createElement('div');
   displayMessage.setAttribute('role', 'status');
@@ -500,42 +546,48 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const crowdSection = document.createElement('div');
   crowdSection.className = 'settings-section';
 
-  const crowdTitle = document.createElement('h2');
-  crowdTitle.textContent = t('settings.crowd');
-
   const nodeAvailable = canRunFlaxiaNode();
 
-  const crowdLabel = document.createElement('label');
-  crowdLabel.className = nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled';
+  let crowdCheckbox!: HTMLInputElement;
+  let crowdStatus!: HTMLElement;
+  let crowdMessage!: HTMLElement;
 
-  const crowdCheckbox = document.createElement('input');
-  crowdCheckbox.type = 'checkbox';
-  crowdCheckbox.checked = getCrowdConsentState() === 'granted';
-  crowdCheckbox.disabled = !nodeAvailable;
-  crowdCheckbox.className = 'settings-switch';
-
-  const crowdTextDiv = document.createElement('div');
-  crowdTextDiv.className = 'settings-switch-text';
-
-  const crowdNameSpan = document.createElement('span');
-  crowdNameSpan.className = 'settings-switch-name';
-  crowdNameSpan.textContent = t('settings.crowd');
-
-  const crowdDescSpan = document.createElement('span');
-  crowdDescSpan.className = 'settings-switch-desc';
-  crowdDescSpan.textContent = t('settings.crowd_desc');
-
-  crowdTextDiv.appendChild(crowdNameSpan);
-  crowdTextDiv.appendChild(crowdDescSpan);
-  crowdLabel.appendChild(crowdTextDiv);
-  crowdLabel.appendChild(crowdCheckbox);
-
-  const crowdStatus = document.createElement('div');
-  crowdStatus.className = 'settings-status settings-status--sm';
-
-  const crowdMessage = document.createElement('div');
-  crowdMessage.setAttribute('role', 'status');
-  crowdMessage.className = 'settings-status';
+  displayMounts.push(
+    mount(
+      crowdSection,
+      () => html`
+        <h2>${t('settings.crowd')}</h2>
+        <label class=${nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled'}>
+          <div class="settings-switch-text">
+            <span class="settings-switch-name">${t('settings.crowd')}</span>
+            <span class="settings-switch-desc">${t('settings.crowd_desc')}</span>
+          </div>
+          <input
+            class="settings-switch"
+            type="checkbox"
+            ?checked=${getCrowdConsentState() === 'granted'}
+            ?disabled=${!nodeAvailable}
+            ref=${(element: Element | null) => {
+              if (element) crowdCheckbox = element as HTMLInputElement;
+            }}
+          />
+        </label>
+        <div
+          class="settings-status settings-status--sm"
+          ref=${(element: Element | null) => {
+            if (element) crowdStatus = element as HTMLElement;
+          }}
+        ></div>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) crowdMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   const updateCrowdStatus = () => {
     if (!nodeAvailable) {
@@ -594,176 +646,204 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   // state through the public API so the toggle is correct on first paint.
   void resolveCrowdConsentState().then(onCrowdConsentChange);
 
-  crowdSection.appendChild(crowdTitle);
-  crowdSection.appendChild(crowdLabel);
-  crowdSection.appendChild(crowdStatus);
-  crowdSection.appendChild(crowdMessage);
-
   // Language Section
   const languageSection = document.createElement('div');
   languageSection.className = 'settings-section';
 
-  const languageTitle = document.createElement('h2');
-  languageTitle.textContent = t('settings.language');
+  let languageSelect!: HTMLSelectElement;
+  let languageSaveButton!: HTMLButtonElement;
+  let languageMessage!: HTMLElement;
+  const languageLocales = signal<Array<{ code: string; nativeName: string }>>([]);
 
-  const languageSelect = document.createElement('select');
-  languageSelect.setAttribute('aria-label', t('settings.language'));
-  languageSelect.className = 'settings-input';
+  displayMounts.push(
+    mount(
+      languageSection,
+      () => html`
+        <h2>${t('settings.language')}</h2>
+        <select
+          class="settings-input"
+          aria-label=${t('settings.language')}
+          ref=${(element: Element | null) => {
+            if (element) languageSelect = element as unknown as HTMLSelectElement;
+          }}
+        >
+          ${each(
+            () => languageLocales(),
+            (locale) => locale.code,
+            (locale) => html`<option value=${locale().code}>${locale().nativeName}</option>`,
+          )}
+        </select>
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) languageSaveButton = element as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) languageMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
+
+  const applyLanguageSelection = () => {
+    const desired = currentUser?.language || getLocale();
+    if ([...languageSelect.options].some((option) => option.value === desired)) {
+      languageSelect.value = desired;
+    }
+  };
 
   fetch('/locales/index.json')
     .then((r) => r.json())
     .then((locales) => {
-      languageSelect.innerHTML = '';
-      (locales as { code: string; nativeName: string }[]).forEach((l) => {
-        const opt = document.createElement('option');
-        opt.value = l.code;
-        opt.textContent = l.nativeName;
-        languageSelect.appendChild(opt);
-      });
-      if (currentUser?.language) {
-        languageSelect.value = currentUser.language;
-      } else {
-        languageSelect.value = getLocale();
-      }
+      languageLocales.set(locales as { code: string; nativeName: string }[]);
+      applyLanguageSelection();
     })
     .catch(() => {
-      ['en', 'ja'].forEach((code) => {
-        const opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code;
-        languageSelect.appendChild(opt);
-      });
+      languageLocales.set([
+        { code: 'en', nativeName: 'en' },
+        { code: 'ja', nativeName: 'ja' },
+      ]);
+      applyLanguageSelection();
     });
-
-  // Set current language
-  if (currentUser?.language) {
-    languageSelect.value = currentUser.language;
-  }
-
-  const languageSaveButton = document.createElement('button');
-  languageSaveButton.textContent = t('common.save');
-  languageSaveButton.className = 'settings-save';
-
-  const languageMessage = document.createElement('div');
-  languageMessage.setAttribute('role', 'status');
-  languageMessage.className = 'settings-status';
-
-  languageSection.appendChild(languageTitle);
-  languageSection.appendChild(languageSelect);
-  languageSection.appendChild(languageSaveButton);
-  languageSection.appendChild(languageMessage);
 
   // Email Section
   const emailSection = document.createElement('div');
   emailSection.className = 'settings-section';
 
-  const emailTitle = document.createElement('h2');
-  emailTitle.textContent = t('settings.change_email');
+  let currentPasswordInput!: HTMLInputElement;
+  let newEmailInput!: HTMLInputElement;
+  let emailSaveButton!: HTMLButtonElement;
+  let emailMessage!: HTMLElement;
 
-  const currentPasswordLabel = document.createElement('label');
-  currentPasswordLabel.textContent = t('settings.email_current_password');
-  currentPasswordLabel.className = 'settings-label';
-
-  const currentPasswordInput = document.createElement('input');
-  currentPasswordInput.type = 'password';
-  currentPasswordInput.id = 'settings-email-current-password';
-  currentPasswordLabel.htmlFor = currentPasswordInput.id;
-  currentPasswordInput.autocomplete = 'current-password';
-  currentPasswordInput.placeholder = t('settings.email_current_password_placeholder');
-  currentPasswordInput.className = 'settings-input';
-
-  const newEmailLabel = document.createElement('label');
-  newEmailLabel.textContent = t('settings.email_new_email');
-  newEmailLabel.className = 'settings-label';
-
-  const newEmailInput = document.createElement('input');
-  newEmailInput.type = 'email';
-  newEmailInput.id = 'settings-new-email';
-  newEmailLabel.htmlFor = newEmailInput.id;
-  newEmailInput.autocomplete = 'email';
-  newEmailInput.placeholder = t('settings.email_new_email_placeholder');
-  newEmailInput.className = 'settings-input';
-
-  const emailSaveButton = document.createElement('button');
-  emailSaveButton.textContent = t('common.save');
-  emailSaveButton.className = 'settings-save';
-
-  const emailMessage = document.createElement('div');
-  emailMessage.setAttribute('role', 'status');
-  emailMessage.className = 'settings-status';
-
-  emailSection.appendChild(emailTitle);
-  emailSection.appendChild(currentPasswordLabel);
-  emailSection.appendChild(currentPasswordInput);
-  emailSection.appendChild(newEmailLabel);
-  emailSection.appendChild(newEmailInput);
-  emailSection.appendChild(emailSaveButton);
-  emailSection.appendChild(emailMessage);
+  displayMounts.push(
+    mount(
+      emailSection,
+      () => html`
+        <h2>${t('settings.change_email')}</h2>
+        <label class="settings-label" for="settings-email-current-password">
+          ${t('settings.email_current_password')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-email-current-password"
+          type="password"
+          autocomplete="current-password"
+          placeholder=${t('settings.email_current_password_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) currentPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-new-email">${t('settings.email_new_email')}</label>
+        <input
+          class="settings-input"
+          id="settings-new-email"
+          type="email"
+          autocomplete="email"
+          placeholder=${t('settings.email_new_email_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) newEmailInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) emailSaveButton = element as unknown as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) emailMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   // Password Section
   const passwordSection = document.createElement('div');
   passwordSection.className = 'settings-section';
 
-  const passwordTitle = document.createElement('h2');
-  passwordTitle.textContent = t('settings.change_password');
+  const recoveryMode = sessionStorage.getItem('flaxia.recovery-login') === '1';
 
-  const currentPasswordLabel2 = document.createElement('label');
-  currentPasswordLabel2.textContent = t('settings.password_current');
-  currentPasswordLabel2.className = 'settings-label';
+  let currentPasswordInput2!: HTMLInputElement;
+  let newPasswordInput!: HTMLInputElement;
+  let confirmPasswordInput!: HTMLInputElement;
+  let passwordSaveButton!: HTMLButtonElement;
+  let passwordMessage!: HTMLElement;
 
-  const currentPasswordInput2 = document.createElement('input');
-  currentPasswordInput2.type = 'password';
-  currentPasswordInput2.id = 'settings-password-current';
-  currentPasswordLabel2.htmlFor = currentPasswordInput2.id;
-  currentPasswordInput2.autocomplete = 'current-password';
-  currentPasswordInput2.placeholder = t('settings.password_current_placeholder');
-  if (sessionStorage.getItem('flaxia.recovery-login') === '1') {
-    currentPasswordLabel2.textContent = t('settings.recovery_code_label');
-    currentPasswordInput2.placeholder = t('login.recovery_code_placeholder');
-  }
-  currentPasswordInput2.className = 'settings-input';
-
-  const newPasswordLabel = document.createElement('label');
-  newPasswordLabel.textContent = t('settings.password_new');
-  newPasswordLabel.className = 'settings-label';
-
-  const newPasswordInput = document.createElement('input');
-  newPasswordInput.type = 'password';
-  newPasswordInput.id = 'settings-new-password';
-  newPasswordLabel.htmlFor = newPasswordInput.id;
-  newPasswordInput.autocomplete = 'new-password';
-  newPasswordInput.placeholder = t('settings.password_new_placeholder');
-  newPasswordInput.className = 'settings-input';
-
-  const confirmPasswordLabel = document.createElement('label');
-  confirmPasswordLabel.textContent = t('settings.password_confirm');
-  confirmPasswordLabel.className = 'settings-label';
-
-  const confirmPasswordInput = document.createElement('input');
-  confirmPasswordInput.type = 'password';
-  confirmPasswordInput.id = 'settings-confirm-password';
-  confirmPasswordLabel.htmlFor = confirmPasswordInput.id;
-  confirmPasswordInput.autocomplete = 'new-password';
-  confirmPasswordInput.placeholder = t('settings.password_confirm_placeholder');
-  confirmPasswordInput.className = 'settings-input';
-
-  const passwordSaveButton = document.createElement('button');
-  passwordSaveButton.textContent = t('common.save');
-  passwordSaveButton.className = 'settings-save';
-
-  const passwordMessage = document.createElement('div');
-  passwordMessage.setAttribute('role', 'status');
-  passwordMessage.className = 'settings-status';
-
-  passwordSection.appendChild(passwordTitle);
-  passwordSection.appendChild(currentPasswordLabel2);
-  passwordSection.appendChild(currentPasswordInput2);
-  passwordSection.appendChild(newPasswordLabel);
-  passwordSection.appendChild(newPasswordInput);
-  passwordSection.appendChild(confirmPasswordLabel);
-  passwordSection.appendChild(confirmPasswordInput);
-  passwordSection.appendChild(passwordSaveButton);
-  passwordSection.appendChild(passwordMessage);
+  displayMounts.push(
+    mount(
+      passwordSection,
+      () => html`
+        <h2>${t('settings.change_password')}</h2>
+        <label class="settings-label" for="settings-password-current">
+          ${recoveryMode ? t('settings.recovery_code_label') : t('settings.password_current')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-password-current"
+          type="password"
+          autocomplete="current-password"
+          placeholder=${
+            recoveryMode ? t('login.recovery_code_placeholder') : t('settings.password_current_placeholder')
+          }
+          ref=${(element: Element | null) => {
+            if (element) currentPasswordInput2 = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-new-password">${t('settings.password_new')}</label>
+        <input
+          class="settings-input"
+          id="settings-new-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder=${t('settings.password_new_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) newPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <label class="settings-label" for="settings-confirm-password">
+          ${t('settings.password_confirm')}
+        </label>
+        <input
+          class="settings-input"
+          id="settings-confirm-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder=${t('settings.password_confirm_placeholder')}
+          ref=${(element: Element | null) => {
+            if (element) confirmPasswordInput = element as unknown as HTMLInputElement;
+          }}
+        />
+        <button
+          class="settings-save"
+          ref=${(element: Element | null) => {
+            if (element) passwordSaveButton = element as unknown as HTMLButtonElement;
+          }}
+        >
+          ${t('common.save')}
+        </button>
+        <div
+          class="settings-status"
+          role="status"
+          ref=${(element: Element | null) => {
+            if (element) passwordMessage = element as HTMLElement;
+          }}
+        ></div>
+      `,
+    ),
+  );
 
   const recoveryButton = document.createElement('button');
   recoveryButton.type = 'button';
@@ -1068,83 +1148,83 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     titlesSection.appendChild(titlesDesc);
     titlesSection.appendChild(titlesGrid);
 
+    const titlesSignal = signal<TitleEntry[]>([]);
+
+    const renderTitleEntry = (entry: TitleEntry): HTMLElement => {
+      if (entry.kind === 'empty' || entry.kind === 'error') {
+        const message = document.createElement('p');
+        message.textContent =
+          entry.kind === 'empty'
+            ? t('settings.titles_empty') || 'You have not earned any titles yet.'
+            : t('settings.titles_load_failed') || 'Failed to load titles.';
+        message.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+        return message;
+      }
+
+      const title = entry.title;
+      const card = document.createElement('div');
+      card.style.cssText = `
+        display: flex;
+        align-items: flex-start;
+        gap: 0.875rem;
+        padding: 0.875rem 1rem;
+        border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
+        border-radius: 8px;
+        background: var(--bg-secondary);
+      `;
+
+      const iconEl = createTitleIcon(title.icon, 'settings-title-icon');
+
+      const text = document.createElement('div');
+      text.style.cssText = 'min-width: 0; flex: 1;';
+
+      const nameRow = document.createElement('div');
+      nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
+
+      const name = document.createElement('strong');
+      name.textContent = titleName(title);
+      name.style.cssText = 'color: var(--text-primary);';
+      nameRow.appendChild(name);
+
+      if (title.equipped) {
+        const equipped = document.createElement('span');
+        equipped.textContent = t('settings.titles_equipped') || 'Equipped';
+        equipped.style.cssText =
+          'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
+        nameRow.appendChild(equipped);
+      }
+
+      const description = document.createElement('div');
+      description.textContent = titleDescription(title);
+      description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
+
+      text.appendChild(nameRow);
+      text.appendChild(description);
+      if (iconEl) card.appendChild(iconEl);
+      card.appendChild(text);
+      return card;
+    };
+
+    titlesMount = mount(titlesGrid, () =>
+      each(
+        () => titlesSignal(),
+        (entry) => (entry.kind === 'title' ? entry.title.id : entry.kind),
+        (entry) => legacy(renderTitleEntry(entry())),
+      ),
+    );
+
     fetch('/api/titles/me', { credentials: 'include' })
       .then((response) =>
         response.ok
-          ? (response.json() as Promise<{
-              titles?: Array<{
-                id: string;
-                icon: string;
-                name: string;
-                name_ja?: string | null;
-                description: string;
-                description_ja?: string | null;
-                equipped?: boolean;
-              }>;
-            }>)
+          ? (response.json() as Promise<{ titles?: SettingsTitle[] }>)
           : Promise.reject(new Error(String(response.status))),
       )
       .then((data) => {
         const titles = data.titles ?? [];
-        titlesGrid.replaceChildren();
-        if (titles.length === 0) {
-          const empty = document.createElement('p');
-          empty.textContent = t('settings.titles_empty') || 'You have not earned any titles yet.';
-          empty.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
-          titlesGrid.appendChild(empty);
-          return;
-        }
-
-        for (const title of titles) {
-          const card = document.createElement('div');
-          card.style.cssText = `
-            display: flex;
-            align-items: flex-start;
-            gap: 0.875rem;
-            padding: 0.875rem 1rem;
-            border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
-            border-radius: 8px;
-            background: var(--bg-secondary);
-          `;
-
-          const icon = createTitleIcon(title.icon, 'settings-title-icon');
-
-          const text = document.createElement('div');
-          text.style.cssText = 'min-width: 0; flex: 1;';
-
-          const nameRow = document.createElement('div');
-          nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
-
-          const name = document.createElement('strong');
-          name.textContent = titleName(title);
-          name.style.cssText = 'color: var(--text-primary);';
-          nameRow.appendChild(name);
-
-          if (title.equipped) {
-            const equipped = document.createElement('span');
-            equipped.textContent = t('settings.titles_equipped') || 'Equipped';
-            equipped.style.cssText =
-              'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
-            nameRow.appendChild(equipped);
-          }
-
-          const description = document.createElement('div');
-          description.textContent = titleDescription(title);
-          description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
-
-          text.appendChild(nameRow);
-          text.appendChild(description);
-          if (icon) card.appendChild(icon);
-          card.appendChild(text);
-          titlesGrid.appendChild(card);
-        }
+        titlesSignal.set(titles.length === 0 ? [{ kind: 'empty' }] : titles.map((title) => ({ kind: 'title', title })));
       })
       .catch(() => {
-        titlesGrid.replaceChildren();
-        const failed = document.createElement('p');
-        failed.textContent = t('settings.titles_load_failed') || 'Failed to load titles.';
-        failed.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
-        titlesGrid.appendChild(failed);
+        titlesSignal.set([{ kind: 'error' }]);
       });
   }
 
@@ -1187,114 +1267,136 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     stampsGrid.style.cssText =
       'display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.75rem; width: 100%;';
 
+    const stampsSignal = signal<StampEntry[]>([]);
+
+    const renderStampEntry = (entry: StampEntry): HTMLElement => {
+      if (entry.kind === 'error') {
+        const failed = document.createElement('div');
+        failed.style.cssText = 'grid-column:1/-1;text-align:center;color:var(--text-muted);padding:1rem;';
+        failed.textContent = t('settings.custom_emoji_load_failed') || 'Failed to load stamps';
+        return failed;
+      }
+
+      if (entry.kind === 'add') {
+        const addCard = document.createElement('div');
+        addCard.style.cssText = `
+          border: 2px dashed var(--border);
+          border-radius: 6px;
+          padding: 0.5rem;
+          text-align: center;
+          background: var(--bg-secondary);
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          gap: 0.25rem;
+          min-height: 80px;
+          transition: border-color 0.2s, background 0.2s;
+        `;
+        const addIcon = document.createElement('div');
+        addIcon.textContent = '+';
+        addIcon.style.cssText = 'font-size: 1.5rem; line-height: 1; color: var(--text-muted);';
+        const addLabel = document.createElement('div');
+        addLabel.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
+        addLabel.textContent = t('settings.add_stamp_tap_to_add') || 'Tap to add';
+        addCard.appendChild(addIcon);
+        addCard.appendChild(addLabel);
+
+        addCard.addEventListener('mouseenter', () => {
+          addCard.style.borderColor = 'var(--accent)';
+          addCard.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))';
+        });
+        addCard.addEventListener('mouseleave', () => {
+          addCard.style.borderColor = 'var(--border)';
+          addCard.style.background = 'var(--bg-secondary)';
+        });
+        addCard.addEventListener('click', () => {
+          createAddStampModal({ onUploaded: loadStamps });
+        });
+        return addCard;
+      }
+
+      const stamp = entry.stamp;
+      const card = document.createElement('div');
+      card.style.cssText = `
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.5rem;
+        text-align: center;
+        background: var(--bg-secondary);
+        overflow: hidden;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+      `;
+      const img = document.createElement('img');
+      img.src = stamp.url;
+      img.alt = stamp.name;
+      img.style.cssText = 'width: 48px; height: 48px; object-fit: contain; margin-bottom: 0.25rem; flex-shrink: 0;';
+      const label = document.createElement('div');
+      label.style.cssText =
+        'font-size: 0.75rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;';
+      label.textContent = stamp.name;
+      label.title = stamp.name;
+      const delBtn = document.createElement('button');
+      delBtn.textContent = '✕';
+      delBtn.style.cssText = `
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        background: var(--danger-strong, #b91c1c);
+        color: #fff;
+        border: none;
+        border-radius: 50%;
+        width: 16px;
+        height: 16px;
+        font-size: 9px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        padding: 0;
+        flex-shrink: 0;
+      `;
+      delBtn.addEventListener('click', async () => {
+        if (!confirm(t('settings.custom_emoji_delete_confirm', { name: stamp.name }) || `Delete ${stamp.name}?`)) {
+          return;
+        }
+        const res = await fetch(`/api/stamps/${stamp.id}`, { method: 'DELETE', credentials: 'include' });
+        if (res.ok) loadStamps();
+      });
+      card.appendChild(delBtn);
+      card.appendChild(img);
+      card.appendChild(label);
+      return card;
+    };
+
+    stampsMount = mount(stampsGrid, () =>
+      each(
+        () => stampsSignal(),
+        (entry) => (entry.kind === 'stamp' ? entry.stamp.id : entry.kind),
+        (entry) => legacy(renderStampEntry(entry())),
+      ),
+    );
+
     function loadStamps() {
       fetch('/api/stamps', { credentials: 'include' })
-        .then((r) => r.json() as Promise<{ stamps: Array<{ id: string; name: string; url: string }> }>)
+        .then((r) => r.json() as Promise<{ stamps: SettingsStamp[] }>)
         .then((data) => {
-          stampsGrid.innerHTML = '';
           const unlimited = !!currentPlan.plan && ['active', 'trialing'].includes(currentPlan.status || '');
           emojiCountValue.textContent = unlimited ? `${data.stamps.length} / ∞` : `${data.stamps.length} / 5`;
-          for (const stamp of data.stamps) {
-            const card = document.createElement('div');
-            card.style.cssText = `
-              border: 1px solid var(--border);
-              border-radius: 6px;
-              padding: 0.5rem;
-              text-align: center;
-              background: var(--bg-secondary);
-              overflow: hidden;
-              min-width: 0;
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              position: relative;
-            `;
-            const img = document.createElement('img');
-            img.src = stamp.url;
-            img.alt = stamp.name;
-            img.style.cssText =
-              'width: 48px; height: 48px; object-fit: contain; margin-bottom: 0.25rem; flex-shrink: 0;';
-            const label = document.createElement('div');
-            label.style.cssText =
-              'font-size: 0.75rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;';
-            label.textContent = stamp.name;
-            label.title = stamp.name;
-            const delBtn = document.createElement('button');
-            delBtn.textContent = '✕';
-            delBtn.style.cssText = `
-              position: absolute;
-              top: 2px;
-              right: 2px;
-              background: var(--danger-strong, #b91c1c);
-              color: #fff;
-              border: none;
-              border-radius: 50%;
-              width: 16px;
-              height: 16px;
-              font-size: 9px;
-              cursor: pointer;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              line-height: 1;
-              padding: 0;
-              flex-shrink: 0;
-            `;
-            delBtn.addEventListener('click', async () => {
-              if (!confirm(t('settings.custom_emoji_delete_confirm', { name: stamp.name }) || `Delete ${stamp.name}?`))
-                return;
-              const res = await fetch(`/api/stamps/${stamp.id}`, { method: 'DELETE', credentials: 'include' });
-              if (res.ok) loadStamps();
-            });
-            card.appendChild(delBtn);
-            card.appendChild(img);
-            card.appendChild(label);
-            stampsGrid.appendChild(card);
-          }
-
-          // Add "add" card
-          const addCard = document.createElement('div');
-          addCard.style.cssText = `
-            border: 2px dashed var(--border);
-            border-radius: 6px;
-            padding: 0.5rem;
-            text-align: center;
-            background: var(--bg-secondary);
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            gap: 0.25rem;
-            min-height: 80px;
-            transition: border-color 0.2s, background 0.2s;
-          `;
-          const addIcon = document.createElement('div');
-          addIcon.textContent = '+';
-          addIcon.style.cssText = 'font-size: 1.5rem; line-height: 1; color: var(--text-muted);';
-          const addLabel = document.createElement('div');
-          addLabel.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
-          addLabel.textContent = t('settings.add_stamp_tap_to_add') || 'Tap to add';
-          addCard.appendChild(addIcon);
-          addCard.appendChild(addLabel);
-
-          addCard.addEventListener('mouseenter', () => {
-            addCard.style.borderColor = 'var(--accent)';
-            addCard.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))';
-          });
-          addCard.addEventListener('mouseleave', () => {
-            addCard.style.borderColor = 'var(--border)';
-            addCard.style.background = 'var(--bg-secondary)';
-          });
-          addCard.addEventListener('click', () => {
-            createAddStampModal({ onUploaded: loadStamps });
-          });
-
-          stampsGrid.appendChild(addCard);
+          stampsSignal.set([
+            ...data.stamps.map((stamp) => ({ kind: 'stamp' as const, stamp })),
+            { kind: 'add' as const },
+          ]);
         })
         .catch(() => {
-          stampsGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:1rem;">${t('settings.custom_emoji_load_failed') || 'Failed to load stamps'}</div>`;
+          stampsSignal.set([{ kind: 'error' }]);
         });
     }
 
@@ -1322,89 +1424,76 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     billingTitle.textContent = t('settings.billing') || 'Billing & Plans';
     billingSection.appendChild(billingTitle);
 
-    // Current plan display
-    const planInfo = document.createElement('div');
-    planInfo.style.cssText = `
-      padding: 1rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      margin-bottom: 1rem;
-      background: var(--bg-secondary);
-    `;
-    const planLabel = document.createElement('div');
-    planLabel.style.cssText = 'font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;';
-    planLabel.textContent = t('settings.current_plan') || 'Current Plan';
-    const planName = document.createElement('div');
-    planName.style.cssText = 'font-weight: 600; font-size: 1.125rem; color: var(--text-primary);';
-    planName.textContent = t('settings.loading') || 'Loading...';
-    const planMeta = document.createElement('div');
-    planMeta.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;';
-    planInfo.appendChild(planLabel);
-    planInfo.appendChild(planName);
-    planInfo.appendChild(planMeta);
-    billingSection.appendChild(planInfo);
+    // Current plan + Flaxia+ card. `renderPlan()` writes the refs; the feature
+    // list is static, so it renders once through `each`.
+    let planName!: HTMLElement;
+    let planMeta!: HTMLElement;
+    let actionBtn!: HTMLButtonElement;
 
-    // Flaxia+ plan card
-    const plusCard = document.createElement('div');
-    plusCard.style.cssText = `
-      border: 2px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem;
-      margin-bottom: 1rem;
-    `;
-    const plusName = document.createElement('div');
-    plusName.style.cssText = 'font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;';
-    plusName.textContent = 'Flaxia+';
-    const plusPrice = document.createElement('div');
-    plusPrice.style.cssText = 'margin-bottom: 0.75rem;';
-    const plusPriceNum = document.createElement('span');
-    plusPriceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
-    plusPriceNum.textContent = '¥300';
-    const plusPricePeriod = document.createElement('span');
-    plusPricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
-    plusPricePeriod.textContent = '/mo';
-    plusPrice.appendChild(plusPriceNum);
-    plusPrice.appendChild(plusPricePeriod);
-
-    const plusFeatures = document.createElement('ul');
-    plusFeatures.style.cssText = 'list-style: none; padding: 0; margin: 0 0 0.5rem;';
-    const plusFeatureLabels = [
+    const plusFeatures = signal<string[]>([
       t('settings.plan_plus_f1') || 'Unlimited custom stamps',
       t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
       t('settings.plan_plus_f3') || 'Flaxia+ avatar checkmark badge',
-    ];
-    plusFeatureLabels.forEach((feature) => {
-      const li = document.createElement('li');
-      li.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;';
-      li.textContent = `✓ ${feature}`;
-      plusFeatures.appendChild(li);
-    });
+    ]);
 
-    const actionBtn = document.createElement('button');
-    actionBtn.style.cssText = `
-      width: 100%;
-      padding: 0.5rem;
-      border: none;
-      border-radius: 6px;
-      background: #8b5cf6;
-      color: white;
-      font-weight: 600;
-      font-size: 0.875rem;
-      cursor: pointer;
-      transition: opacity 0.2s;
-    `;
+    displayMounts.push(
+      mount(
+        billingSection,
+        () => html`
+          <div
+            style="padding: 1rem; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; background: var(--bg-secondary);"
+          >
+            <div style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+              ${t('settings.current_plan') || 'Current Plan'}
+            </div>
+            <div
+              style="font-weight: 600; font-size: 1.125rem; color: var(--text-primary);"
+              ref=${(element: Element | null) => {
+                if (element) planName = element as HTMLElement;
+              }}
+            >
+              ${t('settings.loading') || 'Loading...'}
+            </div>
+            <div
+              style="font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;"
+              ref=${(element: Element | null) => {
+                if (element) planMeta = element as HTMLElement;
+              }}
+            ></div>
+          </div>
+          <div style="border: 2px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;">Flaxia+</div>
+            <div style="margin-bottom: 0.75rem;">
+              <span style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">¥300</span>
+              <span style="font-size: 0.875rem; color: var(--text-muted);">/mo</span>
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0 0 0.5rem;">
+              ${each(
+                () => plusFeatures(),
+                (feature) => feature,
+                (feature) =>
+                  html`<li style="font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;">
+                    ${() => `✓ ${feature()}`}
+                  </li>`,
+              )}
+            </ul>
+            <button
+              style="width: 100%; padding: 0.5rem; border: none; border-radius: 6px; background: #8b5cf6; color: white; font-weight: 600; font-size: 0.875rem; cursor: pointer; transition: opacity 0.2s;"
+              ref=${(element: Element | null) => {
+                if (element) actionBtn = element as unknown as HTMLButtonElement;
+              }}
+            ></button>
+          </div>
+        `,
+      ),
+    );
+
     actionBtn.addEventListener('mouseenter', () => {
       if (!actionBtn.disabled) actionBtn.style.opacity = '0.85';
     });
     actionBtn.addEventListener('mouseleave', () => {
       if (!actionBtn.disabled) actionBtn.style.opacity = '1';
     });
-
-    plusCard.appendChild(plusName);
-    plusCard.appendChild(plusPrice);
-    plusCard.appendChild(plusFeatures);
-    plusCard.appendChild(actionBtn);
-    billingSection.appendChild(plusCard);
 
     // Billing history
     const historySection = document.createElement('div');
@@ -1414,10 +1503,35 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     historyTitle.textContent = t('settings.billing_history') || 'Billing History';
     const historyList = document.createElement('div');
     historyList.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem;';
-    historyList.textContent = t('settings.loading') || 'Loading...';
     historySection.appendChild(historyTitle);
     historySection.appendChild(historyList);
     billingSection.appendChild(historySection);
+
+    const historyStatus = document.createElement('div');
+    historyStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+    historyStatus.textContent = t('settings.loading') || 'Loading...';
+
+    const historySignal = signal<BillingHistoryRow[]>([]);
+    historyMount = mount(historyList, () =>
+      each(
+        () => historySignal(),
+        (row) => row.key,
+        (row) => {
+          const value = row();
+          const element = document.createElement('div');
+          element.style.cssText =
+            'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
+          const left = document.createElement('div');
+          left.textContent = value.left;
+          const right = document.createElement('div');
+          right.textContent = value.right;
+          element.appendChild(left);
+          element.appendChild(right);
+          return legacy(element);
+        },
+      ),
+    );
+    historyList.appendChild(historyStatus);
 
     const planNames: Record<string, string> = {
       flaxia_plus: 'Flaxia+ (¥300/mo)',
@@ -1505,34 +1619,23 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     };
 
     const renderHistory = (transactions: Array<Record<string, unknown>>) => {
-      historyList.textContent = '';
-      if (transactions.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
-        empty.textContent = t('settings.no_billing_history') || 'No payments yet';
-        historyList.appendChild(empty);
-        return;
-      }
       const txStatus = (status: unknown): string => {
         const key = `settings.status_${String(status)}`;
         const translated = t(key);
         return translated !== key ? translated : String(status);
       };
-      transactions.slice(0, 10).forEach((tx) => {
-        const row = document.createElement('div');
-        row.style.cssText =
-          'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
-        const left = document.createElement('div');
+      const rows: BillingHistoryRow[] = transactions.slice(0, 10).map((tx) => {
         const datePart = formatDate((tx.createdAt as string) || null);
         const namePart = (tx.planName as string) || (tx.type as string) || '';
-        left.textContent = [datePart, namePart].filter(Boolean).join(' · ');
-        const right = document.createElement('div');
         const amount = Number(tx.amount ?? 0);
-        right.textContent = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
-        row.appendChild(left);
-        row.appendChild(right);
-        historyList.appendChild(row);
+        const left = [datePart, namePart].filter(Boolean).join(' · ');
+        const right = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
+        return { key: `${left}|${right}`, left, right };
       });
+
+      historySignal.set(rows);
+      historyStatus.hidden = rows.length > 0;
+      if (rows.length === 0) historyStatus.textContent = t('settings.no_billing_history') || 'No payments yet';
     };
 
     const loadBilling = async () => {
@@ -1759,6 +1862,11 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     getElement: () => container,
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+      titlesMount?.dispose();
+      stampsMount?.dispose();
+      historyMount?.dispose();
+      for (const mounted of displayMounts) mounted.dispose();
+      displayMounts.length = 0;
       vaultSection?.destroy();
       bugReportForm.destroy();
       container.remove();

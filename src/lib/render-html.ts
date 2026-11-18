@@ -209,7 +209,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   <link rel="dns-prefetch" href="/api">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=optional" rel="stylesheet">
 
   <meta name="google-adsense-account" content="ca-pub-8703789531673358">
 

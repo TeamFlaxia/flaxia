@@ -11,6 +11,8 @@ import { pushSpaHistory } from './spa-history.ts';
 export interface BottomNavDeps {
   navigate: (view: RouteView, postId?: string, username?: string) => void;
   getCurrentUser: () => BottomNavProps['currentUser'];
+  /** Tab id for the current route, so the bar starts on the right item. */
+  getActiveItem?: () => string;
 }
 
 let bottomNav: BottomNav | null = null;
@@ -45,7 +47,7 @@ function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
 export async function ensureBottomNav(deps: BottomNavDeps): Promise<BottomNav> {
   if (!bottomNav) {
     bottomNav = await lazyCreateBottomNav({
-      activeItem: 'home',
+      activeItem: deps.getActiveItem?.() || 'home',
       currentUser: deps.getCurrentUser() || undefined,
       onNavigate: (item: string) => handleBottomNavNavigate(deps, item),
       onSignIn: () => {

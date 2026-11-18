@@ -4,10 +4,15 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { each, flushEffects, html, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { showToast } from '../lib/toast.js';
 import { markRecommendationProfileDirty } from '../lib/vault/recommendation-profile.js';
 import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
+
+type SuggestionEntry =
+  | { key: string; kind: 'user'; username: string; displayName: string; avatarKey: string | null }
+  | { key: string; kind: 'tag'; tag: string; count: number };
 
 export interface ReplyComposerProps {
   postId: string;
@@ -41,6 +46,8 @@ export class ReplyComposer {
   private mentionQuery: string = '';
   private mentionStartPos: number = -1;
   private mentionType: 'user' | 'tag' = 'user';
+  private suggestionSignal: Signal<SuggestionEntry[]> = signal<SuggestionEntry[]>([]);
+  private suggestionMount?: Mounted;
 
   constructor(props: ReplyComposerProps) {
     this.props = props;
@@ -61,73 +68,167 @@ export class ReplyComposer {
     const container = document.createElement('div');
     container.className = 'reply-composer';
 
-    container.innerHTML = `
-      <div class="reply-composer-body">
-        <div class="reply-composer-header">
-          <div class="reply-composer-avatar"></div>
-          <textarea 
-            class="reply-composer-textarea" 
-            placeholder="${t('reply_composer.placeholder')}"
-            maxlength="200"
-          ></textarea>
-        </div>
-        <div class="composer-progress" aria-hidden="true"><span class="composer-progress-fill"></span></div>
-        <div class="reply-composer-file-dropzone" style="display: none;">
-          <div class="dropzone-content">
-            <span class="dropzone-icon" data-icon="attach"></span>
-            <span class="dropzone-text">${t('reply_composer.file_hint')}</span>
+    const mentionDropdown = document.createElement('div');
+    mentionDropdown.className = 'mention-dropdown';
+
+    mount(
+      container,
+      () => html`
+        <div class="reply-composer-body">
+          <div class="reply-composer-header" style="position: relative">
+            <div class="reply-composer-avatar"></div>
+            <textarea
+              class="reply-composer-textarea"
+              placeholder=${t('reply_composer.placeholder')}
+              maxlength="200"
+              ref=${(element: Element | null) => {
+                if (element) this.textarea = element as unknown as HTMLTextAreaElement;
+              }}
+            ></textarea>
+            ${mentionDropdown}
           </div>
-        </div>
-        <div class="reply-composer-divider"></div>
-        <div class="reply-composer-footer">
-          <div class="reply-composer-actions">
-            <input type="file" class="reply-composer-file-input" accept=".gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm" />
-            <div class="reply-composer-attach-group">
-              <button class="reply-composer-file-button reply-composer-file-button--image" type="button" title="${t('composer.attach_image_video')}" aria-label="${t('composer.attach_image_video')}">
-                <span class="action-icon" data-icon="image-video"></span>
-              </button>
-              <button class="reply-composer-file-button reply-composer-file-button--audio" type="button" title="${t('composer.attach_audio')}" aria-label="${t('composer.attach_audio')}">
-                <span class="action-icon" data-icon="audio"></span>
-              </button>
+          <div class="composer-progress" aria-hidden="true"><span class="composer-progress-fill"></span></div>
+          <div class="reply-composer-file-dropzone" style="display: none">
+            <div class="dropzone-content">
+              <span class="dropzone-icon" data-icon="attach"></span>
+              <span class="dropzone-text">${t('reply_composer.file_hint')}</span>
             </div>
-            <span class="composer-meter" data-state="idle" data-empty="true">
-              <span class="composer-char-count reply-composer-char-count">0/200</span>
-            </span>
           </div>
-          <div class="reply-composer-buttons">
-            <button class="reply-composer-cancel" type="button">${t('reply_composer.cancel')}</button>
-            <button class="reply-composer-submit" type="button" disabled>${t('reply_composer.reply')}</button>
+          <div class="reply-composer-divider"></div>
+          <div class="reply-composer-footer">
+            <div class="reply-composer-actions">
+              <input
+                type="file"
+                class="reply-composer-file-input"
+                accept=".gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm"
+                ref=${(element: Element | null) => {
+                  if (element) this.fileInput = element as unknown as HTMLInputElement;
+                }}
+              />
+              <div class="reply-composer-attach-group">
+                <button
+                  class="reply-composer-file-button reply-composer-file-button--image"
+                  type="button"
+                  title=${t('composer.attach_image_video')}
+                  aria-label=${t('composer.attach_image_video')}
+                >
+                  <span class="action-icon" data-icon="image-video"></span>
+                </button>
+                <button
+                  class="reply-composer-file-button reply-composer-file-button--audio"
+                  type="button"
+                  title=${t('composer.attach_audio')}
+                  aria-label=${t('composer.attach_audio')}
+                >
+                  <span class="action-icon" data-icon="audio"></span>
+                </button>
+              </div>
+              <span class="composer-meter" data-state="idle" data-empty="true">
+                <span
+                  class="composer-char-count reply-composer-char-count"
+                  ref=${(element: Element | null) => {
+                    if (element) this.charCount = element as unknown as HTMLSpanElement;
+                  }}
+                >0/200</span>
+              </span>
+            </div>
+            <div class="reply-composer-buttons">
+              <button class="reply-composer-cancel" type="button" ref=${(element: Element | null) => {
+                if (element) this.cancelButton = element as unknown as HTMLButtonElement;
+              }}>${t('reply_composer.cancel')}</button><button class="reply-composer-submit" type="button" disabled ref=${(
+                element: Element | null,
+              ) => {
+                if (element) this.submitButton = element as unknown as HTMLButtonElement;
+              }}>${t('reply_composer.reply')}</button>
+            </div>
+          </div>
+          <div class="reply-composer-file-preview" style="display: none">
+            <div class="file-info">
+              <span class="file-name"></span>
+              <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
+            </div>
           </div>
         </div>
-        <div class="reply-composer-file-preview" style="display: none;">
-          <div class="file-info">
-            <span class="file-name"></span>
-            <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
-          </div>
-        </div>
-      </div>
-    `;
+      `,
+    );
 
     attachIcons(container);
 
     // Cache element references
-    this.textarea = container.querySelector('.reply-composer-textarea')!;
-    this.fileInput = container.querySelector('.reply-composer-file-input')!;
-    this.submitButton = container.querySelector('.reply-composer-submit')!;
-    this.cancelButton = container.querySelector('.reply-composer-cancel')!;
-    this.charCount = container.querySelector('.reply-composer-char-count')!;
     this.charMeter = container.querySelector('.composer-meter')!;
+    this.mentionDropdown = mentionDropdown;
 
-    // Mention dropdown surface styling lives in composer.css; only position is dynamic.
-    this.mentionDropdown = document.createElement('div');
-    this.mentionDropdown.className = 'mention-dropdown';
-    const composerHeader = container.querySelector('.reply-composer-header') as HTMLElement | null;
-    if (composerHeader) {
-      composerHeader.style.position = 'relative';
-      composerHeader.appendChild(this.mentionDropdown);
-    }
+    // The suggestions are a keyed list; the dropdown is rebuilt on every query
+    // only by replacing the entry array.
+    this.suggestionMount = mount(mentionDropdown, () =>
+      each(
+        () => this.suggestionSignal(),
+        (entry) => entry.key,
+        (entry) => legacy(this.renderSuggestionEntry(entry())),
+      ),
+    );
 
     return container;
+  }
+
+  private renderSuggestionEntry(entry: SuggestionEntry): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'mention-item';
+    item.setAttribute('data-value', entry.kind === 'user' ? entry.username : entry.tag);
+    item.style.cssText = 'padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;';
+
+    if (entry.kind === 'tag') {
+      const hash = document.createElement('span');
+      hash.textContent = '#';
+      hash.style.cssText =
+        'width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.8rem; font-weight: bold; flex-shrink: 0;';
+      const textSpan = document.createElement('span');
+      textSpan.style.cssText = 'display: flex; flex-direction: column;';
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;';
+      nameSpan.textContent = `#${entry.tag}`;
+      const countSpan = document.createElement('span');
+      countSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;';
+      countSpan.textContent = `${formatCount(entry.count)} posts`;
+      textSpan.appendChild(nameSpan);
+      textSpan.appendChild(countSpan);
+      item.appendChild(hash);
+      item.appendChild(textSpan);
+      item.addEventListener('click', () => this.selectSuggestion(entry.tag));
+    } else {
+      const avatarSpan = document.createElement('span');
+      avatarSpan.style.cssText =
+        'width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.7rem; font-weight: bold; flex-shrink: 0;';
+      avatarSpan.textContent = entry.username.charAt(0).toUpperCase();
+      if (entry.avatarKey) {
+        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${entry.avatarKey}`)})`;
+        avatarSpan.style.backgroundSize = 'cover';
+        avatarSpan.style.backgroundPosition = 'center';
+        avatarSpan.textContent = '';
+      }
+      const textSpan = document.createElement('span');
+      textSpan.style.cssText = 'display: flex; flex-direction: column;';
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;';
+      nameSpan.textContent = entry.displayName;
+      const handleSpan = document.createElement('span');
+      handleSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;';
+      handleSpan.textContent = `@${entry.username}`;
+      textSpan.appendChild(nameSpan);
+      textSpan.appendChild(handleSpan);
+      item.appendChild(avatarSpan);
+      item.appendChild(textSpan);
+      item.addEventListener('click', () => this.selectSuggestion(entry.username));
+    }
+
+    item.addEventListener('mouseenter', () => {
+      for (const other of this.mentionDropdown.querySelectorAll('.mention-item--active')) {
+        other.classList.remove('mention-item--active');
+      }
+      item.classList.add('mention-item--active');
+    });
+
+    return item;
   }
 
   private setupEventListeners(): void {
@@ -282,44 +383,16 @@ export class ReplyComposer {
       return;
     }
 
-    this.mentionDropdown.innerHTML = '';
-    users.forEach((user, index) => {
-      const item = document.createElement('div');
-      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`;
-      item.setAttribute('data-value', user.username);
-      item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`;
-      const avatarSpan = document.createElement('span');
-      avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`;
-      avatarSpan.textContent = user.username.charAt(0).toUpperCase();
-      if (user.avatar_key) {
-        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
-        avatarSpan.style.backgroundSize = 'cover';
-        avatarSpan.style.backgroundPosition = 'center';
-        avatarSpan.textContent = '';
-      }
-      const textSpan = document.createElement('span');
-      textSpan.style.cssText = 'display: flex; flex-direction: column;';
-      const nameSpan = document.createElement('span');
-      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;';
-      nameSpan.textContent = user.display_name || user.username;
-      const handleSpan = document.createElement('span');
-      handleSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;';
-      handleSpan.textContent = `@${user.username}`;
-      textSpan.appendChild(nameSpan);
-      textSpan.appendChild(handleSpan);
-      item.appendChild(avatarSpan);
-      item.appendChild(textSpan);
-      item.addEventListener('click', () => this.selectSuggestion(user.username));
-      item.addEventListener('mouseenter', () => {
-        this.mentionDropdown
-          .querySelectorAll('.mention-item--active')
-          .forEach((el) => void el.classList.remove('mention-item--active'));
-        item.classList.add('mention-item--active');
-      });
-      this.mentionDropdown.appendChild(item);
-    });
-    this.mentionDropdown.style.display = 'block';
-    this.positionDropdownAboveCursor();
+    this.suggestionSignal.set(
+      users.map((user) => ({
+        key: `user:${user.username}`,
+        kind: 'user',
+        username: user.username,
+        displayName: user.display_name || user.username,
+        avatarKey: user.avatar_key,
+      })),
+    );
+    this.showSuggestionDropdown();
   }
 
   private showTagSuggestions(tags: Array<{ tag: string; count: number }>): void {
@@ -328,38 +401,31 @@ export class ReplyComposer {
       return;
     }
 
-    this.mentionDropdown.innerHTML = '';
-    tags.forEach((tag, index) => {
-      const item = document.createElement('div');
-      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`;
-      item.setAttribute('data-value', tag.tag);
-      item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`;
-      const hash = document.createElement('span');
-      hash.textContent = '#';
-      hash.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.8rem; font-weight: bold; flex-shrink: 0;`;
-      const textSpan = document.createElement('span');
-      textSpan.style.cssText = 'display: flex; flex-direction: column;';
-      const nameSpan = document.createElement('span');
-      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;';
-      nameSpan.textContent = `#${tag.tag}`;
-      const countSpan = document.createElement('span');
-      countSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;';
-      countSpan.textContent = `${formatCount(tag.count)} posts`;
-      textSpan.appendChild(nameSpan);
-      textSpan.appendChild(countSpan);
-      item.appendChild(hash);
-      item.appendChild(textSpan);
-      item.addEventListener('click', () => this.selectSuggestion(tag.tag));
-      item.addEventListener('mouseenter', () => {
-        this.mentionDropdown
-          .querySelectorAll('.mention-item--active')
-          .forEach((el) => void el.classList.remove('mention-item--active'));
-        item.classList.add('mention-item--active');
-      });
-      this.mentionDropdown.appendChild(item);
-    });
+    this.suggestionSignal.set(
+      tags.map((tag) => ({
+        key: `tag:${tag.tag}`,
+        kind: 'tag',
+        tag: tag.tag,
+        count: tag.count,
+      })),
+    );
+    this.showSuggestionDropdown();
+  }
+
+  private showSuggestionDropdown(): void {
     this.mentionDropdown.style.display = 'block';
+    // The keyed list renders in a microtask; flush it so the first row can be
+    // marked active before the dropdown is positioned.
+    flushEffects();
+    this.setActiveSuggestion(0);
     this.positionDropdownAboveCursor();
+  }
+
+  private setActiveSuggestion(index: number): void {
+    const items = this.mentionDropdown.querySelectorAll('.mention-item');
+    items.forEach((item, itemIndex) => {
+      item.classList.toggle('mention-item--active', itemIndex === index);
+    });
   }
 
   private positionDropdownAboveCursor(): void {
@@ -385,6 +451,7 @@ export class ReplyComposer {
 
   private hideMentionDropdown(): void {
     this.mentionDropdown.style.display = 'none';
+    this.suggestionSignal.set([]);
     if (this.mentionTimeout) {
       clearTimeout(this.mentionTimeout);
       this.mentionTimeout = null;
@@ -772,6 +839,9 @@ export class ReplyComposer {
   }
 
   public destroy(): void {
+    this.suggestionMount?.dispose();
+    this.suggestionMount = undefined;
+    this.suggestionSignal.set([]);
     this.element.remove();
   }
 }

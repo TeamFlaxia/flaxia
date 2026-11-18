@@ -1,0 +1,204 @@
+/**
+ * Resolved layout primitives.
+ *
+ * These classes are the contract between a component and the feed: the outer
+ * size is owned by the box, and the child fills it. Nothing here depends on
+ * load order, image dimensions or iframe timing.
+ */
+
+.fx-box {
+  position: relative;
+  inline-size: 100%;
+  aspect-ratio: var(--fx-ratio, auto);
+  min-block-size: var(--fx-min, 0px);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--bg-tertiary, #f1f5f9);
+  contain: layout paint;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.fx-box__inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.fx-box__inner > img,
+.fx-box__inner > video,
+.fx-box__inner > canvas,
+.fx-box__inner > svg,
+.fx-box > img,
+.fx-box > video {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.fx-box__inner > iframe {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border: 0;
+}
+
+.fx-ad-slot {
+  min-block-size: 250px;
+}
+
+.fx-reserve {
+  min-block-size: var(--fx-min, 0px);
+  contain: layout;
+}
+
+.fx-skeleton {
+  background: var(--bg-tertiary, #f1f5f9);
+}
+
+.fx-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, var(--bg-hover, rgba(15, 23, 42, 0.045)) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: fx-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes fx-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-skeleton::after {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .fx-box,
+  .fx-skeleton {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .fx-skeleton::after {
+    background: none;
+  }
+}
+
+/* Stage layers participate in the stage's layout (absolute media children and
+   normal-flow image previews both keep working). Hidden layers are removed from
+   layout without destroying the iframe inside them. */
+.post-stage-layer {
+  display: contents;
+}
+
+.post-stage-layer[hidden] {
+  display: none;
+}
+
+/* Link previews arrive after the post body. Reserve a text-card-sized slot so
+   the feed does not jump while the OG fetch is in flight. */
+.post-link-preview-skeleton {
+  min-block-size: 84px;
+  margin: 0.75rem 0 1rem;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: var(--bg-tertiary, #f1f5f9);
+  contain: layout paint;
+}
+
+/* PostStage ZIP/SWF: replace the legacy padding-bottom aspect box with the
+   shared reserved box. The higher-specificity rule lives in the primitives
+   layer, so it wins over .post-stage--zip / --flash without !important. */
+.post-stage.fx-box {
+  padding-bottom: 0;
+  aspect-ratio: var(--fx-ratio, auto);
+  min-block-size: 0;
+}
+
+/* ImagePreview's 16:9 mode keeps its legacy class for the lightbox hooks, but
+   the reserved box comes from fx-box. Reset the legacy absolute fill so the
+   aspect ratio owns the height. */
+.image-preview.fx-box {
+  display: block;
+  height: auto;
+  inset: auto;
+  overflow: clip;
+}
+
+/* Link previews: keep the card's square top edge; the ratio comes from the box. */
+.link-preview-image-container.fx-box {
+  border-radius: 0;
+  min-block-size: 0;
+}
+
+/* Carousel slides own the reserved frame, not the media inside them. The track
+   already paints the surface and clips the strip. */
+.media-carousel-slide.fx-box {
+  background: transparent;
+  border-radius: 0;
+  min-block-size: 0;
+}
+
+/* The data-saver gate reuses the media box, so it inherits the ratio rather
+   than duplicating an inline aspect-ratio. */
+.data-saver-placeholder.fx-box {
+  min-block-size: 0;
+}
+
+/* Right rail: the two variable-height cards are filled before the rail is
+   revealed (see RightPanel), and the weather card reserves its maximum height
+   (current row + humidity/wind note + forecast note) so a late forecast cannot
+   move the shortcuts card below it. */
+.right-panel--pending {
+  visibility: hidden;
+}
+
+.maps-weather-section .right-card-body {
+  min-block-size: 5.4375rem;
+}
+
+/* Inline navigation status (src/lib/nav-loading.ts). Shown only while the
+   content column is empty: the previous view is parked and the next one is
+   still being built. */
+.nav-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-block-size: 60vh;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nav-loading-spinner {
+  inline-size: 24px;
+  block-size: 24px;
+  border: 2px solid var(--border);
+  border-block-start-color: var(--accent);
+  border-radius: 50%;
+  animation: fx-nav-spin 800ms linear infinite;
+}
+
+@keyframes fx-nav-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-loading-spinner {
+    animation: none;
+  }
+}

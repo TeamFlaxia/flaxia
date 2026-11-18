@@ -1,4 +1,6 @@
 import {
+  GAME_AUDIO_MUTE_MESSAGE,
+  GAME_AUDIO_MUTE_RUNTIME,
   isParentZipPreviewMessage,
   isPreviewFullscreenRequest,
   isSandboxZipPreviewMessage,
@@ -222,6 +224,14 @@ async function loadJSZip() {
   return window.JSZip;
 }
 
+function injectAudioMuteRuntime(htmlContent) {
+  const tag = `<script>${GAME_AUDIO_MUTE_RUNTIME}</script>`;
+  if (/<head\b[^>]*>/i.test(htmlContent)) {
+    return htmlContent.replace(/(<head\b[^>]*>)/i, `$1${tag}`);
+  }
+  return `${tag}${htmlContent}`;
+}
+
 async function executeZip(zipData) {
   const JSZip = await loadJSZip();
   const zip = await JSZip.loadAsync(zipData);
@@ -235,6 +245,7 @@ async function executeZip(zipData) {
 
   let htmlContent = await indexFile.async('string');
   htmlContent = rewriteHtmlString(htmlContent, blobUrlMap);
+  htmlContent = injectAudioMuteRuntime(htmlContent);
 
   const htmlBlob = new Blob([htmlContent], { type: 'text/html' });
   const htmlBlobUrl = URL.createObjectURL(htmlBlob);
@@ -306,6 +317,19 @@ window.addEventListener('message', async (event) => {
     showError(message);
     const failure = { type: 'ZIP_ERROR', postId: event.data.postId, error: message };
     if (isParentZipPreviewMessage(failure)) window.parent.postMessage(failure, replyTo);
+  }
+});
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window.parent || !isAllowedParentOrigin(event.origin)) return;
+  if (!event.data || event.data.type !== GAME_AUDIO_MUTE_MESSAGE) return;
+  // The game runs in an opaque sandboxed frame. Forward the mute request to it;
+  // the injected runtime validates event.source === window.parent.
+  const gameFrame = container.querySelector('iframe');
+  try {
+    gameFrame?.contentWindow?.postMessage(event.data, '*');
+  } catch {
+    // The frame is not ready yet; the app sends another mute after mounting.
   }
 });
 

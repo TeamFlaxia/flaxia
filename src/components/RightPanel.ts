@@ -40,9 +40,21 @@ export class RightPanel {
     this.mapWeather = !!props.mapWeather;
     this.weather = !!props.weather;
     this.element = this.createElement();
+    // The rail is laid out from the first paint but stays invisible until its
+    // two variable-height cards (trending, who-to-follow) have their content.
+    // `visibility` keeps the column's space, so revealing it cannot shift the
+    // timeline or move the shortcuts card below.
+    this.element.classList.add('right-panel--pending');
     this.setupEventListeners();
-    this.loadTrendingTags();
-    this.loadUserSuggestions();
+    const reveal = () => this.element.classList.remove('right-panel--pending');
+    // Never keep the rail invisible behind a hung request.
+    const revealTimer = setTimeout(reveal, 1500);
+    const trending = this.loadTrendingTags();
+    const suggestions = this.loadUserSuggestions();
+    void Promise.allSettled([trending, suggestions]).then(() => {
+      clearTimeout(revealTimer);
+      reveal();
+    });
     if (this.mapWeather) {
       this.setupMapWeather();
     }
@@ -132,8 +144,25 @@ export class RightPanel {
   private createMapWeatherSection(): HTMLElement {
     const { section, list } = this.createCard('天気 / Weather', 'maps-weather-section');
     this.weatherBody = list;
-    list.textContent = '…';
+    // Render the same current-row shape as the loaded state (instead of a
+    // one-line "…"), so the card height does not change when data lands.
+    list.appendChild(this.createWeatherCurrent('--', '…'));
     return section;
+  }
+
+  /** The temperature/symbol row; shared by the placeholder and loaded states. */
+  private createWeatherCurrent(temperature: string, symbolText: string): HTMLElement {
+    const current = document.createElement('div');
+    current.className = 'maps-weather-current';
+    const temp = document.createElement('span');
+    temp.className = 'maps-weather-temp';
+    temp.textContent = temperature;
+    const symbol = document.createElement('span');
+    symbol.className = 'maps-weather-symbol';
+    symbol.textContent = symbolText;
+    current.appendChild(temp);
+    current.appendChild(symbol);
+    return current;
   }
 
   private setupMapWeather(): void {
@@ -141,23 +170,21 @@ export class RightPanel {
       const detail = (e as CustomEvent).detail as { lat: number; lon: number; data?: any; error?: boolean };
       if (!this.weatherBody) return;
       if (detail?.error || !detail?.data) {
-        this.weatherBody.textContent = '天気を取得できませんでした';
+        this.weatherBody.replaceChildren(this.createWeatherCurrent('--', ''));
+        const note = document.createElement('div');
+        note.className = 'maps-note';
+        note.textContent = '天気を取得できませんでした';
+        this.weatherBody.appendChild(note);
         return;
       }
       const data = detail.data;
       const current = data.points?.[0];
-      this.weatherBody.innerHTML = '';
-      const cur = document.createElement('div');
-      cur.className = 'maps-weather-current';
-      const temp = document.createElement('span');
-      temp.className = 'maps-weather-temp';
-      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
-      const symbol = document.createElement('span');
-      symbol.className = 'maps-weather-symbol';
-      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
-      cur.appendChild(temp);
-      cur.appendChild(symbol);
-      this.weatherBody.appendChild(cur);
+      this.weatherBody.replaceChildren(
+        this.createWeatherCurrent(
+          current?.temperature != null ? `${Math.round(current.temperature)}°` : '--',
+          this.symbolLabel(current?.symbol ?? null),
+        ),
+      );
       const meta = document.createElement('div');
       meta.className = 'maps-note';
       const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
@@ -237,18 +264,12 @@ export class RightPanel {
       const data = (await res.json()) as { points: any[] };
       if (!this.weatherBody) return;
       const current = data.points?.[0];
-      this.weatherBody.innerHTML = '';
-      const cur = document.createElement('div');
-      cur.className = 'maps-weather-current';
-      const temp = document.createElement('span');
-      temp.className = 'maps-weather-temp';
-      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
-      const symbol = document.createElement('span');
-      symbol.className = 'maps-weather-symbol';
-      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
-      cur.appendChild(temp);
-      cur.appendChild(symbol);
-      this.weatherBody.appendChild(cur);
+      this.weatherBody.replaceChildren(
+        this.createWeatherCurrent(
+          current?.temperature != null ? `${Math.round(current.temperature)}°` : '--',
+          this.symbolLabel(current?.symbol ?? null),
+        ),
+      );
       const meta = document.createElement('div');
       meta.className = 'maps-note';
       const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
@@ -286,7 +307,12 @@ export class RightPanel {
       }
       this.weatherBody.appendChild(hourly);
     } catch {
-      if (this.weatherBody) this.weatherBody.textContent = '天気を取得できませんでした';
+      if (!this.weatherBody) return;
+      this.weatherBody.replaceChildren(this.createWeatherCurrent('--', ''));
+      const note = document.createElement('div');
+      note.className = 'maps-note';
+      note.textContent = '天気を取得できませんでした';
+      this.weatherBody.appendChild(note);
     }
   }
 

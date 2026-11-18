@@ -6,6 +6,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { parsePostColors } from '../lib/post-colors.js';
 import { renderColorizedText } from '../lib/post-colors-dom.js';
 import { parseMediaCues, stripMediaCues } from '../lib/post-cues.js';
+import { html, mount } from '../lib/render/index.ts';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -97,10 +98,7 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
   card.style.cursor = disableNavigation ? 'default' : 'pointer';
 
   if (!quoted) {
-    const unavailable = document.createElement('div');
-    unavailable.className = 'quoted-post-unavailable';
-    unavailable.textContent = t('post.quote_unavailable');
-    card.appendChild(unavailable);
+    mount(card, () => html`<div class="quoted-post-unavailable">${t('post.quote_unavailable')}</div>`);
     return card;
   }
 
@@ -122,52 +120,54 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
     });
   }
 
-  const nameRow = document.createElement('div');
-  nameRow.className = 'quoted-post-author';
-
-  const avatar = document.createElement('span');
-  avatar.className = 'quoted-post-avatar';
-  if (quoted.avatar_url) {
-    avatar.style.backgroundImage = `url(${quoted.avatar_url})`;
-    avatar.style.backgroundSize = 'cover';
-    avatar.style.backgroundPosition = 'center';
-  } else if (quoted.avatar_key) {
-    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${quoted.avatar_key}`)})`;
-    avatar.style.backgroundSize = 'cover';
-    avatar.style.backgroundPosition = 'center';
-  } else {
-    avatar.textContent = (quoted.display_name || quoted.username || '?').charAt(0).toUpperCase();
-  }
-  attachPlusBadge(avatar, quoted.badge_type);
-
-  const name = document.createElement('span');
-  name.className = 'quoted-post-name';
-  name.textContent = quoted.display_name || quoted.username || '';
-  applyNameColor(name, quoted.name_color, quoted.badge_type);
-
-  const username = document.createElement('span');
-  username.className = 'quoted-post-username';
-  username.textContent = quoted.username ? `@${quoted.username}` : '';
-
-  nameRow.appendChild(avatar);
-  nameRow.appendChild(name);
-  nameRow.appendChild(username);
+  const avatarImage = quoted.avatar_url
+    ? quoted.avatar_url
+    : quoted.avatar_key
+      ? nativeApiHref(`/api/images/${quoted.avatar_key}`)
+      : null;
+  const avatarInitial = avatarImage ? '' : (quoted.display_name || quoted.username || '?').charAt(0).toUpperCase();
+  const displayName = quoted.display_name || quoted.username || '';
+  const username = quoted.username ? `@${quoted.username}` : '';
   const titleBadge = createUserTitleBadge(quoted);
-  if (titleBadge) nameRow.appendChild(titleBadge);
-  card.appendChild(nameRow);
 
-  const body = document.createElement('div');
-  body.className = 'quoted-post-text';
-  if (canUsePostColors({ badge_type: quoted.badge_type })) {
-    const parsed = parsePostColors(stripMediaCues(quoted.text || ''));
-    body.appendChild(renderColorizedText(parsed.plain, parsed.spans));
-  } else {
-    body.textContent = stripMediaCues(quoted.text || '').replace(/\\\{/g, '{');
-  }
-  card.appendChild(body);
+  // The body keeps its own renderer (post colours or plain text), so the
+  // template only reserves the node and the text lands after mount.
+  const bodyText = stripMediaCues(quoted.text || '').replace(/\\\{/g, '{');
+  const coloredBody = canUsePostColors({ badge_type: quoted.badge_type })
+    ? parsePostColors(stripMediaCues(quoted.text || ''))
+    : null;
 
   const attachment = createQuotedPostAttachment(quoted);
-  if (attachment) card.appendChild(attachment);
+
+  let avatar!: HTMLElement;
+  let name!: HTMLElement;
+  let body!: HTMLElement;
+
+  // One line for the author row (inline elements), then the block children.
+  mount(
+    card,
+    () =>
+      html`<div class="quoted-post-author"><span class="quoted-post-avatar" ref=${(element: Element | null) => {
+        if (element) avatar = element as HTMLElement;
+      }}>${avatarInitial}</span><span class="quoted-post-name" ref=${(element: Element | null) => {
+        if (element) name = element as HTMLElement;
+      }}>${displayName}</span><span class="quoted-post-username">${username}</span>${titleBadge ?? ''}</div><div class="quoted-post-text" ref=${(
+        element: Element | null,
+      ) => {
+        if (element) body = element as HTMLElement;
+      }}></div>${attachment ?? ''}`,
+  );
+
+  if (avatarImage) {
+    avatar.style.backgroundImage = `url(${avatarImage})`;
+    avatar.style.backgroundSize = 'cover';
+    avatar.style.backgroundPosition = 'center';
+  }
+  attachPlusBadge(avatar, quoted.badge_type);
+  applyNameColor(name, quoted.name_color, quoted.badge_type);
+
+  if (coloredBody) body.appendChild(renderColorizedText(coloredBody.plain, coloredBody.spans));
+  else body.textContent = bodyText;
 
   return card;
 }

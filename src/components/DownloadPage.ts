@@ -6,12 +6,13 @@ import {
   orderAppPlatforms,
   recommendedAppPlatform,
   resolveWindowsMsiUrl,
-} from '../lib/app-download.js';
-import { type DevicePlatform, detectDevicePlatform } from '../lib/device-platform.js';
-import { t } from '../lib/i18n.js';
-import { type IconName, icon } from '../lib/icons.js';
-import { createPageHeader } from '../lib/page-header.js';
-import { updateMetaTags } from '../lib/seo-meta.js';
+} from '../lib/app-download.ts';
+import { type DevicePlatform, detectDevicePlatform } from '../lib/device-platform.ts';
+import { t } from '../lib/i18n.ts';
+import { type IconName, icon } from '../lib/icons.ts';
+import { createPageHeader } from '../lib/page-header.ts';
+import { html, mount } from '../lib/render/index.ts';
+import { updateMetaTags } from '../lib/seo-meta.ts';
 
 interface DownloadPageProps {
   device?: DevicePlatform;
@@ -153,52 +154,37 @@ export function createDownloadPage({ device }: DownloadPageProps = {}) {
   const recommended = recommendedAppPlatform(currentDevice);
   const recommendedLabel = recommended ? t(PLATFORM_LABEL_KEYS[recommended]) : null;
 
-  const container = document.createElement('div');
-  container.className = 'download-page';
-
-  container.appendChild(
-    createPageHeader({
-      title: t('app_download.title'),
-      subtitle: t('app_download.subtitle'),
-      onBack: () => window.history.back(),
-    }),
-  );
-
-  const content = document.createElement('div');
-  content.className = 'download-content';
-
-  const hero = document.createElement('section');
-  hero.className = `download-hero${recommended ? ' download-hero--recommended' : ''}`;
-
-  const heroTitle = document.createElement('h2');
-  heroTitle.className = 'download-hero-title';
-  heroTitle.textContent = recommendedLabel
+  const heroClass = `download-hero${recommended ? ' download-hero--recommended' : ''}`;
+  const heroTitle = recommendedLabel
     ? t('app_download.recommended_for_device', { platform: recommendedLabel })
     : t('app_download.available_for_devices');
-
-  const heroBody = document.createElement('p');
-  heroBody.className = 'download-hero-body';
-  heroBody.textContent = t('app_download.hero_body');
-
-  hero.appendChild(heroTitle);
-  hero.appendChild(heroBody);
-  content.appendChild(hero);
-
-  for (const platform of orderAppPlatforms(currentDevice)) {
-    content.appendChild(createPlatformCard(platform, platform === recommended));
-  }
-
-  const footnote = document.createElement('p');
-  footnote.className = 'download-footnote';
-  footnote.textContent = t('app_download.release_hint');
 
   const allReleases = externalLink(APP_RELEASES_URL);
   allReleases.className = 'download-all-releases';
   allReleases.textContent = `${t('app_download.all_releases')} →`;
 
-  content.appendChild(footnote);
-  content.appendChild(allReleases);
-  container.appendChild(content);
+  const container = document.createElement('div');
+  container.className = 'download-page';
+
+  const mounted = mount(
+    container,
+    () => html`
+      ${createPageHeader({
+        title: t('app_download.title'),
+        subtitle: t('app_download.subtitle'),
+        onBack: () => window.history.back(),
+      })}
+      <div class="download-content">
+        <section class=${heroClass}>
+          <h2 class="download-hero-title">${heroTitle}</h2>
+          <p class="download-hero-body">${t('app_download.hero_body')}</p>
+        </section>
+        ${orderAppPlatforms(currentDevice).map((platform) => createPlatformCard(platform, platform === recommended))}
+        <p class="download-footnote">${t('app_download.release_hint')}</p>
+        ${allReleases}
+      </div>
+    `,
+  );
 
   updateMetaTags({
     title: `Flaxia - ${t('app_download.title')}`,
@@ -208,6 +194,6 @@ export function createDownloadPage({ device }: DownloadPageProps = {}) {
 
   return {
     getElement: () => container,
-    destroy: () => {},
+    destroy: () => mounted.dispose(),
   };
 }

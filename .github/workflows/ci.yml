@@ -84,6 +84,51 @@ jobs:
           LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
 
+  render-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:render
+      # Use the runner's installed Chrome; avoid OS package/browser downloads.
+      - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
+      - run: npm run test:render:browser
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          RENDER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+      - run: npm run test:styles:browser
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+      - run: npm run test:app:browser
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+
+  styles-webkit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
+      - run: '$RUNNER_TEMP/flaxia-browser-tools/node_modules/.bin/playwright install --with-deps webkit'
+      - run: npm run test:styles:browser
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          STYLES_BROWSER: webkit
+      - run: npm run test:app:browser
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          APP_BROWSER: webkit
+
   lint:
     runs-on: ubuntu-latest
     steps:

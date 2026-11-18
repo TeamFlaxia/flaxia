@@ -7,6 +7,7 @@ import {
   restoreColorPlaceholders,
 } from '../lib/post-colors-dom.js';
 import { stripMediaCues } from '../lib/post-cues.js';
+import { html, mount } from '../lib/render/index.ts';
 import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
@@ -88,19 +89,33 @@ interface MathPlaceholder {
 }
 
 export async function createPostText(props: PostTextProps): Promise<HTMLElement> {
-  const container = document.createElement('div');
+  const host = document.createElement('div');
+  let container!: HTMLElement;
+
   // Markdown output already encodes line breaks as <br>; `white-space: pre-wrap`
   // is only for the plain-text placeholder, otherwise the literal newlines in
   // markdown-it's HTML double every break.
-  container.className = 'post-text post-text--rich';
+  //
+  // The outer node is engine-owned; the body below is sanitized markdown-it
+  // output (not hand-assembled markup), so it is written as one payload.
+  mount(
+    host,
+    () =>
+      html`<div
+        class="post-text post-text--rich"
+        ref=${(element: Element | null) => {
+          if (element) container = element as HTMLElement;
+        }}
+      ></div>`,
+  );
 
   // Process the text through the unified pipeline. Colors are an author-side
   // Flaxia+ entitlement; non-members' markers stay literal.
-  const { html, colorEntries } = await processTextInternal(
+  const { html: bodyHtml, colorEntries } = await processTextInternal(
     props.text,
     canUsePostColors({ badge_type: props.badgeType }),
   );
-  container.innerHTML = html;
+  container.innerHTML = bodyHtml;
   restoreColorPlaceholders(container, colorEntries);
 
   // Render math elements after HTML is inserted

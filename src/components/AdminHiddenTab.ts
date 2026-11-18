@@ -1,5 +1,6 @@
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 
 export interface HiddenPost {
   id: string;
@@ -19,6 +20,9 @@ export interface AdminHiddenTabProps {
 export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
   let element: HTMLElement;
   let posts: HiddenPost[] = [];
+  const postsSignal: Signal<HiddenPost[]> = signal<HiddenPost[]>([]);
+  let postsMount: Mounted | undefined;
+  let emptyEl: HTMLElement | undefined;
 
   // Create container immediately
   element = document.createElement('div');
@@ -161,7 +165,8 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       const success = await unhidePost(post.id);
       if (success) {
         posts = posts.filter((p) => p.id !== post.id);
-        render();
+        postsSignal.set([...posts]);
+        if (emptyEl) emptyEl.hidden = posts.length > 0;
       }
     });
     actions.appendChild(unhideBtn);
@@ -172,6 +177,8 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
   };
 
   const render = async () => {
+    postsMount?.dispose();
+    postsMount = undefined;
     element.innerHTML = '';
 
     const title = document.createElement('h2');
@@ -184,18 +191,23 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
     `;
     element.appendChild(title);
 
-    if (posts.length === 0) {
-      const empty = document.createElement('div');
-      empty.textContent = t('admin_hidden.empty');
-      empty.style.cssText =
-        'color: #64748b; font-size: 14px; padding: 24px; text-align: center; font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;';
-      empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
-      element.appendChild(empty);
-    } else {
-      posts.forEach((post) => {
-        element.appendChild(createPostRow(post));
-      });
-    }
+    const list = document.createElement('div');
+    element.appendChild(list);
+
+    emptyEl = document.createElement('div');
+    emptyEl.textContent = t('admin_hidden.empty');
+    emptyEl.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;';
+    emptyEl.hidden = posts.length > 0;
+    element.appendChild(emptyEl);
+
+    postsMount = mount(list, () =>
+      each(
+        () => postsSignal(),
+        (post) => post.id,
+        (post) => legacy(createPostRow(post())),
+      ),
+    );
+    postsSignal.set([...posts]);
   };
 
   const init = async () => {
@@ -212,6 +224,8 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       await render();
     },
     destroy: () => {
+      postsMount?.dispose();
+      postsMount = undefined;
       if (element && element.parentNode) {
         element.parentNode.removeChild(element);
       }

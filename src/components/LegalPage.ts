@@ -1,4 +1,5 @@
-import { getLocale, t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.ts';
+import { html, mount } from '../lib/render/index.ts';
 
 interface LegalPageProps {
   type: 'terms' | 'privacy' | 'child-safety' | 'about';
@@ -124,9 +125,6 @@ export function createLegalPage({ type }: LegalPageProps) {
   const container = document.createElement('div');
   container.className = 'legal-page';
 
-  const contentWrapper = document.createElement('div');
-  contentWrapper.className = 'legal-content-wrapper';
-
   // Header
   const header = document.createElement('header');
   header.className = 'legal-header';
@@ -157,8 +155,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   header.appendChild(backBtn);
   header.appendChild(wordmark);
 
-  const content = document.createElement('article');
-  content.className = 'legal-content';
+  let content!: HTMLElement;
 
   const loadContent = async () => {
     const locale = getLocale();
@@ -227,15 +224,23 @@ export function createLegalPage({ type }: LegalPageProps) {
 
   footer.appendChild(footerLinks);
 
-  contentWrapper.appendChild(header);
-  contentWrapper.appendChild(content);
-  contentWrapper.appendChild(footer);
-  container.appendChild(contentWrapper);
+  const mounted = mount(
+    container,
+    () => html`
+      <div class="legal-content-wrapper">
+        ${header}
+        <article class="legal-content" ref=${(element: Element | null) => {
+          if (element) content = element as HTMLElement;
+        }}></article>
+        ${footer}
+      </div>
+    `,
+  );
 
   loadContent();
 
   return {
     getElement: () => container,
-    destroy: () => {},
+    destroy: () => mounted.dispose(),
   };
 }

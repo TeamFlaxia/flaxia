@@ -1,5 +1,6 @@
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
 import { getTileCacheStats, handleTileFetch, rewriteTileUrl, unwrapTileUrl } from '../lib/maps/cache.js';
+import { each, html, type Mounted, mount, type Signal, signal, when } from '../lib/render/index.ts';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -47,6 +48,13 @@ interface WeatherPayload {
   lon: number;
   updatedAt: string;
   points: WeatherPoint[];
+}
+
+type WeatherState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; data: WeatherPayload };
+
+interface StaticTile {
+  key: string;
+  src: string;
 }
 
 const FALLBACK_CITIES: City[] = [
@@ -105,6 +113,10 @@ export class MapsPage {
   private tileMisses = 0;
   private styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
   private mapFallbackReason: 'unsupported' | 'error' | null = null;
+  private tilesSignal: Signal<StaticTile[]> = signal<StaticTile[]>([]);
+  private weatherSignal: Signal<WeatherState> = signal<WeatherState>({ status: 'loading' });
+  private tilesMount?: Mounted;
+  private weatherMount?: Mounted;
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -134,6 +146,10 @@ export class MapsPage {
       }
       this.protocolRegistered = false;
     }
+    this.tilesMount?.dispose();
+    this.tilesMount = undefined;
+    this.weatherMount?.dispose();
+    this.weatherMount = undefined;
     this.map?.remove();
     this.map = null;
     this.marker = null;
@@ -162,6 +178,21 @@ export class MapsPage {
     const fallbackTiles = document.createElement('div');
     fallbackTiles.className = 'maps-static-tiles';
     fallbackTiles.dataset.testid = 'maps-static-tiles';
+    this.tilesMount = mount(fallbackTiles, () =>
+      each(
+        () => this.tilesSignal(),
+        (tile) => tile.key,
+        (tile) => {
+          const img = document.createElement('img');
+          img.alt = '';
+          img.loading = 'lazy';
+          img.decoding = 'async';
+          img.referrerPolicy = 'no-referrer';
+          img.src = tile().src;
+          return img;
+        },
+      ),
+    );
     const fallbackMarker = document.createElement('span');
     fallbackMarker.className = 'maps-static-marker';
     fallbackMarker.setAttribute('aria-hidden', 'true');
@@ -178,7 +209,28 @@ export class MapsPage {
     const weatherOverlay = document.createElement('div');
     weatherOverlay.className = 'maps-weather-overlay';
     weatherOverlay.dataset.testid = 'maps-weather-overlay';
-    weatherOverlay.textContent = '…';
+    this.weatherMount = mount(
+      weatherOverlay,
+      () =>
+        html`
+        ${() => (this.weatherSignal().status === 'loading' ? '…' : '')}
+        ${() => (this.weatherSignal().status === 'error' ? '天気を取得できませんでした' : '')}
+        ${when(
+          () => this.weatherSignal().status === 'ready',
+          () =>
+            html`
+              <span class="maps-weather-temp">${() => this.weatherTemp()}</span>
+              <span class="maps-weather-symbol">${() =>
+                this.symbolLabel(this.currentWeatherPoint()?.symbol ?? null)}</span>
+              <div class="maps-note">${() => this.weatherMeta()}</div>
+              ${when(
+                () => this.nextClearPoint() !== undefined,
+                () => html`<div class="maps-note">${() => this.nextClearText()}</div>`,
+              )}
+            `,
+        )}
+      `,
+    );
     viewport.appendChild(weatherOverlay);
 
     const attribution = document.createElement('div');
@@ -216,8 +268,6 @@ export class MapsPage {
   }
 
   private renderStaticMap(): void {
-    const grid = this.element.querySelector('.maps-static-tiles') as HTMLElement | null;
-    if (!grid) return;
     const z = Math.max(2, Math.min(14, Math.round(this.zoom || 12)));
     const n = 2 ** z;
     const latRad = (this.lat * Math.PI) / 180;
@@ -225,18 +275,20 @@ export class MapsPage {
     const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
     const centerX = Math.floor(x);
     const centerY = Math.floor(y);
-    grid.innerHTML = '';
+    const tiles: StaticTile[] = [];
+
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const img = document.createElement('img');
-        img.alt = '';
-        img.loading = 'lazy';
-        img.decoding = 'async';
-        img.referrerPolicy = 'no-referrer';
-        img.src = `https://tile.openstreetmap.org/${z}/${(((centerX + dx) % n) + n) % n}/${Math.max(0, Math.min(n - 1, centerY + dy))}.png`;
-        grid.appendChild(img);
+        const tileX = (((centerX + dx) % n) + n) % n;
+        const tileY = Math.max(0, Math.min(n - 1, centerY + dy));
+        tiles.push({
+          key: `${z}/${tileX}/${tileY}`,
+          src: `https://tile.openstreetmap.org/${z}/${tileX}/${tileY}.png`,
+        });
       }
     }
+
+    this.tilesSignal.set(tiles);
   }
 
   private async initMap(): Promise<void> {
@@ -405,6 +457,41 @@ export class MapsPage {
     this.loadWeather();
   }
 
+  private currentWeatherPoint(): WeatherPoint | undefined {
+    const state = this.weatherSignal();
+    if (state.status !== 'ready') return undefined;
+    return (state.data.points ?? [])[0];
+  }
+
+  private weatherTemp(): string {
+    const current = this.currentWeatherPoint();
+    return current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
+  }
+
+  private weatherMeta(): string {
+    const current = this.currentWeatherPoint();
+    const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
+    const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
+    const cloud = current?.cloudCover != null ? `雲量 ${Math.round(current.cloudCover)}%` : '';
+    return [hum, wind, cloud].filter(Boolean).join(' / ');
+  }
+
+  private nextClearPoint(): WeatherPoint | undefined {
+    const state = this.weatherSignal();
+    if (state.status !== 'ready') return undefined;
+    return (state.data.points ?? []).slice(1).find((point) => {
+      const symbol = (point.symbol ?? '').toLowerCase();
+      return symbol.startsWith('clearsky') || symbol.startsWith('fair');
+    });
+  }
+
+  private nextClearText(): string {
+    const next = this.nextClearPoint();
+    if (!next) return '';
+    const time = new Date(next.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `次に晴れるのは ${time}（${this.symbolLabel(next.symbol)}）`;
+  }
+
   private symbolLabel(symbol: string | null): string {
     if (!symbol) return '';
     const s = symbol.toLowerCase();
@@ -463,8 +550,8 @@ export class MapsPage {
     this.weatherAbort?.abort();
     const controller = new AbortController();
     this.weatherAbort = controller;
-    const overlay = this.element.querySelector('[data-testid="maps-weather-overlay"]') as HTMLElement | null;
-    if (overlay) overlay.textContent = '…';
+    this.weatherSignal.set({ status: 'loading' });
+
     try {
       const res = await fetch(`/api/maps/weather?lat=${this.lat}&lon=${this.lon}`, {
         credentials: 'include',
@@ -473,40 +560,11 @@ export class MapsPage {
       if (!res.ok) throw new Error('weather unavailable');
       const data = (await res.json()) as WeatherPayload;
       if (this.destroyed) return;
-      if (!overlay) return;
-      const current = data.points[0];
-      overlay.innerHTML = '';
-      const temp = document.createElement('span');
-      temp.className = 'maps-weather-temp';
-      temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
-      const symbol = document.createElement('span');
-      symbol.className = 'maps-weather-symbol';
-      symbol.textContent = this.symbolLabel(current?.symbol ?? null);
-      overlay.appendChild(temp);
-      overlay.appendChild(symbol);
-      const meta = document.createElement('div');
-      meta.className = 'maps-note';
-      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
-      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
-      const cloud = current?.cloudCover != null ? `雲量 ${Math.round(current.cloudCover)}%` : '';
-      meta.textContent = [hum, wind, cloud].filter(Boolean).join(' / ');
-      overlay.appendChild(meta);
-
-      // Next clear/sunny forecast
-      const nextClear = data.points.slice(1).find((p) => {
-        const s = (p.symbol ?? '').toLowerCase();
-        return s.startsWith('clearsky') || s.startsWith('fair');
-      });
-      if (nextClear) {
-        const fc = document.createElement('div');
-        fc.className = 'maps-note';
-        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
-        overlay.appendChild(fc);
-      }
+      this.weatherSignal.set({ status: 'ready', data });
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
-      if (overlay) overlay.textContent = '天気を取得できませんでした';
+      if (this.destroyed) return;
+      this.weatherSignal.set({ status: 'error' });
     }
   }
 }

@@ -25,6 +25,7 @@ import {
   securityChip,
   triggerPop,
 } from '../lib/mail/ui.js';
+import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { getResolvedTheme } from '../lib/theme.js';
 import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
 import { createVaultUnlockForm } from './VaultUnlockForm.js';
@@ -44,6 +45,11 @@ export class MailThreadPage {
   private loadError: string | null = null;
   private starred = false;
   private bodyEl: HTMLElement | null = null;
+  private statusHost: HTMLElement | null = null;
+  private messagesHost: HTMLElement | null = null;
+  private replyHost: HTMLElement | null = null;
+  private messagesSignal: Signal<MailMessage[]> = signal<MailMessage[]>([]);
+  private messagesMount?: Mounted;
   private titleEl: HTMLElement | null = null;
   private subtitleEl: HTMLElement | null = null;
   private replyStatus: HTMLElement | null = null;
@@ -133,6 +139,9 @@ export class MailThreadPage {
   }
 
   private renderShell(): void {
+    this.messagesMount?.dispose();
+    this.messagesMount = undefined;
+    this.messagesSignal.set([]);
     this.element.replaceChildren();
     const header = document.createElement('header');
     header.className = 'page-header mail-thread-header';
@@ -183,6 +192,21 @@ export class MailThreadPage {
     this.bodyEl = document.createElement('div');
     this.bodyEl.className = 'mail-thread-body';
     this.element.appendChild(this.bodyEl);
+
+    this.statusHost = document.createElement('div');
+    this.messagesHost = document.createElement('div');
+    this.replyHost = document.createElement('div');
+    this.bodyEl.appendChild(this.statusHost);
+    this.bodyEl.appendChild(this.messagesHost);
+    this.bodyEl.appendChild(this.replyHost);
+
+    this.messagesMount = mount(this.messagesHost, () =>
+      each(
+        () => this.messagesSignal(),
+        (message) => message.id,
+        (message) => legacy(this.buildMessage(message())),
+      ),
+    );
   }
 
   private runAction(action: string): void {
@@ -202,9 +226,17 @@ export class MailThreadPage {
   }
 
   private renderBody(): void {
-    const body = this.bodyEl;
-    if (!body) return;
-    body.replaceChildren();
+    const statusHost = this.statusHost;
+    const messagesHost = this.messagesHost;
+    const replyHost = this.replyHost;
+
+    const showStatus = (content: Node | Node[]): void => {
+      const nodes = Array.isArray(content) ? content : [content];
+      statusHost?.replaceChildren(...nodes);
+      if (messagesHost) messagesHost.hidden = true;
+      if (replyHost) replyHost.hidden = true;
+      this.messagesSignal.set([]);
+    };
 
     if (this.loading) {
       const skeleton = document.createElement('div');
@@ -220,7 +252,7 @@ export class MailThreadPage {
         }
         skeleton.appendChild(card);
       }
-      body.appendChild(skeleton);
+      showStatus(skeleton);
       return;
     }
 
@@ -239,7 +271,7 @@ export class MailThreadPage {
           },
         }).getElement(),
       );
-      body.appendChild(empty);
+      showStatus(empty);
       return;
     }
 
@@ -257,7 +289,7 @@ export class MailThreadPage {
       const back = mailButton(t('mail.back_to_mail') || 'Back to Mail', 'secondary', 'arrow-left');
       back.addEventListener('click', () => mailBack());
       empty.appendChild(back);
-      body.appendChild(empty);
+      showStatus(empty);
       return;
     }
 
@@ -291,12 +323,14 @@ export class MailThreadPage {
     }
     intro.appendChild(heading);
     intro.appendChild(meta);
-    body.appendChild(intro);
 
-    for (const message of this.thread.messages) {
-      body.appendChild(this.buildMessage(message));
+    statusHost?.replaceChildren(intro);
+    if (messagesHost) messagesHost.hidden = false;
+    if (replyHost) {
+      replyHost.hidden = false;
+      replyHost.replaceChildren(this.buildReply());
     }
-    body.appendChild(this.buildReply());
+    this.messagesSignal.set(this.thread.messages);
   }
 
   private buildMessage(message: MailMessage): HTMLElement {
@@ -496,6 +530,9 @@ export class MailThreadPage {
 
   destroy(): void {
     this.destroyed = true;
+    this.messagesMount?.dispose();
+    this.messagesMount = undefined;
+    this.messagesSignal.set([]);
     for (const message of this.decryptedMessages) message.contentKey.fill(0);
     this.decryptedMessages = [];
     this.element.remove();

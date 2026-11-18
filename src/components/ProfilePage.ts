@@ -429,7 +429,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
     try {
       const response = await fetch(`/api/users/${username}`);
       if (response.ok) {
-        const data = (await response.json()) as { user: ProfileUserData };
+        const data = (await response.json()) as { user?: ProfileUserData };
+        if (!data.user) return;
         if (data.user.frozen) {
           userData = data.user;
           displayName.textContent = data.user.display_name || data.user.username;

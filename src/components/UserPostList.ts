@@ -1,6 +1,8 @@
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createLoadingSpinner } from '../lib/loading-ui.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { each, legacy, mount, signal } from '../lib/render/index.ts';
+import { appendUniqueBy, uniqueBy } from '../lib/unique.ts';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -26,6 +28,7 @@ export function createUserPostList(props: {
   let hasMore = true;
   let loading = false;
   const postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  const postsSignal = signal<Post[]>([]);
 
   // Create main container
   const container = document.createElement('div');
@@ -35,6 +38,10 @@ export function createUserPostList(props: {
   const postList = document.createElement('div');
   postList.className = 'post-list';
   container.appendChild(postList);
+
+  const emptyState = document.createElement('p');
+  emptyState.className = 'font-mono';
+  emptyState.hidden = true;
 
   // Create load more section
   const loadMoreContainer = document.createElement('div');
@@ -65,29 +72,37 @@ export function createUserPostList(props: {
       },
     });
 
+  const postsMount = mount(postList, () =>
+    each(
+      () => postsSignal(),
+      (post) => post.id,
+      (post) => {
+        const value = post();
+        const card = buildCard(value);
+        postCards.set(value.id, card);
+        return legacy(card.getElement(), () => {
+          card.destroy();
+          postCards.delete(value.id);
+        });
+      },
+    ),
+  );
+  // The empty state is a sibling of `.post-list`, not a child: a child would
+  // make the last post card stop matching `.post-list > :last-child`, adding a
+  // bottom margin the original list never had.
+  container.appendChild(emptyState);
+
   // Render posts
   const renderPosts = () => {
-    postList.innerHTML = '';
-
-    if (posts.length === 0 && !loading) {
-      const emptyState = document.createElement('p');
-      emptyState.className = 'font-mono';
-      postList.appendChild(emptyState);
-      return;
-    }
-
-    posts.forEach((post) => {
-      const postCard = buildCard(post);
-
-      postCards.set(post.id, postCard);
-      postList.appendChild(postCard.getElement());
-    });
+    postsSignal.set([...posts]);
+    emptyState.hidden = posts.length > 0 || loading;
   };
 
   // Update loading spinner visibility
   const updateLoadingSpinner = () => {
     loadingSpinner.style.display = loading ? 'block' : 'none';
     infiniteScroll.sentinel.style.display = hasMore ? 'block' : 'none';
+    emptyState.hidden = posts.length > 0 || loading;
   };
 
   // Load initial posts
@@ -142,7 +157,7 @@ export function createUserPostList(props: {
 
     try {
       const { fetched, next, more } = await fetchPosts();
-      posts = fetched;
+      posts = uniqueBy(fetched, (post) => post.id);
       cursor = next;
       hasMore = more;
       renderPosts();
@@ -163,7 +178,7 @@ export function createUserPostList(props: {
 
     try {
       const { fetched, next, more } = await fetchPosts(cursor);
-      posts = [...posts, ...fetched];
+      posts = appendUniqueBy(posts, fetched, (post) => post.id);
       cursor = next;
       hasMore = more;
       renderPosts();
@@ -192,25 +207,14 @@ export function createUserPostList(props: {
   return {
     getElement: () => container,
     addPost: (post) => {
+      if (posts.some((existing) => existing.id === post.id)) return;
       posts = [post, ...posts];
-      postList.innerHTML = '';
-      const card = buildCard(post);
-      postCards.set(post.id, card);
-      postList.appendChild(card.getElement());
-      // Re-append existing cards
-      for (let i = 1; i < posts.length; i++) {
-        let card = postCards.get(posts[i].id);
-        if (!card) {
-          card = buildCard(posts[i]);
-          postCards.set(posts[i].id, card);
-        }
-        postList.appendChild(card.getElement());
-      }
+      renderPosts();
     },
     destroy: () => {
       window.removeEventListener('postUpdated', postUpdatedHandler);
       infiniteScroll.disconnect();
-      postCards.forEach((card) => void card.destroy());
+      postsMount.dispose();
       postCards.clear();
       container.remove();
     },

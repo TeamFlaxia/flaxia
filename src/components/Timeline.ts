@@ -49,6 +49,7 @@ export class Timeline {
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private seenPostIds: Set<string> = new Set();
   private duplicatePageStreak = 0;
+  private adGeneration = 0;
   private forYouQueue: Post[] = [];
   private forYouProfile: RecommendationProfile | null = null;
   private loadGeneration = 0;
@@ -937,79 +938,134 @@ export class Timeline {
     const postList = this.element.querySelector('.post-list') as HTMLElement;
     if (!postList) return;
 
-    // Clear existing posts and ads
-    const existingPosts = postList.querySelectorAll('.post-card, .ad-banner');
-    existingPosts.forEach((post) => void post.remove());
+    // Collect the cards that are already on screen. A card whose component was
+    // released is stale and will be rebuilt rather than reattached.
+    const allExisting = new Map<string, HTMLElement>();
+    postList.querySelectorAll<HTMLElement>('.post-card[data-post-id]').forEach((element) => {
+      const id = element.dataset.postId;
+      if (id) allExisting.set(id, element);
+    });
+    const reusable = new Map<string, HTMLElement>();
+    for (const [id, element] of allExisting) {
+      if (this.postCards.has(id)) reusable.set(id, element);
+    }
 
-    // Create ad placeholders first at the correct positions
+    // Ads are re-created on every render. Their placeholder reserves the height
+    // before the ad iframe loads.
+    postList.querySelectorAll('.ad-banner, .ad-placeholder-slot').forEach((element) => {
+      element.remove();
+    });
+
     const adPlaceholders: HTMLElement[] = [];
     if (this.state.ads.length > 0) {
-      const _shuffled = [...this.state.ads].sort(() => Math.random() - 0.5);
       this.state.posts.forEach((item, index) => {
         if (!isAd(item) && (index + 1) % this.state.everyN === 0) {
-          const placeholder = document.createElement('div');
-          placeholder.className = 'ad-placeholder-slot';
-          placeholder.style.cssText = `
-            position: relative;
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: var(--bg-tertiary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-            font-size: 14px;
-          `;
-          placeholder.innerHTML = t('timeline.loading_ad');
-          postList.appendChild(placeholder);
-          adPlaceholders.push(placeholder);
+          adPlaceholders.push(this.createAdPlaceholder());
         }
       });
     }
 
-    // Render posts immediately for text content (prioritize speed)
-    const fragment = document.createDocumentFragment();
+    const desired: HTMLElement[] = [];
+    const keep = new Set<string>();
 
     this.state.posts.forEach((item, index) => {
-      if (isAd(item)) {
-        // Skip ads in main rendering - they're handled by placeholders
-        return;
-      } else {
-        // Render text posts immediately (highest priority)
+      if (isAd(item)) return;
+
+      keep.add(item.id);
+      let element = reusable.get(item.id);
+      if (!element) {
         const postCard = this.buildPostCard(item);
-
         this.postCards.set(item.id, postCard);
+        element = postCard.getElement();
+      } else {
+        // Keep the card (and any live iframe) but refresh server-side counters.
+        this.postCards.get(item.id)?.updatePost({
+          fresh_count: item.fresh_count,
+          reload_count: item.reload_count,
+          bookmark_count: item.bookmark_count,
+          reply_count: item.reply_count,
+          impressions: item.impressions,
+          reactions: item.reactions,
+          is_freshed: item.is_freshed,
+          is_reloaded: item.is_reloaded,
+          is_bookmarked: item.is_bookmarked,
+        });
+      }
+      desired.push(element);
 
-        // Insert post and check if we need to add an ad placeholder after it
-        fragment.appendChild(postCard.getElement());
-
-        if ((index + 1) % this.state.everyN === 0 && adPlaceholders.length > 0) {
-          const adPlaceholder = adPlaceholders.shift();
-          if (adPlaceholder) {
-            fragment.appendChild(adPlaceholder);
-          }
-        }
+      if ((index + 1) % this.state.everyN === 0) {
+        const placeholder = adPlaceholders.shift();
+        if (placeholder) desired.push(placeholder);
       }
     });
 
-    // Add all content at once for better performance
-    postList.appendChild(fragment);
+    // Drop cards that left the feed. This is the only path that destroys a card.
+    for (const [id, element] of allExisting) {
+      if (keep.has(id) && reusable.get(id) === element) continue;
+      this.postCards.get(id)?.destroy();
+      this.postCards.delete(id);
+      element.remove();
+    }
 
-    // Now replace placeholders with actual ads
+    // Move only the nodes that are out of place. Unchanged cards stay in the
+    // document, so their iframes, videos and focus survive a refresh.
+    let cursor = this.firstManagedChild(postList);
+    for (const node of desired) {
+      if (node === cursor) {
+        cursor = this.nextManagedSibling(node);
+        continue;
+      }
+      postList.insertBefore(node, cursor);
+    }
+
+    // Replace placeholders with real ads only after the reserved layout exists.
+    const generation = ++this.adGeneration;
     setTimeout(() => {
+      if (this.destroyed || generation !== this.adGeneration) return;
       const placeholders = postList.querySelectorAll('.ad-placeholder-slot');
       const shuffled = [...this.state.ads].sort(() => Math.random() - 0.5);
-
       placeholders.forEach((placeholder, index) => {
         if (shuffled[index % shuffled.length]) {
-          const adCard = createAdCard(shuffled[index % shuffled.length]);
-          placeholder.replaceWith(adCard);
+          placeholder.replaceWith(createAdCard(shuffled[index % shuffled.length]));
         }
       });
-    }, 100); // Small delay to ensure DOM is ready
+    }, 100);
 
-    // Update loading state
     this.updateLoadMoreButton();
+  }
+
+  private createAdPlaceholder(): HTMLElement {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'ad-placeholder-slot';
+    placeholder.style.cssText = `
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: var(--bg-tertiary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    `;
+    placeholder.textContent = t('timeline.loading_ad');
+    return placeholder;
+  }
+
+  private isManagedNode(node: Node): node is HTMLElement {
+    return node.nodeType === 1 && (node as HTMLElement).matches('.post-card, .ad-banner, .ad-placeholder-slot');
+  }
+
+  private firstManagedChild(postList: HTMLElement): Node | null {
+    let node = postList.firstChild;
+    while (node && !this.isManagedNode(node)) node = node.nextSibling;
+    return node;
+  }
+
+  private nextManagedSibling(node: Node): Node | null {
+    let next = node.nextSibling;
+    while (next && !this.isManagedNode(next)) next = next.nextSibling;
+    return next;
   }
 
   private updateLoadMoreButton(): void {
