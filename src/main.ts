@@ -1504,8 +1504,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Create Settings Page (as main content)
           const settingsModule = await import('./components/SettingsPage.js');
+          // `/settings?category=connections` lets other first-party apps link
+          // straight to the keyring section; `/settings/connections` is the
+          // return URI registered with Auth.
+          const requestedCategory =
+            new URLSearchParams(window.location.search).get('category') ??
+            (window.location.pathname === '/settings/connections' ? 'connections' : null);
           settingsPage = settingsModule.createSettingsPage({
             currentUser: currentUser || undefined,
+            initialCategory: requestedCategory,
           });
 
           // Load user data asynchronously

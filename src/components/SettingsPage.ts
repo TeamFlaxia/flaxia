@@ -44,6 +44,7 @@ import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
 import { syncVaultVersionAfterRewrap } from '../lib/vault/session.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createBugReportForm } from './BugReportForm.js';
+import { createConnectionsSection } from './ConnectionsSection.js';
 import { createVaultSection } from './VaultSection.js';
 
 function b64(b: Uint8Array): string {
@@ -1125,6 +1126,13 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   // and timers to clean up, which would drown the settings page otherwise.
   const vaultSection = currentUser ? createVaultSection() : null;
 
+  // ─── Account connections ─────────────────────────────────────────────────
+  // The Auth keyring: linked services and their encrypted tokens. Studio and
+  // other first-party apps consume these connections instead of creating them.
+  const connectionsSection = currentUser
+    ? createConnectionsSection({ onOpenSecurity: () => navigation.showCategory('security') })
+    : null;
+
   // ─── Titles Section ───────────────────────────────────────────────────────
   // Titles are awarded by other systems (for example Arcade achievements).
   // Settings only lists what the user owns; equipping happens in the profile
@@ -1793,6 +1801,16 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       sections: [passwordSection, vaultSection.getElement()],
     });
   }
+  if (connectionsSection) {
+    navigation.addCategory({
+      id: 'connections',
+      groupKey: 'settings.group_account',
+      titleKey: 'settings.connections',
+      descriptionKey: 'settings.connections_description',
+      iconName: 'at-sign',
+      sections: [connectionsSection.getElement()],
+    });
+  }
   navigation.addCategory({
     id: 'appearance',
     groupKey: 'settings.group_preferences',
@@ -1868,6 +1886,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       for (const mounted of displayMounts) mounted.dispose();
       displayMounts.length = 0;
       vaultSection?.destroy();
+      connectionsSection?.destroy();
       bugReportForm.destroy();
       container.remove();
     },
