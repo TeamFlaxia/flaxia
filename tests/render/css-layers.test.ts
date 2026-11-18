@@ -22,20 +22,25 @@ describe('styles/css-entry', () => {
     const entry = read('src/styles/index.css');
     // Regression guard: `index.html` inlines unlayered critical CSS, and
     // unlayered declarations always beat layered ones. Wrapping the app CSS in
-    // `@layer` silently reverted the redesign (240px nav, 1200px container,
-    // unpadded post cards), so the entry must stay unlayered.
+    // `@layer` silently drops the skin back to the critical CSS values, so the
+    // entry must stay unlayered.
     assert.doesNotMatch(entry, /@layer\s+legacy/);
     assert.doesNotMatch(entry, /layer\(legacy\)|layer\(primitives\)/);
     assert.match(entry, /@import ['"]\.\/main\.css['"];/);
     assert.match(entry, /@import ['"]\.\/redesign\/foundation\.css['"];/);
+    assert.match(entry, /@import ['"]\.\/legacy\/theme\.css['"];/);
+    assert.match(entry, /@import ['"]\.\/legacy\/overrides\.css['"];/);
     assert.match(entry, /@import ['"]\.\/render\/primitives\.css['"];/);
-    assert.ok(
-      entry.indexOf('./main.css') < entry.indexOf('./redesign/foundation.css'),
-      'main.css must load before the redesign overrides',
-    );
-    assert.ok(
-      entry.indexOf('./redesign/motion.css') < entry.indexOf('./render/primitives.css'),
-      'primitives must load last so they can override legacy rules in source order',
-    );
+
+    const foundation = entry.indexOf('./redesign/foundation.css');
+    const main = entry.indexOf('./main.css');
+    const theme = entry.indexOf('./legacy/theme.css');
+    const overrides = entry.indexOf('./legacy/overrides.css');
+    const primitives = entry.indexOf('./render/primitives.css');
+
+    assert.ok(foundation < main, 'redesign feature CSS must load before the legacy skin');
+    assert.ok(main < theme, 'legacy tokens must load after main.css');
+    assert.ok(theme < overrides, 'legacy overrides must follow the token layer');
+    assert.ok(overrides < primitives, 'primitives must load last so they can override legacy rules in source order');
   });
 });
