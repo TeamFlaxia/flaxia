@@ -153,18 +153,6 @@
   min-block-size: 0;
 }
 
-/* Right rail: the two variable-height cards are filled before the rail is
-   revealed (see RightPanel), and the weather card reserves its maximum height
-   (current row + humidity/wind note + forecast note) so a late forecast cannot
-   move the shortcuts card below it. */
-.right-panel--pending {
-  visibility: hidden;
-}
-
-.maps-weather-section .right-card-body {
-  min-block-size: 5.4375rem;
-}
-
 /* Inline navigation status (src/lib/nav-loading.ts). Shown only while the
    content column is empty: the previous view is parked and the next one is
    still being built. */

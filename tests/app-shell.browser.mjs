@@ -837,19 +837,16 @@ test('layout stays put while async panels and media settle (CLS / LCP budget)', 
       }
 
       if (testCase.stubs === BUSY_STUBS) {
-        // The rail reveals itself once the variable-height cards are filled.
+        // The rail's variable-height cards are filled asynchronously; the
+        // column keeps its width so the feed cannot shift.
         const rail = await page.evaluate(() => ({
           visibility: getComputedStyle(document.querySelector('.right-panel')).visibility,
-          pending: document.querySelector('.right-panel')?.classList.contains('right-panel--pending'),
           tags: document.querySelectorAll('.trending-list .trending-item').length,
-          weather: (document.querySelector('.maps-weather-section .right-card-body')?.textContent ?? '').trim(),
-          followVisible: getComputedStyle(document.querySelector('.follow-section')).display !== 'none',
+          helpItems: document.querySelectorAll('.help-list .help-item').length,
         }));
         assert.equal(rail.visibility, 'visible', `${testCase.label}: rail stayed hidden`);
-        assert.equal(rail.pending, false, `${testCase.label}: rail still marked pending`);
         assert.equal(rail.tags, 4, `${testCase.label}: expected 4 trending tags, got ${rail.tags}`);
-        assert.ok(rail.weather.length > 0, `${testCase.label}: weather body empty`);
-        assert.ok(rail.followVisible, `${testCase.label}: follow card never revealed`);
+        assert.ok(rail.helpItems >= 1, `${testCase.label}: help card is empty`);
       }
 
       assert.ok(perf.lcp > 0, `${testCase.label}: no LCP entry recorded`);

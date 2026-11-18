@@ -409,7 +409,6 @@ html.is-theme-switching *::after {
 :root[data-theme="dark"] .composer-shell,
 :root[data-theme="dark"] .modal-dialog,
 :root[data-theme="dark"] .post-modal-dialog,
-:root[data-theme="dark"] .cmd-dialog,
 :root[data-theme="dark"] .settings-panel {
   background: var(--bg-elevated);
   border-color: var(--border);
@@ -425,15 +424,9 @@ html.is-theme-switching *::after {
 }
 
 /* Inputs: harmonize with the canvas, using subtle input background. */
-:root[data-theme="dark"] .search-box,
-:root[data-theme="dark"] .nav-command {
+:root[data-theme="dark"] .search-box {
   background: var(--bg-input);
   border-color: var(--border);
-}
-
-:root[data-theme="dark"] .cmd-search {
-  background: transparent;
-  border-bottom-color: var(--border);
 }
 
 /* Focus ring for interactive buttons/links (inputs manage their own ring). */

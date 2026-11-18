@@ -7,9 +7,12 @@ import {
   BarChart3,
   Bell,
   Bookmark,
+  BookOpen,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
+  CircleHelp,
   Copy,
   createElement,
   Download,
@@ -19,6 +22,7 @@ import {
   Flag,
   Forward,
   Gamepad2,
+  Hash,
   Home,
   type IconNode,
   ImagePlus,
@@ -125,7 +129,11 @@ export type IconName =
   | 'sliders'
   | 'check'
   | 'translate'
-  | 'mail-open';
+  | 'mail-open'
+  | 'hash'
+  | 'help'
+  | 'guide'
+  | 'chevron-right';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -191,6 +199,10 @@ const ICON_NODES: Record<IconName, IconNode> = {
   check: Check,
   translate: ArrowLeftRight,
   'mail-open': MailOpen,
+  hash: Hash,
+  help: CircleHelp,
+  guide: BookOpen,
+  'chevron-right': ChevronRight,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

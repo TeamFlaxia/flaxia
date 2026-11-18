@@ -118,7 +118,7 @@
 }
 
 /* [hidden] must win over the flex display above, otherwise the fallback
-   overlay permanently covers the map (same pattern as .cmd-overlay[hidden]). */
+   overlay permanently covers the map. */
 .maps-libre-fallback[hidden] {
   display: none;
 }

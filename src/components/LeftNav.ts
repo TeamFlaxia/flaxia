@@ -9,7 +9,7 @@ import { setupLeftNavResize } from '../lib/left-nav-resize.js';
 import { isModalOpen } from '../lib/modal-state';
 import { applyNameColor } from '../lib/name-color.js';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
-import { commandShortcutLabel } from '../lib/shortcut-label.js';
+import { navItemsFor } from '../lib/nav-items.js';
 
 function createAppDownloadPromo(): HTMLAnchorElement | null {
   if (isNativeApp() || !recommendedAppPlatform(detectDevicePlatform())) return null;
@@ -128,33 +128,6 @@ export class LeftNav {
     return brand;
   }
 
-  /** Fake input that opens the real command palette (⌘K / Ctrl-K). */
-  private createCommandTrigger(): HTMLElement {
-    const trigger = document.createElement('button');
-    trigger.type = 'button';
-    trigger.className = 'nav-command';
-    trigger.setAttribute('aria-label', label('検索・コマンドを開く', 'Open search or command'));
-
-    const text = document.createElement('span');
-    text.className = 'nav-command-text';
-    text.textContent = label('検索・コマンド…', 'Search or command…');
-
-    const kbd = document.createElement('kbd');
-    kbd.className = 'nav-kbd';
-    kbd.textContent = commandShortcutLabel();
-
-    trigger.appendChild(icon('search', { width: '15', height: '15' }));
-    trigger.appendChild(text);
-    trigger.appendChild(kbd);
-    trigger.addEventListener('click', () => {
-      // Close the mobile drawer first so the palette owns the scroll lock.
-      closeLeftNav();
-      window.dispatchEvent(new CustomEvent('flaxia:command'));
-    });
-
-    return trigger;
-  }
-
   private createSectionLabel(text: string, options: { heading?: boolean } = {}): HTMLElement {
     // Headings get a real h2 so the rail has an outline; chrome captions stay
     // plain text because they label a region, not content.
@@ -193,29 +166,9 @@ export class LeftNav {
     const navItems = document.createElement('div');
     navItems.className = 'nav-items nav-items--menu';
 
-    if (this.props.currentUser) {
-      const items = [
-        { id: 'home', text: t('nav.home'), icon: 'home' },
-        { id: 'explore', text: t('nav.explore'), icon: 'explore' },
-        { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
-      ] as const;
-      items.forEach((item) => {
-        const unread = item.id === 'notifications' ? this.props.unreadCount || 0 : 0;
-        navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName, unread));
-      });
-    } else {
-      const items = [
-        { id: 'home', text: t('nav.home'), icon: 'home' },
-        { id: 'explore', text: t('nav.explore'), icon: 'explore' },
-        { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
-        { id: 'translate', text: t('nav.translate'), icon: 'translate' },
-      ];
-      items.forEach((item) => {
-        navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName));
-      });
+    for (const item of navItemsFor(!!this.props.currentUser)) {
+      const unread = item.id === 'notifications' ? this.props.unreadCount || 0 : 0;
+      navItems.appendChild(this.createNavItem(item.id, t(item.labelKey), item.icon, unread));
     }
 
     return navItems;
@@ -231,6 +184,40 @@ export class LeftNav {
     section.appendChild(this.createSectionLabel(label('タグ', 'Tags'), { heading: true }));
     section.appendChild(list);
     return section;
+  }
+
+  /** Product promo card: games are the reason people stay. */
+  private createPromoCard(): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'nav-promo';
+
+    const art = document.createElement('div');
+    art.className = 'nav-promo-art';
+    art.setAttribute('aria-hidden', 'true');
+    art.textContent = '🎮';
+
+    const title = document.createElement('p');
+    title.className = 'nav-promo-title';
+    title.textContent = t('nav.promo_title');
+
+    const list = document.createElement('ul');
+    list.className = 'nav-promo-list';
+    for (const key of ['nav.promo_item_share', 'nav.promo_item_discover', 'nav.promo_item_community']) {
+      const item = document.createElement('li');
+      const check = document.createElement('span');
+      check.className = 'nav-promo-check';
+      check.appendChild(icon('check', { width: '12', height: '12' }));
+      const text = document.createElement('span');
+      text.textContent = t(key);
+      item.appendChild(check);
+      item.appendChild(text);
+      list.appendChild(item);
+    }
+
+    card.appendChild(art);
+    card.appendChild(title);
+    card.appendChild(list);
+    return card;
   }
 
   private async loadTags(): Promise<void> {
@@ -528,7 +515,6 @@ export class LeftNav {
     nav.setAttribute('aria-label', 'Primary');
 
     nav.appendChild(this.createBrand());
-    nav.appendChild(this.createCommandTrigger());
 
     if (this.props.currentUser) {
       nav.appendChild(this.createPostButton());
@@ -543,6 +529,7 @@ export class LeftNav {
     nav.appendChild(menu);
 
     nav.appendChild(this.createTagsSection());
+    nav.appendChild(this.createPromoCard());
     nav.appendChild(this.createFooter());
 
     return nav;
@@ -693,8 +680,8 @@ function syncPostButton(leftNav: LeftNav): void {
   const existing = element.querySelector('.nav-post-button');
   if (leftNav.props.currentUser && !existing) {
     const postButton = leftNav.createPostButton();
-    const trigger = element.querySelector('.nav-command');
-    if (trigger) trigger.insertAdjacentElement('afterend', postButton);
+    const menu = element.querySelector('.nav-section--menu');
+    if (menu) menu.insertAdjacentElement('beforebegin', postButton);
     else element.appendChild(postButton);
   } else if (!leftNav.props.currentUser && existing) {
     existing.remove();
@@ -726,72 +713,34 @@ export function updateLeftNavUser(
   if (navItems) {
     navItems.innerHTML = '';
 
-    if (currentUser) {
-      const items = [
-        { id: 'home', text: t('nav.home'), icon: 'home' },
-        { id: 'explore', text: t('nav.explore'), icon: 'explore' },
-        { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
-      ] as const;
+    for (const item of navItemsFor(!!currentUser)) {
+      const count = item.id === 'notifications' ? (leftNav.props.unreadCount ?? 0) : 0;
+      const navItem = document.createElement('button');
+      navItem.type = 'button';
+      navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;
+      navItem.setAttribute('data-nav-id', item.id);
 
-      items.forEach((item) => {
-        const count = item.id === 'notifications' ? (leftNav.props.unreadCount ?? 0) : 0;
-        const navItem = document.createElement('button');
-        navItem.type = 'button';
-        navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;
-        navItem.setAttribute('data-nav-id', item.id);
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'nav-item-icon';
+      iconSpan.appendChild(icon(item.icon, { width: '18', height: '18' }));
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'nav-item-label';
+      labelSpan.textContent = t(item.labelKey);
+      navItem.appendChild(iconSpan);
+      navItem.appendChild(labelSpan);
 
-        const iconSpan = document.createElement('span');
-        iconSpan.className = 'nav-item-icon';
-        iconSpan.appendChild(icon(item.icon as IconName, { width: '18', height: '18' }));
-        const labelSpan = document.createElement('span');
-        labelSpan.className = 'nav-item-label';
-        labelSpan.textContent = item.text;
-        navItem.appendChild(iconSpan);
-        navItem.appendChild(labelSpan);
+      if (count > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'nav-dm-badge';
+        badge.textContent = count >= 99 ? '99+' : String(count);
+        navItem.appendChild(badge);
+      }
 
-        if (count > 0) {
-          const badge = document.createElement('span');
-          badge.className = 'nav-dm-badge';
-          badge.textContent = count >= 99 ? '99+' : String(count);
-          navItem.appendChild(badge);
-        }
-
-        navItem.addEventListener('click', () => {
-          leftNav.setActiveItem(item.id);
-          leftNav.props.onNavigate?.(item.id);
-        });
-        navItems.appendChild(navItem);
+      navItem.addEventListener('click', () => {
+        leftNav.setActiveItem(item.id);
+        leftNav.props.onNavigate?.(item.id);
       });
-    } else {
-      const items = [
-        { id: 'home', text: t('nav.home'), icon: 'home' },
-        { id: 'explore', text: t('nav.explore'), icon: 'explore' },
-        { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
-        { id: 'maps', text: t('nav.maps'), icon: 'maps' },
-        { id: 'translate', text: t('nav.translate'), icon: 'translate' },
-      ];
-
-      items.forEach((item) => {
-        const navItem = document.createElement('button');
-        navItem.type = 'button';
-        navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;
-        navItem.setAttribute('data-nav-id', item.id);
-        const iconSpan = document.createElement('span');
-        iconSpan.className = 'nav-item-icon';
-        iconSpan.appendChild(icon(item.icon as IconName, { width: '18', height: '18' }));
-        const labelSpan = document.createElement('span');
-        labelSpan.className = 'nav-item-label';
-        labelSpan.textContent = item.text;
-        navItem.appendChild(iconSpan);
-        navItem.appendChild(labelSpan);
-        navItem.addEventListener('click', () => {
-          leftNav.setActiveItem(item.id);
-          leftNav.props.onNavigate?.(item.id);
-        });
-        navItems.appendChild(navItem);
-      });
+      navItems.appendChild(navItem);
     }
   }
 

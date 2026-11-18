@@ -90,6 +90,7 @@
   --radius-lg: 8px;
   --radius-xl: 12px;
   --radius-card: 8px;
+  --radius-button: 6px;
   --radius-pill: 9999px;
 
   /* Elevation — the small, soft shadows the legacy stylesheet used */

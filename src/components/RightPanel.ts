@@ -1,66 +1,40 @@
-import { attachPlusBadge } from '../lib/avatar.js';
-import { formatPercentage, relativeBarPercent } from '../lib/format.js';
-import { getLocale, t } from '../lib/i18n.js';
-import { icon } from '../lib/icons.js';
-import { applyNameColor } from '../lib/name-color.js';
+import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format.js';
+import { t } from '../lib/i18n.js';
+import { type IconName, icon } from '../lib/icons.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { commandShortcutLabel } from '../lib/shortcut-label.js';
+import { openShortcutSheet } from '../lib/shortcut-sheet.js';
 
-export interface RightPanelProps {
-  onSearch?: (query: string) => void;
-  onFollowUser?: (userId: string) => void;
-  mapWeather?: boolean;
-  weather?: boolean;
+interface TrendingTag {
+  tag: string;
+  count: number;
+  percentage: number;
 }
 
-export interface UserSuggestion {
+interface PopularGame {
   id: string;
+  postId: string;
+  title: string;
   username: string;
-  display_name: string;
-  avatar_key?: string;
-  badge_type?: string | null;
-  name_color?: string | null;
+  thumbnailKey?: string;
+  freshCount: number;
+  impressions: number;
 }
-
-const label = (ja: string, en: string): string => (getLocale().startsWith('ja') ? ja : en);
 
 /**
- * v5 "quiet craft" right column: search, trending ranks, who-to-follow and an
- * Obsidian-style shortcuts card. Presentation lives in shell.css.
+ * Right column: search, hashtag ranking, popular games and a help card.
+ * Presentation lives in shell.css and follows the legacy skin.
  */
 export class RightPanel {
   private element: HTMLElement;
-  private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
-  private userSuggestions: UserSuggestion[] = [];
-  private mapWeather: boolean;
-  private weather: boolean;
-  private weatherBody: HTMLElement | null = null;
+  private trendingTags: TrendingTag[] = [];
+  private gamesSection: HTMLElement | null = null;
 
-  constructor(props: RightPanelProps = {}) {
-    this.mapWeather = !!props.mapWeather;
-    this.weather = !!props.weather;
+  constructor() {
     this.element = this.createElement();
-    // The rail is laid out from the first paint but stays invisible until its
-    // two variable-height cards (trending, who-to-follow) have their content.
-    // `visibility` keeps the column's space, so revealing it cannot shift the
-    // timeline or move the shortcuts card below.
-    this.element.classList.add('right-panel--pending');
     this.setupEventListeners();
-    const reveal = () => this.element.classList.remove('right-panel--pending');
-    // Never keep the rail invisible behind a hung request.
-    const revealTimer = setTimeout(reveal, 1500);
-    const trending = this.loadTrendingTags();
-    const suggestions = this.loadUserSuggestions();
-    void Promise.allSettled([trending, suggestions]).then(() => {
-      clearTimeout(revealTimer);
-      reveal();
-    });
-    if (this.mapWeather) {
-      this.setupMapWeather();
-    }
-    if (this.weather) {
-      this.setupWeather();
-    }
+    this.loadTrendingTags();
+    this.loadPopularGames();
   }
 
   private createElement(): HTMLElement {
@@ -70,29 +44,57 @@ export class RightPanel {
 
     container.appendChild(this.createSearchSection());
     container.appendChild(this.createTrendingSection());
-    if (this.mapWeather || this.weather) {
-      container.appendChild(this.createMapWeatherSection());
-    }
-    container.appendChild(this.createFollowSection());
-    container.appendChild(this.createShortcutsSection());
+    this.gamesSection = this.createGamesSection();
+    container.appendChild(this.gamesSection);
+    container.appendChild(this.createHelpSection());
 
     return container;
   }
 
-  private createCard(titleText: string, extraClass = ''): { section: HTMLElement; list: HTMLElement } {
+  /** Card head: optional icon + title plus an optional "see all" link. */
+  private createCardHead(
+    titleText: string,
+    options: { iconName?: IconName; moreHref?: string; moreLabel?: string } = {},
+  ): HTMLElement {
+    const head = document.createElement('div');
+    head.className = 'right-card-head';
+
+    const title = document.createElement('h3');
+    title.className = 'right-card-title';
+    if (options.iconName) {
+      const titleIcon = icon(options.iconName, { width: '14', height: '14' });
+      titleIcon.classList.add('right-card-title-icon');
+      title.appendChild(titleIcon);
+    }
+    const text = document.createElement('span');
+    text.textContent = titleText;
+    title.appendChild(text);
+    head.appendChild(title);
+
+    if (options.moreHref) {
+      const href = options.moreHref;
+      const more = document.createElement('a');
+      more.className = 'right-card-more';
+      more.href = href;
+      more.textContent = options.moreLabel ?? t('right_panel.see_all');
+      more.addEventListener('click', (event) => {
+        event.preventDefault();
+        this.navigate(href);
+      });
+      head.appendChild(more);
+    }
+
+    return head;
+  }
+
+  private createCard(extraClass = ''): { section: HTMLElement; body: HTMLElement } {
     const section = document.createElement('section');
     section.className = `right-card ${extraClass}`.trim();
 
-    const title = document.createElement('h3');
-    title.className = 'right-card-title fx-label';
-    title.textContent = titleText;
-    section.appendChild(title);
+    const body = document.createElement('div');
+    body.className = 'right-card-body';
 
-    const list = document.createElement('div');
-    list.className = 'right-card-body';
-    section.appendChild(list);
-
-    return { section, list };
+    return { section, body };
   }
 
   private createSearchSection(): HTMLElement {
@@ -112,8 +114,14 @@ export class RightPanel {
     iconWrap.className = 'search-icon';
     iconWrap.appendChild(icon('search', { width: '15', height: '15' }));
 
+    // The shortcut chip advertises the real ⌘K / Ctrl-K binding.
+    const kbd = document.createElement('kbd');
+    kbd.className = 'search-kbd';
+    kbd.textContent = commandShortcutLabel();
+
     searchBox.appendChild(input);
     searchBox.appendChild(iconWrap);
+    searchBox.appendChild(kbd);
     section.appendChild(searchBox);
 
     return section;
@@ -126,253 +134,80 @@ export class RightPanel {
     return row;
   }
 
-  private symbolLabel(symbol: string | null): string {
-    if (!symbol) return '';
-    const s = symbol.toLowerCase();
-    if (s.startsWith('clearsky')) return '晴れ';
-    if (s.startsWith('fair')) return '晴れ時々曇り';
-    if (s.startsWith('partlycloudy')) return '晴れ時々曇り';
-    if (s.startsWith('cloudy')) return '曇り';
-    if (s.includes('fog')) return '霧';
-    if (s.includes('thunder')) return '雷雨';
-    if (s.includes('snow')) return '雪';
-    if (s.includes('sleet')) return 'みぞれ';
-    if (s.includes('rain')) return '雨';
-    return symbol;
-  }
-
-  private createMapWeatherSection(): HTMLElement {
-    const { section, list } = this.createCard('天気 / Weather', 'maps-weather-section');
-    this.weatherBody = list;
-    // Render the same current-row shape as the loaded state (instead of a
-    // one-line "…"), so the card height does not change when data lands.
-    list.appendChild(this.createWeatherCurrent('--', '…'));
-    return section;
-  }
-
-  /** The temperature/symbol row; shared by the placeholder and loaded states. */
-  private createWeatherCurrent(temperature: string, symbolText: string): HTMLElement {
-    const current = document.createElement('div');
-    current.className = 'maps-weather-current';
-    const temp = document.createElement('span');
-    temp.className = 'maps-weather-temp';
-    temp.textContent = temperature;
-    const symbol = document.createElement('span');
-    symbol.className = 'maps-weather-symbol';
-    symbol.textContent = symbolText;
-    current.appendChild(temp);
-    current.appendChild(symbol);
-    return current;
-  }
-
-  private setupMapWeather(): void {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { lat: number; lon: number; data?: any; error?: boolean };
-      if (!this.weatherBody) return;
-      if (detail?.error || !detail?.data) {
-        this.weatherBody.replaceChildren(this.createWeatherCurrent('--', ''));
-        const note = document.createElement('div');
-        note.className = 'maps-note';
-        note.textContent = '天気を取得できませんでした';
-        this.weatherBody.appendChild(note);
-        return;
-      }
-      const data = detail.data;
-      const current = data.points?.[0];
-      this.weatherBody.replaceChildren(
-        this.createWeatherCurrent(
-          current?.temperature != null ? `${Math.round(current.temperature)}°` : '--',
-          this.symbolLabel(current?.symbol ?? null),
-        ),
-      );
-      const meta = document.createElement('div');
-      meta.className = 'maps-note';
-      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
-      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
-      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
-      this.weatherBody.appendChild(meta);
-
-      const nextClear = (data.points ?? []).slice(1).find((p: any) => {
-        const s = (p.symbol ?? '').toLowerCase();
-        return s.startsWith('clearsky') || s.startsWith('fair');
-      });
-      if (nextClear) {
-        const fc = document.createElement('div');
-        fc.className = 'maps-note';
-        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
-        this.weatherBody.appendChild(fc);
-      }
-
-      const hourly = document.createElement('div');
-      hourly.className = 'maps-hourly';
-      for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {
-        const h = document.createElement('div');
-        h.className = 'maps-hour';
-        const time = document.createElement('div');
-        time.textContent = new Date(point.time).toLocaleTimeString([], { hour: '2-digit' });
-        const tempEl = document.createElement('div');
-        tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
-        const s = document.createElement('div');
-        s.textContent = this.symbolLabel(point.symbol);
-        h.appendChild(time);
-        h.appendChild(tempEl);
-        h.appendChild(s);
-        hourly.appendChild(h);
-      }
-      this.weatherBody.appendChild(hourly);
-    };
-    window.addEventListener('flaxia:mapweather', handler);
-  }
-
-  private async setupWeather(): Promise<void> {
-    if (!this.weatherBody) return;
-    this.weatherBody.textContent = '…';
-    // Get current location (GPS → IP fallback → Tokyo default).
-    let lat = 35.6762;
-    let lon = 139.6503;
-    if (navigator.geolocation) {
-      const pos = await new Promise<{ lat: number; lon: number } | null>((resolve) => {
-        navigator.geolocation.getCurrentPosition(
-          (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-          () => resolve(null),
-          { timeout: 8000, maximumAge: 300000 },
-        );
-      });
-      if (pos) {
-        lat = pos.lat;
-        lon = pos.lon;
-      }
-    }
-    if (lat === 35.6762 && lon === 139.6503) {
-      try {
-        const res = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
-        if (res.ok) {
-          const data = (await res.json()) as { latitude?: number; longitude?: number };
-          if (typeof data.latitude === 'number' && typeof data.longitude === 'number') {
-            lat = data.latitude;
-            lon = data.longitude;
-          }
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-    try {
-      const res = await fetch(`/api/maps/weather?lat=${lat}&lon=${lon}`, { credentials: 'include' });
-      if (!res.ok) throw new Error('weather unavailable');
-      const data = (await res.json()) as { points: any[] };
-      if (!this.weatherBody) return;
-      const current = data.points?.[0];
-      this.weatherBody.replaceChildren(
-        this.createWeatherCurrent(
-          current?.temperature != null ? `${Math.round(current.temperature)}°` : '--',
-          this.symbolLabel(current?.symbol ?? null),
-        ),
-      );
-      const meta = document.createElement('div');
-      meta.className = 'maps-note';
-      const hum = current?.humidity != null ? `湿度 ${Math.round(current.humidity)}%` : '';
-      const wind = current?.windSpeed != null ? `風速 ${current.windSpeed.toFixed(0)}m/s` : '';
-      meta.textContent = [hum, wind].filter(Boolean).join(' / ');
-      this.weatherBody.appendChild(meta);
-
-      const nextClear = (data.points ?? []).slice(1).find((p: any) => {
-        const s = (p.symbol ?? '').toLowerCase();
-        return s.startsWith('clearsky') || s.startsWith('fair');
-      });
-      if (nextClear) {
-        const fc = document.createElement('div');
-        fc.className = 'maps-note';
-        const t = new Date(nextClear.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        fc.textContent = `次に晴れるのは ${t}（${this.symbolLabel(nextClear.symbol)}）`;
-        this.weatherBody.appendChild(fc);
-      }
-
-      const hourly = document.createElement('div');
-      hourly.className = 'maps-hourly';
-      for (const point of (data.points ?? []).filter((_: any, i: number) => i % 6 === 0).slice(0, 8)) {
-        const h = document.createElement('div');
-        h.className = 'maps-hour';
-        const time = document.createElement('div');
-        time.textContent = new Date(point.time).toLocaleTimeString([], { hour: '2-digit' });
-        const tempEl = document.createElement('div');
-        tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
-        const s = document.createElement('div');
-        s.textContent = this.symbolLabel(point.symbol);
-        h.appendChild(time);
-        h.appendChild(tempEl);
-        h.appendChild(s);
-        hourly.appendChild(h);
-      }
-      this.weatherBody.appendChild(hourly);
-    } catch {
-      if (!this.weatherBody) return;
-      this.weatherBody.replaceChildren(this.createWeatherCurrent('--', ''));
-      const note = document.createElement('div');
-      note.className = 'maps-note';
-      note.textContent = '天気を取得できませんでした';
-      this.weatherBody.appendChild(note);
-    }
-  }
-
   private createTrendingSection(): HTMLElement {
-    const { section, list } = this.createCard('', 'trending-section');
-    // The top tag is the headline of this card; a "Trending" caption above it
-    // only labels what the reader already sees.
-    const title = section.querySelector('.right-card-title') as HTMLElement;
-    title.remove();
+    const { section, body } = this.createCard('trending-section');
+    body.classList.add('trending-list');
 
-    list.classList.add('trending-list');
+    section.appendChild(this.createCardHead(t('right_panel.trending'), { iconName: 'hash', moreHref: '/explore' }));
+    section.appendChild(body);
 
     const loading = this.createStatusRow(t('common.loading'));
     loading.classList.add('trending-loading');
-    list.appendChild(loading);
+    body.appendChild(loading);
 
     return section;
   }
 
-  private createFollowSection(): HTMLElement {
-    const { section, list } = this.createCard(t('right_panel.who_to_follow'), 'follow-section');
-    section.style.display = 'none'; // shown when suggestions load
-    list.classList.add('follow-list');
-
-    const loading = this.createStatusRow(t('common.loading'));
-    loading.classList.add('follow-loading');
-    list.appendChild(loading);
-
+  private createGamesSection(): HTMLElement {
+    const { section, body } = this.createCard('games-section');
+    body.classList.add('games-list');
+    section.appendChild(this.createCardHead(t('right_panel.popular_games'), { iconName: 'game', moreHref: '/arcade' }));
+    section.appendChild(body);
+    body.appendChild(this.createStatusRow(t('common.loading')));
     return section;
   }
 
-  /** Obsidian-like cheat sheet: ⌘K / N / T rows. */
-  private createShortcutsSection(): HTMLElement {
-    const { section, list } = this.createCard(label('ショートカット', 'Shortcuts'), 'shortcuts-section');
+  private createHelpSection(): HTMLElement {
+    const { section, body } = this.createCard('help-section');
+    section.appendChild(this.createCardHead(t('right_panel.help_title'), { iconName: 'help' }));
+    section.appendChild(body);
+    body.classList.add('help-list');
 
-    const rows: Array<[string, string]> = [
-      [commandShortcutLabel(), label('検索・コマンド', 'Search or command')],
-      ['N', label('投稿', 'New post')],
-      ['T', label('テーマ切替', 'Toggle theme')],
-      ['Alt+1/2/3', label('フォロー中 / おすすめ / 全体', 'Following / For you / Global')],
+    const rows: Array<{ iconName: IconName; text: string; run: () => void }> = [
+      {
+        iconName: 'game',
+        text: t('right_panel.help_shortcuts'),
+        run: () => openShortcutSheet(),
+      },
+      {
+        iconName: 'guide',
+        text: t('right_panel.help_guide'),
+        run: () => this.navigate('/docs'),
+      },
+      {
+        iconName: 'users',
+        text: t('right_panel.help_guidelines'),
+        run: () => this.navigate('/docs/how2join'),
+      },
     ];
 
-    for (const [keys, text] of rows) {
-      const row = document.createElement('div');
-      row.className = 'shortcut-row';
+    for (const row of rows) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'help-item';
+      item.appendChild(icon(row.iconName, { width: '16', height: '16' }));
 
-      const desc = document.createElement('span');
-      desc.className = 'shortcut-label';
-      desc.textContent = text;
+      const text = document.createElement('span');
+      text.className = 'help-item-text';
+      text.textContent = row.text;
+      item.appendChild(text);
 
-      const kbd = document.createElement('kbd');
-      kbd.className = 'shortcut-kbd';
-      kbd.textContent = keys;
-
-      row.appendChild(desc);
-      row.appendChild(kbd);
-      list.appendChild(row);
+      item.appendChild(icon('chevron-right', { width: '15', height: '15' }));
+      item.addEventListener('click', row.run);
+      body.appendChild(item);
     }
 
     return section;
+  }
+
+  private navigate(href: string): void {
+    if (href === '/explore') {
+      window.history.pushState({}, '', href);
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
+      return;
+    }
+    window.history.pushState({}, '', href);
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
   private setupEventListeners(): void {
@@ -405,7 +240,7 @@ export class RightPanel {
         throw new Error('Failed to load trending tags');
       }
 
-      const data = (await response.json()) as { tags: Array<{ tag: string; count: number; percentage: number }> };
+      const data = (await response.json()) as { tags: TrendingTag[] };
       this.trendingTags = data.tags || [];
       this.renderTrendingTags();
     } catch (error) {
@@ -442,8 +277,9 @@ export class RightPanel {
 
       const hashtag = document.createElement('div');
       hashtag.className = 'trending-hashtag';
-      // Rank 1 carries the weight; the rest are a readable list under it.
-      hashtag.textContent = index === 0 ? tag : `#${tag}`;
+      // Every row is a hashtag: the title says what the list is, so no row
+      // gets a special "no #" treatment.
+      hashtag.textContent = `#${tag}`;
 
       // The bar compares tags with each other; the text keeps the true share
       // of the recent-post sample so the graph cannot overstate a tag.
@@ -477,115 +313,89 @@ export class RightPanel {
     });
   }
 
-  private async loadUserSuggestions(): Promise<void> {
+  private async loadPopularGames(): Promise<void> {
+    const list = this.gamesSection?.querySelector('.games-list');
+    if (!list) return;
+
     try {
-      const response = await fetch('/api/users/suggestions');
-      if (!response.ok) {
-        throw new Error('Failed to load user suggestions');
+      const response = await fetch('/api/games?trending=true&limit=3');
+      if (!response.ok) throw new Error('Failed to load games');
+
+      const data = (await response.json()) as { games?: PopularGame[] };
+      const games = (data.games ?? []).slice(0, 3);
+
+      if (games.length === 0) {
+        this.gamesSection?.remove();
+        this.gamesSection = null;
+        return;
       }
 
-      const data = (await response.json()) as { users: UserSuggestion[] };
-      this.userSuggestions = data.users || [];
-      this.renderUserSuggestions();
+      list.innerHTML = '';
+      for (const game of games) {
+        list.appendChild(this.createGameRow(game));
+      }
     } catch (error) {
-      console.error('Failed to load user suggestions:', error);
+      console.error('Failed to load popular games:', error);
+      this.gamesSection?.remove();
+      this.gamesSection = null;
     }
   }
 
-  private renderUserSuggestions(): void {
-    const followSection = this.element.querySelector('.follow-section') as HTMLElement | null;
-    const followList = this.element.querySelector('.follow-list');
+  private createGameRow(game: PopularGame): HTMLElement {
+    const row = document.createElement('a');
+    row.className = 'game-item';
+    row.href = `/arcade/${game.postId}`;
 
-    if (!followSection || !followList) return;
-
-    if (this.userSuggestions.length === 0) {
-      followSection.style.display = 'none';
-      return;
+    const thumb = document.createElement('div');
+    thumb.className = 'game-thumb';
+    if (game.thumbnailKey) {
+      const img = document.createElement('img');
+      img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
+      img.alt = '';
+      img.loading = 'lazy';
+      img.width = 48;
+      img.height = 48;
+      thumb.appendChild(img);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'game-thumb-fallback';
+      fallback.textContent = '🎮';
+      thumb.appendChild(fallback);
     }
 
-    followSection.style.display = 'block';
-    followList.innerHTML = '';
+    const info = document.createElement('div');
+    info.className = 'game-info';
 
-    this.userSuggestions.forEach((user) => {
-      const item = document.createElement('div');
-      item.className = 'follow-item';
-      item.dataset.userId = user.id;
+    const title = document.createElement('div');
+    title.className = 'game-title';
+    title.textContent = game.title;
+    info.appendChild(title);
 
-      const avatar = document.createElement('div');
-      avatar.className = 'follow-avatar';
-      if (user.avatar_key) {
-        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
-      }
-      if (!user.avatar_key) {
-        avatar.textContent = user.display_name.charAt(0).toUpperCase();
-      }
-      attachPlusBadge(avatar, user.badge_type);
+    const meta = document.createElement('div');
+    meta.className = 'game-meta';
 
-      const info = document.createElement('div');
-      info.className = 'follow-info';
+    const plays = document.createElement('span');
+    plays.appendChild(icon('impressions', { width: '13', height: '13' }));
+    plays.appendChild(document.createTextNode(formatCount(game.impressions ?? 0)));
 
-      const name = document.createElement('div');
-      name.className = 'follow-name';
-      name.textContent = user.display_name;
-      applyNameColor(name, user.name_color, user.badge_type);
-      name.addEventListener('click', () => {
-        window.location.href = `/profile/${user.username}`;
-      });
+    const likes = document.createElement('span');
+    likes.appendChild(icon('fresh', { width: '13', height: '13' }));
+    likes.appendChild(document.createTextNode(formatCount(game.freshCount ?? 0)));
 
-      const handle = document.createElement('div');
-      handle.className = 'follow-handle';
-      handle.textContent = `@${user.username}`;
+    meta.appendChild(plays);
+    meta.appendChild(likes);
+    info.appendChild(meta);
 
-      info.appendChild(name);
-      info.appendChild(handle);
+    row.appendChild(thumb);
+    row.appendChild(info);
 
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'follow-button';
-      button.textContent = t('right_panel.follow');
-
-      button.addEventListener('click', async (e) => {
-        e.preventDefault();
-        await this.followUser(user.id, item);
-      });
-
-      item.appendChild(avatar);
-      item.appendChild(info);
-      item.appendChild(button);
-
-      followList.appendChild(item);
+    row.addEventListener('click', (event) => {
+      event.preventDefault();
+      window.history.pushState({}, '', `/arcade/${game.postId}`);
+      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
     });
-  }
 
-  private async followUser(userId: string, itemElement: HTMLElement): Promise<void> {
-    try {
-      const response = await fetch(`/api/follows/${userId}`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to follow user');
-      }
-
-      this.userSuggestions = this.userSuggestions.filter((user) => user.id !== userId);
-
-      itemElement.style.opacity = '0';
-      itemElement.style.transform = 'translateX(12px)';
-
-      setTimeout(() => {
-        itemElement.remove();
-
-        if (this.userSuggestions.length === 0) {
-          const followSection = this.element.querySelector('.follow-section') as HTMLElement | null;
-          if (followSection) {
-            followSection.style.display = 'none';
-          }
-        }
-      }, 200);
-    } catch (error) {
-      console.error('Failed to follow user:', error);
-    }
+    return row;
   }
 
   public getElement(): HTMLElement {
@@ -598,6 +408,6 @@ export class RightPanel {
 }
 
 // Factory function for easier usage
-export function createRightPanel(props: RightPanelProps = {}): RightPanel {
-  return new RightPanel(props);
+export function createRightPanel(): RightPanel {
+  return new RightPanel();
 }
