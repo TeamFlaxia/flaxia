@@ -3,7 +3,7 @@
 // Boots the actual `vite build` output (dist/index.html + hashed assets) against
 // a static file server and a stubbed /api. Two surfaces are checked:
 //
-//   1. the guest shell (the real design: 290/640/290 columns and padded cards);
+//   1. the guest shell (the legacy 240/600/350 columns and flat post rows);
 //   2. /settings for a signed-in user (the engine-rendered sections mount and
 //      keep their inputs, selects and keyed lists).
 //
@@ -353,23 +353,23 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
     // (240px nav, unpadded cards). The shipped CSS must stay unlayered.
     assert.equal(result.layerBlocks, 0, 'app CSS must not use @layer');
 
-    // The shipped design: 290px nav + 640px content + 290px rail at 1400px.
+    // The shipped design: the legacy 240px nav + 600px content + 350px rail.
     assert.ok(result.appChildren > 0, '#app was never populated');
     assert.ok(result.left, 'left nav missing');
-    assert.ok(Math.abs(result.left.width - 290) < 1, `left nav width: ${result.left.width}`);
+    assert.ok(Math.abs(result.left.width - 240) < 1, `left nav width: ${result.left.width}`);
     assert.ok(result.right, 'right rail missing');
-    assert.ok(Math.abs(result.right.width - 290) < 1, `right rail width: ${result.right.width}`);
+    assert.ok(Math.abs(result.right.width - 350) < 1, `right rail width: ${result.right.width}`);
     assert.ok(result.center, 'content column missing');
-    assert.ok(Math.abs(result.center.width - 640) < 1, `content column width: ${result.center.width}`);
-    assert.equal(result.leftNavPadding, '10px 14px');
+    assert.ok(Math.abs(result.center.width - 600) < 1, `content column width: ${result.center.width}`);
+    assert.equal(result.leftNavPadding, '16px');
 
-    // Tokens and card chrome still resolve to the redesign values.
+    // Tokens and card chrome resolve to the legacy values.
     assert.equal(result.bodyBackground, 'rgb(255, 255, 255)');
     assert.equal(result.textColor, 'rgb(15, 23, 42)');
     assert.ok(result.postCard, 'post card missing');
-    assert.equal(result.postCard.padding, '13px 14px', `post card padding: ${result.postCard.padding}`);
-    assert.equal(result.postCard.margin, '0px 8px', `post card margin: ${result.postCard.margin}`);
-    assert.equal(result.postCard.borderRadius, '12px');
+    assert.equal(result.postCard.padding, '16px', `post card padding: ${result.postCard.padding}`);
+    assert.equal(result.postCard.margin, '0px', `post card margin: ${result.postCard.margin}`);
+    assert.equal(result.postCard.borderRadius, '0px');
 
     // The stubbed timeline post exercises PostCard's header, actions and quote.
     await page.waitForSelector('.post-card', { timeout: 20_000 });
@@ -682,8 +682,8 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       } else {
         assert.equal(layout.bottomNavDisplay, 'none', `${label}: bottom nav should be hidden`);
         assert.ok(layout.leftNav, `${label}: left nav missing`);
-        // 769-1199px shows the collapsed icon rail (72px), not the 290px nav.
-        assert.ok(Math.abs(layout.leftNav.width - 72) < 1, `${label}: collapsed nav width ${layout.leftNav.width}`);
+        // The legacy layout keeps the full 240px rail until the drawers kick in.
+        assert.ok(Math.abs(layout.leftNav.width - 240) < 1, `${label}: nav width ${layout.leftNav.width}`);
         assert.ok(layout.leftNav.left >= 0, `${label}: left nav should be on-screen`);
       }
 

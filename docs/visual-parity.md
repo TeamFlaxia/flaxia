@@ -48,21 +48,28 @@ At 19 routes the comparison prints:
 no layout/style differences
 ```
 
-The shipped values it locks in:
+The shipped values it locks in (legacy skin, restored after the unslopping
+redesign):
 
 | Element | Value |
 |---|---|
-| `.main-container` | `max-width: 1220px`, centred |
-| `.left-nav` | 290px (72px icon rail at 769-1199px, off-canvas drawer <= 768px) |
-| content column | 640px |
-| `.right-panel` | 290px, hidden <= 1024px |
-| `.post-card` | `padding: 13px 14px`, `margin: 0 8px`, `border-radius: 12px` |
-| `.right-card` | `padding: 10px`, `border-radius: 12px` |
-| body | `line-height: 25.5px`, 15px type scale |
+| `.main-container` | `max-width: 1200px`, centred |
+| `.left-nav` | 240px, off-canvas drawer <= 768px |
+| content column | 600px |
+| `.right-panel` | 350px, hidden <= 1024px |
+| `.post-card` | `padding: 16px`, `margin: 0`, `border-radius: 0`, bottom hairline |
+| `.right-card` | `padding: 16px`, `border-radius: 8px` |
+| body | `line-height: 25.6px`, 16px type scale |
 
 `tests/app-shell.browser.mjs` asserts these same numbers (and that the shipped
 CSS contains no `@layer` block), so a future cascade change fails in CI instead
 of only in the browser.
+
+> The `legacy/theme.css` and `legacy/overrides.css` entrypoints restore the
+> pre-unslopping design language. `tests/visual-parity.mjs --diff` against a
+> build of current `main` is expected to report differences: the skin change is
+> intentional, so the harness is used to review before/after screenshots rather
+> than as a pass/fail gate across the redesign boundary.
 
 ## Runtime errors
 
