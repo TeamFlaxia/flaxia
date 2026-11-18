@@ -1,4 +1,4 @@
-name = "flaxia-backend"
+name = "flaxia-ap-delivery"
 main = "functions/queue-worker.ts"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -24,13 +24,13 @@ CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 # Comma-separated seed domains for the Common Crawl ingestion job (empty until
 # an operator chooses the first set). CROWD_API_KEY and CROWD_WEBHOOK_SECRET are
 # secrets:
-#   npx wrangler secret put CROWD_API_KEY --config wrangler.toml.worker
-#   npx wrangler secret put CROWD_WEBHOOK_SECRET --config wrangler.toml.worker
+#   npx wrangler secret put CROWD_API_KEY --config wrangler.worker.toml
+#   npx wrangler secret put CROWD_WEBHOOK_SECRET --config wrangler.worker.toml
 CC_DOMAINS = ""
 CC_CRAWL = ""
 WEB_EMBEDDINGS_ENABLED = "0"
 # Optional: destination for the Arcade dwell dataset. Set HF_TOKEN as a secret:
-#   npx wrangler secret put HF_TOKEN --config wrangler.toml.worker
+#   npx wrangler secret put HF_TOKEN --config wrangler.worker.toml
 # HF_REPO = "youruser/flaxia-arcade-dwell"
 
 [[kv_namespaces]]

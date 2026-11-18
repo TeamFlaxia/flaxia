@@ -1,10 +1,12 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
-import { buildFollowActivity, buildUndoActivity } from '../../lib/activitypub/activities';
-import { deliverToInbox } from '../../lib/activitypub/delivery';
+import { buildFollowActivity, buildUndoActivity, buildUpdateActivity } from '../../lib/activitypub/activities';
+import { buildActorDocument } from '../../lib/activitypub/actor';
+import { deliverToFollowers, deliverToInbox } from '../../lib/activitypub/delivery';
 import { fetchFederationDocument, isPrivatePeerAllowed, resolveRemoteActor } from '../../lib/activitypub/fetch';
 import { actorPrivateKey, ensureActorKey } from '../../lib/activitypub/keys';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
@@ -43,6 +45,45 @@ import { batchGetFreshAndBookmarkStatus, detectMimeType, isAllowedImageMime, req
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Announce a changed actor document to federated followers.
+ *
+ * Mastodon caches a remote account until it receives an `Update`: a profile
+ * edit that is never announced stays invisible to every instance that already
+ * knows the account (old name, old bio, old status count). Delivery is
+ * best-effort and runs after the response.
+ */
+function deliverProfileUpdate(c: Context<{ Bindings: Bindings; Variables: Variables }>, userId: string): void {
+  runInBackground(
+    c,
+    async () => {
+      const row = await c.env.DB.prepare(
+        'SELECT username, display_name, bio, avatar_key, created_at FROM users WHERE id = ?',
+      )
+        .bind(userId)
+        .first<{
+          username: string;
+          display_name: string | null;
+          bio: string | null;
+          avatar_key: string | null;
+          created_at: string | null;
+        }>();
+      if (!row) return;
+
+      const publicKeyPem = await ensureActorKey(c.env.DB, userId);
+      const actor = buildActorDocument({ baseUrl: c.env.BASE_URL, user: row, publicKeyPem });
+      const activity = buildUpdateActivity(c.env.BASE_URL, row.username, actor, nanoid());
+
+      await deliverToFollowers(c.env, {
+        userId,
+        username: row.username,
+        activity,
+      });
+    },
+    'Profile update delivery failed',
+  );
+}
 
 /**
  * Fetch a JSON document from a URL that ultimately came from user input or a
@@ -1312,6 +1353,11 @@ users.patch('/users/me', requireAuth, async (c) => {
       .bind(userId)
       .first<UpdatedUserRow>();
 
+    // A changed profile only reaches peers through an Update activity.
+    if (display_name !== undefined || bio !== undefined || (avatarFile && avatarFile.size > 0)) {
+      deliverProfileUpdate(c, userId);
+    }
+
     return c.json({
       user: {
         ...updatedUser,
@@ -2068,6 +2114,8 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
     if (!result.success) {
       return c.json({ error: 'Failed to update avatar' }, 500);
     }
+
+    deliverProfileUpdate(c, userId);
 
     return c.json({ success: true, avatar_key: avatarKey });
   } catch (error: unknown) {

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 test('ActivityPub consumer quarantines poison messages after bounded retries', () => {
-  const toml = readFileSync(new URL('../wrangler.toml.worker', import.meta.url), 'utf8');
+  const toml = readFileSync(new URL('../wrangler.worker.toml', import.meta.url), 'utf8');
   const consumer = toml.split('[[queues.consumers]]')[1];
   assert.ok(consumer, 'ActivityPub consumer must be configured');
   assert.match(consumer, /queue\s*=\s*"activitypub-delivery"/);

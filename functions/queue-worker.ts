@@ -42,7 +42,7 @@ interface Env {
 }
 
 export default {
-  // Triggered by `triggers.crons` in wrangler.toml.worker — exports the
+  // Triggered by `triggers.crons` in wrangler.worker.toml — exports the
   // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
   async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
     if (event.cron === '0 * * * *') {

@@ -14,7 +14,10 @@ const COLLECTION_PAGE_SIZE = 20;
 function jsonLd(contentType: string, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
-    headers: { 'Content-Type': contentType },
+    // ActivityPub documents change whenever a post or profile changes. Without
+    // an explicit policy Cloudflare and peers are free to keep a stale copy,
+    // which shows up as an outdated actor or an empty profile on Mastodon.
+    headers: { 'Content-Type': contentType, 'Cache-Control': 'no-cache' },
   });
 }
 

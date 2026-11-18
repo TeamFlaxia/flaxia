@@ -361,11 +361,16 @@ describe('ActivityPub inbox handlers', () => {
     }
   });
 
-  it('accepts a Follow only once', async () => {
+  it('re-sends Accept for a repeated Follow without duplicating the follower', async () => {
     const originalFetch = globalThis.fetch;
     const restore = stubRemoteActor(originalFetch);
     const queue: QueueMessage[] = [];
     try {
+      const before = await db
+        .prepare('SELECT COUNT(*) AS n FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+        .bind('local-1', REMOTE_BOB)
+        .first<{ n: number }>();
+
       await handleIncomingActivity(envFor(db, queue), {
         actorId: REMOTE_BOB,
         username: 'alice',
@@ -376,7 +381,18 @@ describe('ActivityPub inbox handlers', () => {
           object: `${BASE}/api/actors/alice`,
         },
       });
-      assert.equal(queue.length, 0, 'a repeated follow must not queue a second Accept');
+
+      // A repeated Follow usually means the previous Accept never reached the
+      // peer. Answering again is what lets the remote recover; returning early
+      // leaves the follow pending forever.
+      assert.equal(queue.length, 1, 'a repeated follow must re-send Accept');
+      assert.equal(queue[0].activity?.type, 'Accept');
+
+      const after = await db
+        .prepare('SELECT COUNT(*) AS n FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+        .bind('local-1', REMOTE_BOB)
+        .first<{ n: number }>();
+      assert.equal(after?.n, before?.n, 'a repeated follow must not duplicate the follower row');
     } finally {
       restore();
     }

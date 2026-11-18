@@ -380,36 +380,45 @@ async function handleFollow(
     return;
   }
 
-  const existing = await env.DB.prepare('SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+  const existing = await env.DB.prepare(
+    'SELECT id, inbox_url, shared_inbox_url FROM ap_followers WHERE local_user_id = ? AND actor_url = ?',
+  )
     .bind(followerUserId, actorId)
-    .first();
-  if (existing) {
-    console.log('Follower already exists:', actorId);
-    return;
-  }
+    .first<{ id: string; inbox_url: string | null; shared_inbox_url: string | null }>();
 
   // The actor document carries the inbox the Accept has to be delivered to.
   // The request is signed: an instance that runs in secure mode only answers
   // a signed request.
   const actor = await resolveRemoteActor(actorId, env, await actorSignOptions(env.DB, env.BASE_URL, username));
-  const inboxUrl = actor?.inbox ?? actorId;
-  const sharedInboxUrl = actor?.sharedInbox ?? null;
+  const inboxUrl = actor?.inbox ?? existing?.inbox_url ?? actorId;
+  const sharedInboxUrl = actor?.sharedInbox ?? existing?.shared_inbox_url ?? null;
 
-  await env.DB.prepare(`
-    INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, shared_inbox_url, username, domain, display_name, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  `)
-    .bind(
-      randomId(),
-      followerUserId,
-      actorId,
-      inboxUrl,
-      sharedInboxUrl,
-      actor?.preferredUsername ?? null,
-      actor?.domain ?? null,
-      actor?.displayName ?? null,
+  if (existing) {
+    // A repeated Follow means the previous Accept never reached the peer (or
+    // the peer lost its state). Refresh the inbox and answer again: returning
+    // here would leave the follow pending on the remote instance forever.
+    await env.DB.prepare(
+      "UPDATE ap_followers SET inbox_url = ?, shared_inbox_url = ?, status = 'accepted' WHERE id = ?",
     )
-    .run();
+      .bind(inboxUrl, sharedInboxUrl, existing.id)
+      .run();
+  } else {
+    await env.DB.prepare(`
+      INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, shared_inbox_url, username, domain, display_name, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `)
+      .bind(
+        randomId(),
+        followerUserId,
+        actorId,
+        inboxUrl,
+        sharedInboxUrl,
+        actor?.preferredUsername ?? null,
+        actor?.domain ?? null,
+        actor?.displayName ?? null,
+      )
+      .run();
+  }
 
   if (actor) {
     await env.DB.prepare(`
@@ -438,14 +447,16 @@ async function handleFollow(
       .run();
   }
 
-  await notifyRemoteFollow(
-    env,
-    followerUserId,
-    actorId,
-    actor?.displayName ?? null,
-    actor?.preferredUsername ?? null,
-    actor?.domain ?? null,
-  );
+  if (!existing) {
+    await notifyRemoteFollow(
+      env,
+      followerUserId,
+      actorId,
+      actor?.displayName ?? null,
+      actor?.preferredUsername ?? null,
+      actor?.domain ?? null,
+    );
+  }
 
   await sendAccept(env, username, activity, actorId, inboxUrl);
 }

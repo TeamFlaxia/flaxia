@@ -18,7 +18,7 @@ Flaxia consists of 4+ deployable components:
 | Component | Config | Deployment Command |
 |---|---|---|
 | Main Pages (SPA + API) | `wrangler.toml` | `pnpm deploy` |
-| Backend Worker (Queue consumer) | `wrangler.toml.worker` | Manual `wrangler deploy` |
+| Queue Worker (ActivityPub delivery, `flaxia-ap-delivery`) | `wrangler.worker.toml` | GitHub Actions `deploy-queue` |
 | Sandbox Worker | `wrangler.sandbox.toml` | `pnpm deploy:sandbox` |
 | Mail Worker (`flaxia-mail`) | `mail-worker/wrangler.toml` | `npm run deploy:mail`（D1 migrate 後にデプロイ。`workers.dev` 公開なし） |
 | Status Worker (`status.flaxia.app`) | `status-worker/wrangler.toml.example`（設定は未作成） | 現在デプロイ不可（下記参照） |
@@ -52,7 +52,7 @@ npx wrangler secret put MAIL_THREAD_SECRET --config mail-worker/wrangler.toml
 npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
 # 予約されたアカウント削除（scheduled backend worker）も Mail を消すため、
 # 同じ secret を backend worker にも設定する。
-npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.toml.worker
+npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.worker.toml
 ```
 
 DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。初回デプロイでは Email Routing に一切触れない。P2 の受信 cutover は `docs/mail.md` §11.1 の手順で行う。
@@ -118,23 +118,22 @@ If credentials are missing, the form reports that submission is unavailable.
 Redeploy the backend worker (below) to enable its daily cleanup of expired
 reservation rows.
 
-## Backend Worker (flaxia-backend)
+## Queue Worker (`flaxia-ap-delivery`)
 
-This worker hosts Durable Objects and consumes the ActivityPub delivery queue.
+This worker consumes the ActivityPub delivery queue. GitHub Actions deploys it
+as `flaxia-ap-delivery` in the `deploy-queue` job; deploying it under another
+name leaves the queue bound to a stale worker and posts silently stop
+federating.
 
 ```bash
 npx wrangler deploy functions/queue-worker.ts \
-  --config wrangler.toml.worker \
+  --config wrangler.worker.toml \
   --name flaxia-ap-delivery \
   --compatibility-date 2024-01-01
 ```
 
-The main Pages project binds to this worker via `wrangler.toml`:
-```toml
-[[services]]
-binding = "BACKEND"
-service = "flaxia-backend"
-```
+`wrangler.worker.toml` sets the same name, so a plain
+`npx wrangler deploy --config wrangler.worker.toml` targets the consumer too.
 
 ## Sandbox Worker
 
@@ -223,7 +222,7 @@ npx wrangler deploy --config status-worker/wrangler.toml
 wrangler pages deployment tail
 
 # Tail worker logs
-wrangler tail --config wrangler.toml.worker
+wrangler tail --config wrangler.worker.toml
 ```
 
 ## Important Notes
@@ -237,11 +236,11 @@ wrangler tail --config wrangler.toml.worker
 
 The deployment workflow ensures the dead-letter queue exists in the same
 Cloudflare account before deploying `flaxia-backend`. For manual deployment,
-create it once before deploying with `wrangler.toml.worker`:
+create it once before deploying with `wrangler.worker.toml`:
 
 ```bash
 npx wrangler queues create activitypub-delivery-dlq
-npx wrangler deploy --config wrangler.toml.worker
+npx wrangler deploy --config wrangler.worker.toml
 ```
 
 The `activitypub-delivery` consumer retries a failed delivery **at most three

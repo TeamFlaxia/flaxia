@@ -183,6 +183,9 @@ export function buildCreateActivity(note: NoteObject, user: NoteUser, baseUrl: s
     object: note,
     to: note.to ?? [],
     cc: note.cc ?? [],
-    published: new Date().toISOString(),
+    // The Create carries the Note's own timestamp: peers use it to order the
+    // activity, and an outbox page must not claim every post was created at
+    // the moment the page was requested.
+    published: note.published,
   };
 }

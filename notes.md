@@ -9,7 +9,7 @@
 - **ActivityPub Queue**: 活動通知（ActivityPub の Inbox/Delivery）を処理するためのキューコンシューマーが含まれています。
 
 ### 2. 設定
-- `wrangler.toml.worker` にて DO クラスの登録とマイグレーションタグ (`v1`) が設定されており、正常にデプロイ可能な状態です。
+- `wrangler.worker.toml` にて DO クラスの登録とマイグレーションタグ (`v1`) が設定されており、正常にデプロイ可能な状態です。
 - ページプロジェクト (`wrangler.toml`) から `script_name = "flaxia-backend"` を指定してバインドされています。
 
 ### 3. 今後の課題・Next Steps

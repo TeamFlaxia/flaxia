@@ -97,6 +97,8 @@ describe('ActivityPub Note builder', () => {
     assert.equal(activity.id, `${BASE}/activities/create-post-3`);
     assert.equal(activity.actor, `${BASE}/api/actors/alice`);
     assert.deepEqual(activity.to, [PUBLIC_COLLECTION]);
+    // The Create must not be timestamped at outbox-request time.
+    assert.equal(activity.published, note.published);
   });
 });
 

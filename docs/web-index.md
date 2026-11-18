@@ -28,7 +28,7 @@ Pages (`wrangler.toml`):
 - `VECTORIZE_WEB` binding (optional) — created separately, never reuse the
   posts index.
 
-Scheduled worker (`wrangler.toml.worker`):
+Scheduled worker (`wrangler.worker.toml`):
 
 - `CROWD_ORCHESTRATOR_URL`
 - `CROWD_API_KEY` / `CROWD_WEBHOOK_SECRET` (secrets)
