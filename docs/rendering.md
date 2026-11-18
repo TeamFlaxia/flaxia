@@ -303,9 +303,7 @@ Remaining maintenance (not part of the stabilization contract above):
 2. Cross-browser visual coverage: Chromium and Firefox now assert 390, 768, 900,
    1024 and 1400px in the app smoke, plus the built-CSS geometry smoke.
    `docs/visual-parity.md` records the origin/main comparison (19 routes,
-   screenshots + computed styles) used to catch the `@layer` regression. WebKit
-   runs the same two smokes in the `styles-webkit` CI job, but has never been
-   executed locally (host libraries require `sudo playwright install-deps`).
+   screenshots + computed styles) used to catch the `@layer` regression.
 3. Real-device CLS/LCP numbers using `?render-debug=1`. The headless budget
    already exists: `tests/app-shell.browser.mjs` installs
    `PerformanceObserver`s before any app script, delays the stubbed media by
@@ -352,13 +350,12 @@ horizontal overflow) and across 768/900/1024px (drawer breakpoint stays sharp,
 right rail hidden at and below 1024px, left nav in flow above 768px). A final
 case records layout-shift and LCP entries with delayed media and enforces the
 CLS budget at desktop and mobile, including one run where the right rail's
-async cards (trending tags, weather forecast, follow suggestions) land after
-first paint; it also asserts the rail becomes visible and filled. The styles smoke test loads the real build output, asserts that the
-bundle contains no `@layer` blocks, that a later rule wins on the source-order
-probe, and checks a 16:9 `.fx-box` geometry. Chromium and
-Firefox run locally; the `styles-webkit` CI job installs WebKit with
-`playwright install --with-deps webkit` and runs the same smoke test. The app
+async cards (popular hashtags, popular games, help) land after first paint; it
+also asserts the rail is visible and filled. The styles smoke test loads the
+real build output, asserts that the bundle contains no `@layer` blocks, that a
+later rule wins on the source-order probe, and checks a 16:9 `.fx-box`
+geometry. Chromium and Firefox run locally; WebKit is not part of CI. The app
 shell smoke asserts that the real build still renders the legacy design
 (240px nav / 600px content / 350px right rail, 16px flat post rows) from
 the ordered stylesheet, without the initial loader and without horizontal
-overflow; it also runs under WebKit in CI.
+overflow.
