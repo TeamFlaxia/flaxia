@@ -1,10 +1,14 @@
 import { Hono } from 'hono';
 import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../../lib/activitypub/actor.ts';
 import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
+import { importRemoteOutbox } from '../../lib/activitypub/import';
 import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
 import { ensureActorKey } from '../../lib/activitypub/keys';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { webfingerResponse } from '../../lib/activitypub/webfinger';
+import { checkRateLimit } from '../../lib/rate-limit';
+import { fetchWithSsrfGuard, parsePublicHttpUrl } from '../../lib/url-guard';
+import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -421,6 +425,76 @@ app.get('/api/actors/:username/outbox', async (c) => {
   if (current > 1) document.prev = `${collections.outbox}?page=${current - 1}`;
 
   return jsonLd(activityContentType(c.req.header('accept')), document);
+});
+
+/** Resolve `@user@domain` or an actor URL to a canonical actor URL. */
+async function resolveActorUrl(input: string): Promise<string | null> {
+  const trimmed = input.trim().replace(/^@/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return parsePublicHttpUrl(trimmed).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  const match = trimmed.match(/^([^@]+)@([^@]+)$/);
+  if (!match) return null;
+  const [, username, domain] = match;
+  const webfinger = `https://${domain}/.well-known/webfinger?resource=acct:${encodeURIComponent(username)}@${encodeURIComponent(domain)}`;
+  try {
+    const response = await fetchWithSsrfGuard(webfinger, {
+      headers: { Accept: 'application/jrd+json, application/json' },
+      timeoutMs: 10_000,
+    });
+    if (!response.ok) return null;
+    const document = (await response.json()) as { links?: Array<{ rel?: string; href?: string }> };
+    const self = document.links?.find((link) => link.rel === 'self' && typeof link.href === 'string');
+    return self?.href ? parsePublicHttpUrl(self.href).toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+// POST /api/activitypub/import - import a remote actor's public outbox
+//
+// The outbox is the only place where a remote actor's public history is still
+// readable. Imported Notes are stored with `user_id = ''` (the same shape the
+// inbox uses for remote posts), so the recommendation feed can rank them
+// without pretending a local account wrote them.
+app.post('/api/activitypub/import', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (user.role !== 'admin') return c.json({ error: 'Admin only' }, 403);
+
+  const body = (await c.req.json().catch(() => null)) as { actor?: unknown; limit?: unknown } | null;
+  if (!body || typeof body.actor !== 'string' || body.actor.trim() === '') {
+    return c.json({ error: 'actor is required' }, 400);
+  }
+  if (body.limit !== undefined && typeof body.limit !== 'number') {
+    return c.json({ error: 'limit must be a number' }, 400);
+  }
+
+  const allowed = await checkRateLimit(c.env.CACHE, `ap-import:${user.id}`, {
+    maxRequests: 5,
+    windowSeconds: 3600,
+  });
+  if (!allowed) return c.json({ error: 'Rate limit exceeded' }, 429);
+
+  const actorUrl = await resolveActorUrl(body.actor);
+  if (!actorUrl) return c.json({ error: 'Could not resolve actor' }, 400);
+
+  try {
+    const result = await importRemoteOutbox(c.env, {
+      actorUrl,
+      username: user.username,
+      limit: body.limit,
+    });
+    return c.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('Outbox import failed:', error);
+    return c.json({ error: 'Import failed' }, 502);
+  }
 });
 
 // GET /api/notes/:noteId - ActivityPub Note endpoint (no /api prefix)
