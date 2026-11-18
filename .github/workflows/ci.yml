@@ -10,10 +10,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # onnxruntime-node binary download fails in CI; we only use the web build
-  ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
-
 jobs:
   auth-service-integration:
     runs-on: ubuntu-latest

@@ -143,11 +143,15 @@ export default defineConfig({
         if (existsSync(crowdSrc)) {
           const entries = readdirSync(crowdSrc, { withFileTypes: true });
           for (const entry of entries) {
-            const excluded = entry.name.startsWith('transformers.web') || entry.name === 'nudenet.js';
+            // FriedFlaxia's wasm glue is 2.5 MB per copy and is served by the
+            // versioned /api/crowd proxy (or native-crowd bundle). Copying it
+            // into the SPA dist duplicates the runtime and breaks the bundle
+            // budget.
+            const excluded = entry.name.startsWith('friedflaxia_wasm');
             if (excluded) continue;
             copyFileSync(join(crowdSrc, entry.name), join(crowdDest, entry.name));
           }
-          console.log('Copied @flaxia/node assets (excluding transformers.web and nudenet.js)');
+          console.log('Copied @flaxia/node assets (excluding the FriedFlaxia wasm glue)');
 
           // #129: no runtime CDN rewrites. A previous revision replaced the
           // transformers import with an SRI-less jsdelivr URL; the pattern no
