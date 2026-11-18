@@ -52,6 +52,13 @@ bucket_name = "flaxia-content"
 [triggers]
 crons = ["0 4 * * *", "0 * * * *"]
 
+# The worker both consumes deliveries and produces the activities it has to
+# answer (Accept for a Follow, Undo, ...). Without the producer binding
+# `deliverToInbox` silently drops those replies.
+[[queues.producers]]
+queue = "activitypub-delivery"
+binding = "AP_DELIVERY_QUEUE"
+
 [[queues.consumers]]
 queue = "activitypub-delivery"
 max_batch_size = 10
