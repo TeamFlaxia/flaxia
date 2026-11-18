@@ -220,10 +220,9 @@
   }
 
   .left-nav.left-nav--icons .nav-brand-name,
-  .left-nav.left-nav--icons .nav-command-text,
-  .left-nav.left-nav--icons .nav-kbd,
   .left-nav.left-nav--icons .nav-item-label,
   .left-nav.left-nav--icons .nav-section--tags,
+  .left-nav.left-nav--icons .nav-promo,
   .left-nav.left-nav--icons .nav-post-label,
   .left-nav.left-nav--icons .nav-user-info,
   .left-nav.left-nav--icons .nav-user-kebab,
@@ -235,13 +234,6 @@
   .left-nav.left-nav--icons .nav-brand-inner {
     justify-content: center;
     padding: 6px;
-  }
-
-  .left-nav.left-nav--icons .nav-command {
-    justify-content: center;
-    width: 44px;
-    min-height: 40px;
-    padding: 8px;
   }
 
   .left-nav.left-nav--icons .nav-item {

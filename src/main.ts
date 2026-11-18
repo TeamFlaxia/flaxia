@@ -1,7 +1,6 @@
 import './styles/index.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
-import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
 import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -44,6 +43,7 @@ import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { startRenderDiagnostics } from './lib/render-diagnostics.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
+import { focusSearchInput, initSearchShortcut } from './lib/search-shortcut.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
@@ -902,14 +902,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const { createDownloadPage } = await import('./components/DownloadPage.js');
           downloadPage = createDownloadPage();
 
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(downloadPage.getElement());
@@ -1391,10 +1384,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             pendingScrollY = 0;
           }
 
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {},
-            onFollowUser: (userId) => {},
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
@@ -1658,8 +1648,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Setup mobile left nav functionality
           setupMobileLeftNav(leftNav.getElement());
 
-          // Create Right Panel (with weather for the current location)
-          const rightPanel = await lazyCreateRightPanel({ weather: true });
+          // Create Right Panel
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
@@ -1793,130 +1783,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // Command palette (⌘K / Ctrl+K) — Obsidian-style quick switcher.
-    initCommandPalette();
     const openComposerFromShell = () => {
       const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
       if (nav?.openComposer) nav.openComposer();
       else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
     };
-    registerCommandActions(() => {
-      const navigationGroup = t('command.group_navigation');
-      const actionGroup = t('command.group_actions');
-      const actions: Array<{
-        id: string;
-        label: string;
-        group: string;
-        hint?: string;
-        keywords?: string;
-        run: () => void;
-      }> = [
-        {
-          id: 'home',
-          label: t('nav.home'),
-          group: navigationGroup,
-          keywords: 'home timeline',
-          run: () => {
-            pushSpaHistory('/home');
-            void navigateTo('timeline');
-          },
-        },
-        {
-          id: 'explore',
-          label: t('nav.explore'),
-          group: navigationGroup,
-          keywords: 'explore search',
-          run: () => {
-            pushSpaHistory('/explore');
-            void navigateTo('explore');
-          },
-        },
-        {
-          id: 'arcade',
-          label: t('nav.arcade'),
-          group: navigationGroup,
-          keywords: 'arcade games',
-          run: () => {
-            pushSpaHistory('/arcade');
-            void navigateTo('arcade');
-          },
-        },
-        {
-          id: 'maps',
-          label: t('nav.maps'),
-          group: navigationGroup,
-          keywords: 'maps weather',
-          run: () => {
-            pushSpaHistory('/maps');
-            void navigateTo('maps');
-          },
-        },
-        {
-          id: 'translate',
-          label: t('nav.translate'),
-          group: navigationGroup,
-          keywords: 'translate google translate 翻訳',
-          run: () => {
-            pushSpaHistory('/translate');
-            void navigateTo('translate');
-          },
-        },
-        {
-          id: 'notifications',
-          label: t('nav.notifications'),
-          group: navigationGroup,
-          run: () => {
-            pushSpaHistory('/notifications');
-            void navigateTo('notifications');
-          },
-        },
-        {
-          id: 'bookmarks',
-          label: t('nav.bookmarks'),
-          group: navigationGroup,
-          run: () => {
-            pushSpaHistory('/bookmarks');
-            void navigateTo('bookmarks');
-          },
-        },
-        {
-          id: 'settings',
-          label: t('nav.settings'),
-          group: navigationGroup,
-          run: () => {
-            pushSpaHistory('/settings');
-            void navigateTo('settings');
-          },
-        },
-        {
-          id: 'theme',
-          label: getResolvedTheme() === 'dark' ? t('command.theme_light') : t('command.theme_dark'),
-          group: actionGroup,
-          hint: 'T',
-          run: () => setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark'),
-        },
-        {
-          id: 'focus-composer',
-          label: t('command.new_post'),
-          group: actionGroup,
-          hint: 'N',
-          keywords: 'compose post write',
-          run: openComposerFromShell,
-        },
-      ];
-      if (currentUser) {
-        actions.push({
-          id: 'profile',
-          label: t('nav.profile'),
-          group: navigationGroup,
-          run: () => {
-            if (!currentUser) return;
-            pushSpaHistory(`/profile/${currentUser.username}`);
-            void navigateTo('profile', undefined, currentUser.username);
-          },
+
+    // ⌘K / Ctrl-K focuses the search field (no modal).
+    initSearchShortcut(() => {
+      pushSpaHistory('/explore');
+      void navigateTo('explore').then(() => {
+        requestAnimationFrame(() => {
+          focusSearchInput();
         });
-      }
-      return actions;
+      });
     });
 
     // N / T quick actions from the shell cheat sheet. Skip while typing,
@@ -1924,7 +1804,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('keydown', (event) => {
       if (event.defaultPrevented || event.isComposing) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+      if (isModalOpen()) return;
       const target = event.target;
       if (target instanceof HTMLElement) {
         if (target.isContentEditable) return;

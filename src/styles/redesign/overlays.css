@@ -1137,3 +1137,66 @@
 .image-preview-error {
   border-radius: var(--radius-md);
 }
+
+/* ------------------------------------------------------------
+   Keyboard shortcut sheet (right-rail help card, PR #331)
+   ------------------------------------------------------------ */
+.shortcut-sheet-title {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.shortcut-sheet-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 18px;
+}
+
+.shortcut-sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 38px;
+  border-top: 1px solid var(--border);
+}
+
+.shortcut-sheet-row:first-child {
+  border-top: 0;
+}
+
+.shortcut-sheet-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.shortcut-sheet-kbd {
+  flex: 0 0 auto;
+  min-width: 26px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.shortcut-sheet-close {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.shortcut-sheet-close:hover {
+  background: var(--bg-hover);
+}

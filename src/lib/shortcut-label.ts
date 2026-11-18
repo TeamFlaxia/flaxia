@@ -4,7 +4,7 @@ export function isApplePlatform(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 }
 
-/** Human-readable shortcut hint for the command palette. */
+/** Human-readable hint for the search shortcut (⌘K / Ctrl-K). */
 export function commandShortcutLabel(): string {
   return isApplePlatform() ? '⌘K' : 'Ctrl K';
 }

@@ -1,0 +1,210 @@
+/* ============================================================
+   Legacy design tokens — pre-`feat/ui-unslopping-redesign` (v0.1.250).
+
+   These values restore the original "Flaxia green + blue links" palette,
+   flat bordered post cards and the denser type scale. Token *names* added by
+   the redesign are kept as aliases so feature stylesheets written against
+   them (mail, maps, command palette, fx-* surfaces) keep resolving to the
+   legacy look without touching their rules.
+
+   `main.css` still carries the original component rules; this file only
+   supplies the values, and `legacy/overrides.css` restores the handful of
+   surfaces the redesign targets with higher-specificity selectors.
+   ============================================================ */
+:root {
+  color-scheme: light;
+
+  /* Type — the pre-redesign Noto Sans stack. */
+  --font-sans: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --tracking-tight: 0;
+  --tracking-wide: 0;
+
+  /* Canvas */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0fdf4;
+  --bg-tertiary: #f0f0f0;
+  --bg-input: #f1f5f9;
+  --bg-elevated: #ffffff;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.08);
+  --surface-glass: #ffffff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --dot: rgba(0, 0, 0, 0.08);
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+
+  /* Brand green (legacy buttons use white foreground) */
+  --primary: #16a34a;
+  --primary-hover: #15803d;
+  --primary-fg: #ffffff;
+  --accent: #22c55e;
+  --accent-hover: #16a34a;
+  --accent-dark: #16a34a;
+  --accent-soft: rgba(22, 163, 74, 0.15);
+  --accent-text: #22c55e;
+  --on-accent: #ffffff;
+  --gradient-accent: none;
+  --gradient-accent-hover: none;
+  --gradient-glow: none;
+
+  /* Likes / live (kept from the redesign; the legacy skin had no token) */
+  --coral: #f43f5e;
+  --coral-strong: #e11d48;
+  --coral-soft: rgba(244, 63, 94, 0.1);
+  --coral-text: #e11d48;
+  --on-coral: #ffffff;
+
+  /* Feedback & links — legacy links are blue, active states green */
+  --danger: #ef4444;
+  --danger-strong: #dc2626;
+  --danger-text: #dc2626;
+  --danger-soft: rgba(239, 68, 68, 0.1);
+  --warning: #f59e0b;
+  --link: #3b82f6;
+  --link-hover: #2563eb;
+  --ring: rgba(34, 197, 94, 0.45);
+
+  /* Flaxia+ post text colours */
+  --post-color-red: #b91c1c;
+  --post-color-orange: #c2410c;
+  --post-color-yellow: #a16207;
+  --post-color-green: #15803d;
+  --post-color-blue: #1d4ed8;
+  --post-color-purple: #7e22ce;
+  --post-color-pink: #be185d;
+  --post-color-gray: #475569;
+  --post-color-mikan: #b45309;
+  --post-color-kimwaipu: #047857;
+  --post-rainbow: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #2563eb, #7c3aed, #db2777);
+
+  /* Radii — match the values the legacy stylesheet used (2/4/6/8/12px) */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-card: 8px;
+  --radius-button: 6px;
+  --radius-pill: 9999px;
+
+  /* Elevation — the small, soft shadows the legacy stylesheet used */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.18);
+  --shadow-pop: 0 1px 4px rgba(0, 0, 0, 0.1);
+  --shadow-ring: 0 0 0 1px var(--accent);
+
+  /* Motion — unchanged */
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+  --duration-slow: 200ms;
+  --duration-slower: 260ms;
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.2, 1.2, 0.3, 1);
+
+  /* Media stage */
+  --stage-canvas: #000000;
+  --stage-canvas-soft: #111111;
+  --stage-fg: #ffffff;
+
+  /* Overlay chrome */
+  --backdrop-ink: rgba(15, 23, 42, 0.55);
+  --backdrop-ink-strong: rgba(15, 23, 42, 0.72);
+  --on-danger: #ffffff;
+  --chrome-glass: #0f172a;
+  --chrome-line: rgba(255, 255, 255, 0.16);
+  --chrome-fill: rgba(255, 255, 255, 0.08);
+  --chrome-text: #f8fafc;
+
+  /* Layout */
+  --bottom-nav-h: 0px;
+  --top-bar-h: 0px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Canvas — true black, neutral surfaces */
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-input: #0d0d0d;
+  --bg-elevated: #0d0d0d;
+  --bg-hover: rgba(255, 255, 255, 0.07);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  --surface-glass: #0a0a0a;
+  --border: #262626;
+  --border-strong: #404040;
+  --dot: rgba(255, 255, 255, 0.08);
+
+  /* Text */
+  --text-primary: #f5f5f5;
+  --text-secondary: #d4d4d4;
+  --text-muted: #a3a3a3;
+
+  /* Brand green */
+  --primary: #16a34a;
+  --primary-hover: #15803d;
+  --primary-fg: #ffffff;
+  --accent: #22c55e;
+  --accent-hover: #16a34a;
+  --accent-dark: #16a34a;
+  --accent-soft: rgba(22, 163, 74, 0.18);
+  --accent-text: #22c55e;
+  --on-accent: #ffffff;
+  --gradient-accent: none;
+  --gradient-accent-hover: none;
+  --gradient-glow: none;
+
+  /* Likes / live */
+  --coral: #fb7185;
+  --coral-strong: #fda4af;
+  --coral-soft: rgba(251, 113, 133, 0.16);
+  --coral-text: #fda4af;
+  --on-coral: #881337;
+
+  /* Feedback & links */
+  --danger: #ef4444;
+  --danger-strong: #dc2626;
+  --danger-text: #f87171;
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --warning: #fbbf24;
+  --link: #60a5fa;
+  --link-hover: #93c5fd;
+  --ring: rgba(34, 197, 94, 0.45);
+
+  /* Flaxia+ post text colours */
+  --post-color-red: #f87171;
+  --post-color-orange: #fb923c;
+  --post-color-yellow: #facc15;
+  --post-color-green: #4ade80;
+  --post-color-blue: #60a5fa;
+  --post-color-purple: #c084fc;
+  --post-color-pink: #f472b6;
+  --post-color-gray: #94a3b8;
+  --post-color-mikan: #f59e0b;
+  --post-color-kimwaipu: #6ee7b7;
+  --post-rainbow: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #60a5fa, #c084fc, #f472b6);
+
+  /* Elevation */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-pop: 0 1px 4px rgba(0, 0, 0, 0.4);
+  --shadow-ring: 0 0 0 1px var(--accent);
+
+  /* Overlay chrome */
+  --backdrop-ink: rgba(0, 0, 0, 0.6);
+  --backdrop-ink-strong: rgba(0, 0, 0, 0.78);
+}

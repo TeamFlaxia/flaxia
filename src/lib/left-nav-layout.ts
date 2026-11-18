@@ -6,7 +6,7 @@
 // persisted so it survives reloads and applies to every nav instance (the app
 // shell and the thread page both render a .left-nav).
 
-export const LEFT_NAV_WIDTH_DEFAULT = 290;
+export const LEFT_NAV_WIDTH_DEFAULT = 240;
 export const LEFT_NAV_WIDTH_MIN = 200;
 export const LEFT_NAV_WIDTH_MAX = 380;
 export const LEFT_NAV_ICON_WIDTH = 72;

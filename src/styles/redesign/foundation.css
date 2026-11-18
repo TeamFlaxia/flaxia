@@ -1,6 +1,7 @@
 /* ============================================================
    Flaxia UI v2 — foundation layer
-   Loaded AFTER legacy main.css. Sections below:
+   Loaded BEFORE the legacy `main.css` skin (see src/styles/index.css).
+   Sections below:
      1. Typography & canvas
      2. Selection, scrollbars, focus
      3. Motion system (keyframes + utilities)
@@ -13,22 +14,16 @@
 
 /* ------------------------------------------------------------
    1. Typography & canvas
-   The legacy stack put "monospace" before the Japanese fallback,
-   which made every Japanese glyph render in Noto Sans Mono CJK.
-   Unify the stack and force it over the hard-coded legacy strings.
+   Font unification is intentionally not forced here: the legacy skin in
+   `main.css` sets the original per-component stacks (including monospace post
+   text). `body` still takes `--font-sans` from `legacy/theme.css`.
    ------------------------------------------------------------ */
-body,
-body *:not(pre):not(pre *):not(code):not(code *):not(kbd):not(kbd *):not(samp):not(samp *) {
-  /* biome-ignore lint/complexity/noImportantStyles: legacy rules hard-code a stale font stack on every component */
-  font-family: var(--font-sans) !important;
-}
 
 code,
 pre,
 kbd,
 samp {
-  /* biome-ignore lint/complexity/noImportantStyles: keep code blocks monospaced despite the font unification above */
-  font-family: var(--font-mono) !important;
+  font-family: var(--font-mono);
 }
 
 body {

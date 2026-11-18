@@ -382,7 +382,7 @@ export class Timeline {
   private handleModeShortcut(event: KeyboardEvent): void {
     if (event.defaultPrevented || event.isComposing) return;
     if (!event.altKey || event.metaKey || event.ctrlKey) return;
-    if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+    if (isModalOpen()) return;
 
     const target = event.target;
     if (target instanceof HTMLElement) {

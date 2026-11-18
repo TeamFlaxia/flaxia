@@ -1,5 +1,7 @@
 /* ============================================================
    Flaxia design tokens v5 — "quiet craft"
+   NOTE: `src/styles/legacy/theme.css` overrides these values with the
+   pre-unslopping palette/type scale. Keep token names in sync.
    References: shadcn/ui (neutral zinc scale, 1px rules, 8px radius,
    neutral primary buttons, outline/ghost variants, focus rings) and
    Obsidian (dense sidebar sections, command palette, editor-like dark

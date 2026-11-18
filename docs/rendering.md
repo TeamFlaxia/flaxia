@@ -358,7 +358,7 @@ bundle contains no `@layer` blocks, that a later rule wins on the source-order
 probe, and checks a 16:9 `.fx-box` geometry. Chromium and
 Firefox run locally; the `styles-webkit` CI job installs WebKit with
 `playwright install --with-deps webkit` and runs the same smoke test. The app
-shell smoke asserts that the real build still renders the shipped design
-(290px nav / 640px content / 290px right rail, 13px 14px post-card padding) from
+shell smoke asserts that the real build still renders the legacy design
+(240px nav / 600px content / 350px right rail, 16px flat post rows) from
 the ordered stylesheet, without the initial loader and without horizontal
 overflow; it also runs under WebKit in CI.

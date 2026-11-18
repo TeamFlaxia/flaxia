@@ -103,7 +103,16 @@ const API = {
   '/api/auth/recovery/status': { status: 404, body: {} },
   '/api/notifications': { body: { notifications: [], unreadCount: 0 } },
   '/api/bookmarks': { body: { posts: [], next_cursor: null } },
-  '/api/games': { body: { games: [], next_cursor: null } },
+  '/api/games': {
+    body: {
+      games: [
+        { id: 'g1', postId: 'p1', title: 'Neon Runner', username: 'author', freshCount: 12, impressions: 340 },
+        { id: 'g2', postId: 'p2', title: 'Pixel Garden', username: 'mikan', freshCount: 8, impressions: 210 },
+        { id: 'g3', postId: 'p3', title: 'Sky Fishing', username: 'quoted', freshCount: 5, impressions: 120 },
+      ],
+      next_cursor: null,
+    },
+  },
   '/api/mail/addresses': { body: { addresses: [] } },
 };
 
