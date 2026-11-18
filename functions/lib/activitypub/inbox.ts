@@ -2,7 +2,8 @@
 
 import { checkRateLimit, getClientIp } from '../rate-limit.ts';
 import { localActorUsername } from './actor.ts';
-import { resolveActorPublicKey } from './fetch.ts';
+import { type FetchOptions, resolveActorPublicKey } from './fetch.ts';
+import { actorSignOptions, ensureActorKey } from './keys.ts';
 import { parseSignatureHeader, verifyDigest, verifyHttpSignature } from './signature.ts';
 
 /**
@@ -128,7 +129,12 @@ export function resolveLocalTargets(activity: Record<string, unknown>, baseUrl: 
  * live on the same origin: otherwise a key from one instance could vouch
  * for an actor of another instance.
  */
-export async function verifyIncomingActivity(env: InboxEnv, req: Request, body: string): Promise<InboxFailure> {
+export async function verifyIncomingActivity(
+  env: InboxEnv,
+  req: Request,
+  body: string,
+  signOptions: FetchOptions = {},
+): Promise<InboxFailure> {
   let activity: Record<string, unknown>;
   try {
     activity = JSON.parse(body) as Record<string, unknown>;
@@ -168,7 +174,7 @@ export async function verifyIncomingActivity(env: InboxEnv, req: Request, body: 
     expectedHost = undefined;
   }
 
-  const publicKeyPem = await resolveActorPublicKey(actorId, env, keyId);
+  const publicKeyPem = await resolveActorPublicKey(actorId, env, keyId, signOptions);
   if (!publicKeyPem) {
     return { ok: false, status: 401, error: 'Could not fetch actor public key' };
   }
@@ -232,6 +238,36 @@ async function enqueueForTargets(
 }
 
 /**
+ * The options that sign the actor/key fetch with a local actor's key.
+ *
+ * Mastodon 4.4+ serves `/ap/users/:id` only to signed requests (authorized
+ * fetch). Fetching the key unsigned returns 401, which used to reject every
+ * Follow from such an instance before it was parsed.
+ */
+async function inboxSignOptions(env: InboxEnv, username: string): Promise<FetchOptions> {
+  const existing = await actorSignOptions(env.DB, env.BASE_URL, username);
+  if (existing.privateKeyPem) return existing;
+
+  const user = await env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
+    .bind(username)
+    .first<{ id: string }>();
+  if (!user) return {};
+  await ensureActorKey(env.DB, user.id);
+  return actorSignOptions(env.DB, env.BASE_URL, username);
+}
+
+/** Pick the local target of a shared-inbox delivery and sign with its key. */
+async function signOptionsForBody(env: InboxEnv, body: string): Promise<FetchOptions> {
+  try {
+    const activity = JSON.parse(body) as Record<string, unknown>;
+    const target = resolveLocalTargets(activity, env.BASE_URL)[0];
+    return target ? await inboxSignOptions(env, target) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * The personal inbox of an actor.
  */
 export async function handlePersonalInbox(env: InboxEnv, req: Request, username: string): Promise<Response> {
@@ -256,7 +292,7 @@ export async function handlePersonalInbox(env: InboxEnv, req: Request, username:
     return Response.json({ error: 'Inbox body too large' }, { status: 413 });
   }
 
-  const verified = await verifyIncomingActivity(env, req, body);
+  const verified = await verifyIncomingActivity(env, req, body, await inboxSignOptions(env, username));
   if (!verified.ok) {
     return Response.json({ error: verified.error }, { status: verified.status });
   }
@@ -287,7 +323,7 @@ export async function handleSharedInbox(env: InboxEnv, req: Request): Promise<Re
     return Response.json({ error: 'Inbox body too large' }, { status: 413 });
   }
 
-  const verified = await verifyIncomingActivity(env, req, body);
+  const verified = await verifyIncomingActivity(env, req, body, await signOptionsForBody(env, body));
   if (!verified.ok) {
     return Response.json({ error: verified.error }, { status: verified.status });
   }
