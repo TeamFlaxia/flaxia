@@ -136,18 +136,41 @@ body {
 /* ------------------------------------------------------------
    Redesign-only shell chrome, mapped to the legacy rail
    ------------------------------------------------------------ */
+/* ------------------------------------------------------------
+   Brand — the legacy wordmark: leaf mark + green `Flaxia` text
+   ------------------------------------------------------------ */
 #app .nav-brand {
-  padding: 0 0 1rem;
+  margin: 0 0 2rem;
+  padding: 0;
 }
 
 #app .nav-brand-inner {
   gap: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: var(--radius-sm);
+  width: auto;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#app .nav-brand-inner:hover,
+#app .nav-brand-inner:active {
+  background: transparent;
 }
 
 #app .nav-brand-mark {
-  border-radius: var(--radius-sm);
+  width: 1.99rem;
+  height: 1.99rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#app .nav-brand-name {
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 #app .nav-section {
@@ -175,8 +198,8 @@ body {
   margin: 0 0 1rem;
   padding: 0.75rem 1rem;
   border-radius: 9999px;
-  background: var(--accent);
-  color: #000000;
+  background: var(--accent-dark);
+  color: #ffffff;
   font-family: var(--font-sans);
   font-size: 1rem;
   font-weight: 700;
@@ -184,7 +207,7 @@ body {
 }
 
 #app .nav-post-button:hover {
-  background: var(--accent-dark);
+  background: #15803d;
 }
 
 #app .nav-user-area {
