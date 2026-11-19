@@ -24,11 +24,17 @@ const engine = { chromium, firefox, webkit }[browserName];
 assert.ok(engine, `unknown APP_BROWSER: ${browserName}`);
 
 const distDir = fileURLToPath(new URL('../dist/', import.meta.url));
-const assets = await readdir(join(distDir, 'assets'));
-assert.ok(
-  assets.some((file) => file.endsWith('.css')),
-  'vite build must produce dist assets before this test',
-);
+// Vite emitted dist/assets/*; the SvelteKit shell emits dist/_app/immutable/*.
+let hasBuiltCss = false;
+for (const dir of [join(distDir, 'assets'), join(distDir, '_app/immutable/assets')]) {
+  try {
+    const assets = await readdir(dir);
+    if (assets.some((file) => file.endsWith('.css'))) hasBuiltCss = true;
+  } catch {
+    // This build layout is not the one in use.
+  }
+}
+assert.ok(hasBuiltCss, 'vite build must produce dist CSS assets before this test');
 
 const CONTENT_TYPES = {
   '.html': 'text/html; charset=utf-8',
