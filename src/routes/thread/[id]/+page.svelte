@@ -28,9 +28,3 @@ onMount(() => {
 </script>
 
 <div bind:this={host}></div>
-
-<style>
-  :global(#app) {
-    display: none;
-  }
-</style>

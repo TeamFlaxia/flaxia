@@ -54,9 +54,3 @@ let navProps: Record<string, unknown> = {};
 <ShellLayout {navProps}>
   <div bind:this={host}></div>
 </ShellLayout>
-
-<style>
-  :global(#app) {
-    display: none;
-  }
-</style>

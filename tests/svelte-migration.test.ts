@@ -121,7 +121,7 @@ test('download route mounts the legacy page declaratively', async () => {
   assert.match(route, /createDownloadPage/);
   assert.match(route, /initI18n/);
   assert.match(route, /host\.appendChild/);
-  assert.match(route, /:global\(#app\)/);
+  assert.doesNotMatch(route, /:global\(#app\)/, 'Svelte shell must render inside #app');
 });
 
 test('Svelte markup keeps the legacy classes and copy', async () => {
@@ -142,4 +142,9 @@ test('Svelte markup keeps the legacy classes and copy', async () => {
     assert.ok(legacy.includes(token), `legacy component lost ${token}`);
     assert.ok(svelte.includes(token), `Svelte component lost ${token}`);
   }
+});
+
+test('SvelteKit body renders inside #app so legacy CSS selectors apply', async () => {
+  const app = await read('src/app.html');
+  assert.match(app, /<div id="app">%sveltekit\.body%<\/div>/);
 });
