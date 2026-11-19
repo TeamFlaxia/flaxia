@@ -31,6 +31,7 @@
   "functions/api/routes/posts/feed.ts": ["D1Database", "c.env"],
   "functions/api/routes/posts/helpers.ts": ["D1Database"],
   "functions/api/routes/posts/recommendations.ts": ["D1Database", "c.env"],
+  "functions/api/routes/posts/replies.ts": ["D1PreparedStatement", "c.env"],
   "functions/api/routes/push.ts": ["c.env"],
   "functions/api/routes/recommendations.ts": ["c.env"],
   "functions/api/routes/recommender.ts": ["D1Database", "KVNamespace", "cloudflare-package"],
