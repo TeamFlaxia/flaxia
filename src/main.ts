@@ -140,6 +140,9 @@ const SVELTE_ROUTES = [
   /^\/home\/?$/,
   /^\/arcade(?:\/[^/]+)?\/?$/,
   /^\/maps\/?$/,
+  /^\/(explore|search|translate)\/?$/,
+  /^\/(profile|users)\/[^/]+\/?$/,
+  /^\/@[^/]+\/[^/]+\/?$/,
 ];
 
 export async function mountLegacyApp(): Promise<void> {
