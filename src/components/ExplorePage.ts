@@ -1,10 +1,10 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createFabButton } from '../lib/fab-button.js';
 import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';

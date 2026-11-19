@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
-import { isTitleIconImage } from '../../../src/lib/title-icon.ts';
+import { isTitleIconImage } from '../../../shared/title-icon.ts';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { reapStaleSubmissions } from '../../lib/cc-ingest.ts';

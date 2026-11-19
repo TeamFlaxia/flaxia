@@ -1,6 +1,6 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { html, mount } from '../lib/render/index.ts';

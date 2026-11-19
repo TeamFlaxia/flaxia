@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { isKeyBlocked } from '../../functions/lib/scan/db.ts';
-import { createWvfsGameUrl } from './wvfs-game-url.ts';
+import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 
 type Bindings = { BUCKET: R2Bucket; DB: D1Database; CACHE?: KVNamespace };
 const ID = /^[A-Za-z0-9_-]{1,128}$/;

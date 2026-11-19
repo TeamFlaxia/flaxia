@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
-import { ALLOWED_EXTENSIONS, getMimeType, isExtensionAllowed, validateFileType } from '../src/lib/file-extensions.ts';
+import { ALLOWED_EXTENSIONS, getMimeType, isExtensionAllowed, validateFileType } from '../shared/file-extensions.ts';
 
 describe('ALLOWED_EXTENSIONS map', () => {
   it('includes web content extensions', () => {

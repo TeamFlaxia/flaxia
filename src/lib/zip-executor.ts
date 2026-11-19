@@ -1,5 +1,5 @@
 import type JSZipType from 'jszip';
-import { validateFileType } from './file-extensions.ts';
+import { validateFileType } from '../../shared/file-extensions.ts';
 import { t } from './i18n.ts';
 import { ZIP_MAX_FILE_COUNT } from './zip-constants.ts';
 

@@ -1,4 +1,4 @@
-import { createWvfsGameUrl } from '../../../src/lib/wvfs-game-url.ts';
+import { createWvfsGameUrl } from '../../../shared/wvfs-game-url.ts';
 
 type Env = {
   DB: D1Database;

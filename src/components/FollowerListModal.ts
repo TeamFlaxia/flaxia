@@ -1,7 +1,7 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 

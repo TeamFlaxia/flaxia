@@ -1,7 +1,7 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { parsePostColors } from '../lib/post-colors.js';
 import { renderColorizedText } from '../lib/post-colors-dom.js';

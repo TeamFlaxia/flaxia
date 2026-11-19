@@ -1,8 +1,8 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 
 interface BlockedUsersModalOptions {

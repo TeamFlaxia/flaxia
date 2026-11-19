@@ -1,4 +1,13 @@
 import {
+  buildPlamoPrompt,
+  isPlamoSupported,
+  loadTranslateMode,
+  saveTranslateMode,
+  TRANSLATE_LANGUAGES,
+  type TranslateMode,
+  translateModelFor,
+} from '../../shared/translate-languages.ts';
+import {
   canRunFlaxiaNode,
   getCrowdConsentState,
   isCrowdNodeRunning,
@@ -12,15 +21,6 @@ import {
 import { getLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import {
-  buildPlamoPrompt,
-  isPlamoSupported,
-  loadTranslateMode,
-  saveTranslateMode,
-  TRANSLATE_LANGUAGES,
-  type TranslateMode,
-  translateModelFor,
-} from '../lib/translate-languages.js';
 
 export interface TranslatePageProps {
   getElement: () => HTMLElement;
