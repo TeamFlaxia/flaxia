@@ -13,6 +13,10 @@
 // Byte-compatibility with the client (src/lib/mail/crypto.ts) is covered by
 // mail-ecies.test.ts known-answer vectors.
 
+import { hmacHex, sha256Hex } from '../../shared/webcrypto.ts';
+
+export { hmacHex, sha256Hex };
+
 const subtle = (globalThis.crypto as Crypto).subtle;
 
 export function wrapInfo(messageId: string, recipientAddress: string): string {
@@ -54,27 +58,6 @@ export function b64decode(value: string): Uint8Array {
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
   return out;
-}
-
-export async function sha256Hex(value: string): Promise<string> {
-  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(value) as BufferSource);
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-export async function hmacHex(secret: string, value: string): Promise<string> {
-  const key = await subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret) as BufferSource,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const signature = await subtle.sign('HMAC', key, new TextEncoder().encode(value) as BufferSource);
-  return Array.from(new Uint8Array(signature))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 async function importSpki(spkiB64: string): Promise<CryptoKey> {
