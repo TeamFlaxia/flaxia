@@ -4,8 +4,12 @@
 // server only supplies the user's own interaction signals plus embeddings of
 // public posts; it never receives the resulting vector.
 
-import { normalizeVector, weightedMeanVector } from '../recommendation/vector.ts';
-import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../recommendation/vector-codec.ts';
+import { normalizeVector, weightedMeanVector } from '../../../shared/recommendation/vector.ts';
+import {
+  decodeVector,
+  type EncodedVector,
+  RECOMMENDATION_VECTOR_DIM,
+} from '../../../shared/recommendation/vector-codec.ts';
 import { listVaultItems, saveVaultItem } from './items.ts';
 import { isVaultUnlocked, subscribeVault } from './session.ts';
 

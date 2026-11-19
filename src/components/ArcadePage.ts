@@ -1,3 +1,8 @@
+import {
+  decodeVector,
+  type EncodedVector,
+  RECOMMENDATION_VECTOR_DIM,
+} from '../../shared/recommendation/vector-codec.ts';
 import { findAvailableArcadeGame } from '../lib/arcade-availability.js';
 import { ArcadeAvailabilityPrefetch } from '../lib/arcade-availability-prefetch.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
@@ -9,7 +14,6 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
-import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../lib/recommendation/vector-codec.js';
 import { each, legacy, type Mounted, mount, type Renderable, type Signal, signal } from '../lib/render/index.ts';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';

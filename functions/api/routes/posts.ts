@@ -1,14 +1,14 @@
 import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { isAdmin } from '../../../src/lib/admin';
-import { canUsePostColors } from '../../../src/lib/entitlements.ts';
-import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
-import { cosineSimilarity } from '../../../src/lib/recommendation/vector.ts';
+import { cosineSimilarity } from '../../../shared/recommendation/vector.ts';
 import {
   type EncodedVector,
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
-} from '../../../src/lib/recommendation/vector-codec.ts';
+} from '../../../shared/recommendation/vector-codec.ts';
+import { isAdmin } from '../../../src/lib/admin';
+import { canUsePostColors } from '../../../src/lib/entitlements.ts';
+import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';

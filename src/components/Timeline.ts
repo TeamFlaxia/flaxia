@@ -1,3 +1,8 @@
+import {
+  decodeVector,
+  type EncodedVector,
+  RECOMMENDATION_VECTOR_DIM,
+} from '../../shared/recommendation/vector-codec.ts';
 import { getMe } from '../lib/auth-cache.js';
 import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
@@ -8,7 +13,6 @@ import { isModalOpen } from '../lib/modal-state.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
-import { decodeVector, type EncodedVector, RECOMMENDATION_VECTOR_DIM } from '../lib/recommendation/vector-codec.js';
 import {
   DATA_SAVER_AD_SPACING_MULTIPLIER,
   getForYouBatchSize,
