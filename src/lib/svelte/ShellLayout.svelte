@@ -1,6 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import { ensureBottomNav, getBottomNav } from '../../lib/bottom-nav-setup.ts';
+import { parseCurrentRoute } from '../../lib/router.ts';
+import { viewToBottomNavId } from '../../lib/view-nav.ts';
 import LeftNav from './LeftNav.svelte';
 import RightPanel from './RightPanel.svelte';
 
@@ -26,7 +28,6 @@ $effect(() => {
 });
 
 onMount(() => {
-  const active = String(navProps.activeItem ?? 'home');
   void ensureBottomNav({
     navigate: (view, postId, username) => {
       const path =
@@ -38,7 +39,7 @@ onMount(() => {
       window.location.assign(path);
     },
     getCurrentUser: () => navProps.currentUser as never,
-    getActiveItem: () => active,
+    getActiveItem: () => viewToBottomNavId(parseCurrentRoute()?.view ?? ''),
   });
 });
 </script>
