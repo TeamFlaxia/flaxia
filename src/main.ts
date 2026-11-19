@@ -123,7 +123,7 @@ initTheme();
 initI18n();
 
 // Basic app initialization
-document.addEventListener('DOMContentLoaded', async () => {
+export async function mountLegacyApp(): Promise<void> {
   initNativeAuthCallback();
   if (await retryPendingDeletion()) clearMeCache();
   if ((await retryPendingCredentialChange()) === 'committed') clearMeCache();
@@ -1855,4 +1855,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
-});
+}
+
+// The legacy index.html loads this module before DOMContentLoaded; the
+// SvelteKit shell imports it from onMount (after the event). Handle both.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    void mountLegacyApp();
+  });
+} else {
+  void mountLegacyApp();
+}
