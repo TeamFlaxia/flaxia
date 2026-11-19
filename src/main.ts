@@ -123,7 +123,11 @@ initTheme();
 initI18n();
 
 // Basic app initialization
+let legacyAppStarted = false;
+
 export async function mountLegacyApp(): Promise<void> {
+  if (legacyAppStarted) return;
+  legacyAppStarted = true;
   initNativeAuthCallback();
   if (await retryPendingDeletion()) clearMeCache();
   if ((await retryPendingCredentialChange()) === 'committed') clearMeCache();
