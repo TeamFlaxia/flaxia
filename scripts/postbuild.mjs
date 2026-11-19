@@ -44,10 +44,14 @@ const { FLASH_PLAYER_BOOTSTRAP } = await import('../src/lib/flash-player-documen
 generated.add(hashBody(ADSENSE_INLINE_BOOTSTRAP));
 generated.add(hashBody(FLASH_PLAYER_BOOTSTRAP));
 
+// Only the retired ZIP-wrapper bootstrap has no source left to derive from.
+// Everything else must come from the current build, otherwise the allowlist
+// grows forever with stale SvelteKit hashes and hides real regressions.
+const LEGACY_HASHES = ["'sha256-9jpcqwJpr7kicF5b0vRUbAJtyA6CqjotdcnTjIv8i4U='"];
+const hashes = [...generated, ...LEGACY_HASHES.filter((item) => !generated.has(item))];
+
 const headersFile = 'public/_headers';
 const headers = readFileSync(headersFile, 'utf-8');
-const existing = [...headers.matchAll(/sha256-[A-Za-z0-9+/=]+/g)].map((match) => `'${match[0]}'`);
-const hashes = [...generated, ...existing.filter((item) => !generated.has(item))];
 
 const securityFile = 'functions/lib/ssr-security-headers.ts';
 const security = readFileSync(securityFile, 'utf-8');
