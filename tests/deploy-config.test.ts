@@ -181,12 +181,25 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
   assert.deepEqual(dbTestUsers, ['functions/api/routes/tests.ts'], 'DB_TEST leaked outside the test helper');
 });
 
-test('cutover enables Auth authority in production and disables it for local dev/test', async () => {
+test('cutover enables Auth authority in production and keeps local modes explicit', async () => {
   const root = new URL('..', import.meta.url).pathname;
   const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
   assert.match(wrangler, /^\s*AUTH_AUTHORITY_MODE\s*=\s*"flaxia-auth"\s*$/m);
 
   const pkg = JSON.parse(await readFile(PKG_URL, 'utf8')) as { scripts: Record<string, string> };
-  for (const name of ['dev', 'dev:hot', 'dev:api', 'dev:all', 'dev:test'])
+
+  // `dev`, `dev:hot`, and `dev:guest` go through scripts/dev.mjs, which wires
+  // the local flaxia-auth worker for the default flow and AUTH_AUTHORITY_MODE=off
+  // for guests.
+  for (const name of ['dev', 'dev:hot', 'dev:guest']) {
+    assert.match(pkg.scripts[name], /node scripts\/dev\.mjs/, `${name} must use the dev orchestrator`);
+  }
+  const dev = await readFile(join(root, 'scripts/dev.mjs'), 'utf8');
+  assert.match(dev, /AUTH_AUTHORITY_MODE=flaxia-auth/, 'default dev must use the local Auth worker');
+  assert.match(dev, /AUTH_AUTHORITY_MODE=off/, 'guest dev must stay in legacy mode');
+
+  // These scripts start only Flaxia, so they must not depend on a local Auth worker.
+  for (const name of ['dev:api', 'dev:all', 'dev:test']) {
     assert.match(pkg.scripts[name], /AUTH_AUTHORITY_MODE=off/, `${name} must stay in legacy mode locally`);
+  }
 });
