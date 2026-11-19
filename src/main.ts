@@ -127,7 +127,11 @@ let legacyAppStarted = false;
 
 // Routes that now render from SvelteKit. The legacy shell must not mount on a
 // direct load of one of them, otherwise both renderers draw the same page.
-const SVELTE_ROUTES = [/^\/billing\/(success|canceled)\/?$/, /^\/download\/?$/];
+const SVELTE_ROUTES = [
+  /^\/billing\/(success|canceled)\/?$/,
+  /^\/download\/?$/,
+  /^\/(terms|privacy|child-safety|about)\/?$/,
+];
 
 export async function mountLegacyApp(): Promise<void> {
   if (SVELTE_ROUTES.some((pattern) => pattern.test(location.pathname))) return;
