@@ -84,6 +84,19 @@ test('home feed route keeps the iframe-safe timeline', async () => {
   assert.match(route, /me\?\.user/);
 });
 
+test('F8 routes use the shell with correct rails', async () => {
+  const arcade = await read('src/lib/svelte/ArcadeView.svelte');
+  assert.match(arcade, /createArcadePage/);
+  assert.match(arcade, /initialGameId/);
+  for (const route of ['arcade', 'arcade/[id]']) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /ArcadeView/);
+  }
+  const maps = await read('src/routes/maps/+page.svelte');
+  assert.match(maps, /createMapsPage/);
+  assert.match(maps, /showRightPanel=\{false\}/);
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
