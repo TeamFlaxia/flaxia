@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { getSessionUser } from '../../../lib/svelte/session.ts';
 import { page } from '$app/state';
 
 let host: HTMLDivElement;
@@ -8,10 +9,8 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../../lib/i18n.ts');
-    const { getMe } = await import('../../../lib/auth-cache.ts');
     await initI18n();
-    const me = await getMe();
-    const user = me?.user as { id: string; username: string; display_name?: string; avatar_key?: string } | undefined;
+    const user = getSessionUser() as { id: string; username: string; display_name?: string; avatar_key?: string } | undefined;
     const { createThreadPage } = await import('../../../components/ThreadPage.ts');
     const thread = createThreadPage({
       postId: page.params.id,

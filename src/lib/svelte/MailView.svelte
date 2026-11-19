@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { getSessionUser } from './session.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 
@@ -20,11 +21,9 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { getMe } = await import('../../lib/auth-cache.ts');
     const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
-    const me = await getMe();
-    const user = me?.user as { id: string; username: string } | undefined;
+    const user = getSessionUser() as { id: string; username: string } | undefined;
     if (!user) {
       window.location.replace('/explore');
       return;
