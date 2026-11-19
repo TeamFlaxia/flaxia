@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { normalizeNameColor } from '../../../shared/name-color.ts';
-import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
+import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../shared/vault/primitives.ts';
 import { deleteAccount } from '../../lib/account-deletion';
 import { buildFollowActivity, buildUndoActivity, buildUpdateActivity } from '../../lib/activitypub/activities';
 import { buildActorDocument } from '../../lib/activitypub/actor';

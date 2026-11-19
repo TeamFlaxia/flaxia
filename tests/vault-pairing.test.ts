@@ -7,6 +7,7 @@
 // blob — if production derived the wrong key, the independent decrypt fails.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { decodeB64, encodeB64 } from '../shared/vault/primitives.ts';
 import {
   buildPairingUri,
   derivePairingKeyMaterial,
@@ -17,7 +18,6 @@ import {
   unwrapVaultKeyForPairing,
   wrapVaultKeyForPairing,
 } from '../src/lib/vault/pairing.ts';
-import { decodeB64, encodeB64 } from '../src/lib/vault/primitives.ts';
 
 const PAIRING_ID = 'pairingIdVector000001';
 const RFC_SCALAR = 'a546e36bf0527c9d3b16154b82465edd62144c0ac1fc5a18506a2244ba449ac4';

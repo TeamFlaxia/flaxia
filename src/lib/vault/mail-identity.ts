@@ -10,8 +10,8 @@
 // tries the device key first, then the caller falls back to the VaultSection
 // password prompt. No global unlock gate is required.
 
+import { decodeB64, encodeB64 } from '../../../shared/vault/primitives.ts';
 import { listVaultItems, newVaultItemId, saveVaultItem } from './items.ts';
-import { decodeB64, encodeB64 } from './primitives.ts';
 import { getVaultKey, isVaultUnlocked, tryDeviceUnlock } from './session.ts';
 
 export interface MailIdentityMaterial {

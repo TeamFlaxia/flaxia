@@ -8,18 +8,6 @@
 // there is exactly one place that decides when the key is alive.
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { createSrpProof } from '../auth-srp.ts';
-import { fetchVaultItemKeys, fetchVaultKeys, revokeDeviceAndRotate, rewrapItemKeyForVaultKey } from './client.ts';
-import {
-  createDevice,
-  detectDeviceLabel,
-  getCurrentDeviceId,
-  getOrCreateCurrentDevice,
-  newDeviceId,
-  saveVaultKeyForDevice,
-  unlockWithDevice,
-} from './device.ts';
-import { unwrapVaultKeyForPairing } from './pairing.ts';
 import {
   createVaultEnvelope,
   decodeB64,
@@ -32,7 +20,19 @@ import {
   rewrapVaultKeyForPassword,
   rewrapVaultKeyForRecovery,
   unlockVaultWithPassword,
-} from './primitives.ts';
+} from '../../../shared/vault/primitives.ts';
+import { createSrpProof } from '../auth-srp.ts';
+import { fetchVaultItemKeys, fetchVaultKeys, revokeDeviceAndRotate, rewrapItemKeyForVaultKey } from './client.ts';
+import {
+  createDevice,
+  detectDeviceLabel,
+  getCurrentDeviceId,
+  getOrCreateCurrentDevice,
+  newDeviceId,
+  saveVaultKeyForDevice,
+  unlockWithDevice,
+} from './device.ts';
+import { unwrapVaultKeyForPairing } from './pairing.ts';
 
 export type VaultStatus = 'loading' | 'disabled' | 'locked' | 'unlocked';
 

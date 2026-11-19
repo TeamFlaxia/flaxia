@@ -1,4 +1,4 @@
-import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../src/lib/vault/primitives.ts';
+import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../shared/vault/primitives.ts';
 import { authIsAuthoritative, authVaultImport, authVaultRequest } from './flaxia-auth.ts';
 
 type VaultEnv = { DB: D1Database; AUTH_SERVICE?: Fetcher; AUTH_AUTHORITY_MODE?: string };

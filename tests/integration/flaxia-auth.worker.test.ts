@@ -3,14 +3,14 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from '../../src/lib/srp.ts';
 import {
   createVaultEnvelope,
   generateVaultSalt,
   rewrapVaultKeyForPassword,
   unlockVaultWithPassword,
   unlockVaultWithRecovery,
-} from '../../src/lib/vault/primitives.ts';
+} from '../../shared/vault/primitives.ts';
+import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from '../../src/lib/srp.ts';
 
 const authBase = process.env.FLAXIA_AUTH_TEST_URL;
 const appBase = process.env.FLAXIA_APP_TEST_URL;

@@ -12,7 +12,7 @@ import {
   isValidVaultKdfParams,
   isValidWrappedKey,
   PAIRING_ID_PATTERN,
-} from '../../../src/lib/vault/primitives';
+} from '../../../shared/vault/primitives.ts';
 import { getSessionToken, verifySrpPassword } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';

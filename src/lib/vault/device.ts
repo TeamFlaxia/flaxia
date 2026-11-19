@@ -8,7 +8,7 @@
 // VK itself is never persisted raw: it is stored wrapped under this device key,
 // which is what makes "reload the page and the vault re-opens" work without a
 // password prompt.
-import { encodeB64, unwrapVaultKeyWithDevice, wrapVaultKeyForDevice } from './primitives.ts';
+import { encodeB64, unwrapVaultKeyWithDevice, wrapVaultKeyForDevice } from '../../../shared/vault/primitives.ts';
 
 const DB_NAME = 'flaxia_vault';
 const DB_VERSION = 1;

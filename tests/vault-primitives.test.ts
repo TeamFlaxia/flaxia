@@ -53,7 +53,7 @@ import {
   VAULT_KDF_MIN_ITERATIONS,
   wrapSecret,
   wrapVaultKeyForDevice,
-} from '../src/lib/vault/primitives.ts';
+} from '../shared/vault/primitives.ts';
 
 const PHRASE = 'legal winner thank year wave sausage worth useful legal winner thank yellow';
 const PASSWORD = 'correct horse battery staple';
