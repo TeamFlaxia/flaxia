@@ -2,6 +2,7 @@
 import { onMount } from 'svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
+import { getSessionUser } from '../../lib/svelte/session.ts';
 
 let host: HTMLDivElement;
 let navProps = $state<Record<string, unknown>>({});
@@ -16,12 +17,10 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { getMe } = await import('../../lib/auth-cache.ts');
     const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
     const { fetchNotifications, invalidateNotificationsCache } = await import('../../lib/notifications-api.ts');
     await initI18n();
-    const me = await getMe();
-    const user = me?.user;
+    const user = getSessionUser();
     if (!user) {
       window.location.replace('/explore');
       return;

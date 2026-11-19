@@ -27,7 +27,7 @@ test('bookmarks route uses the standalone shell', async () => {
   const route = await read('src/routes/bookmarks/+page.svelte');
   assert.match(route, /ShellLayout/);
   assert.match(route, /createBookmarksPage/);
-  assert.match(route, /getMe/);
+  assert.match(route, /getSessionUser/);
   assert.match(route, /createLeftNavHandlers/);
 });
 
@@ -43,7 +43,7 @@ test('notifications route wires data fetching and shell', async () => {
 test('auth-gated routes read currentUser from getMe().user', async () => {
   for (const route of ['bookmarks', 'notifications', 'settings']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
-    assert.match(source, /me\?\.user/, `${route} must not pass the whole /api/me response as currentUser`);
+    assert.match(source, /getSessionUser/, `${route} must use the shared session snapshot`);
     assert.match(source, /ShellLayout/);
   }
 });
@@ -60,7 +60,7 @@ test('mail routes share the shell-backed mail view', async () => {
   assert.match(view, /createMailSettingsPage/);
   assert.match(view, /createMailThreadPage/);
   assert.match(view, /createMailComposePage/);
-  assert.match(view, /me\?\.user/);
+  assert.match(view, /getSessionUser/);
   for (const route of ['mail', 'mail/settings', 'mail/compose', 'mail/thread/[id]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
     assert.match(source, /MailView/);
@@ -81,7 +81,7 @@ test('home feed route keeps the iframe-safe timeline', async () => {
   assert.match(route, /ShellLayout/);
   assert.match(route, /createTimeline/);
   assert.match(route, /openLeftNav/);
-  assert.match(route, /me\?\.user/);
+  assert.match(route, /getSessionUser/);
 });
 
 test('F8 routes use the shell with correct rails', async () => {

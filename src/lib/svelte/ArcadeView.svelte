@@ -3,6 +3,7 @@ import { onMount } from 'svelte';
 import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
+import { getSessionUser } from './session.ts';
 
 let { gameId = '' }: { gameId?: string } = $props();
 let host: HTMLDivElement;
@@ -19,11 +20,11 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { getMe } = await import('../../lib/auth-cache.ts');
     const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
-    const me = await getMe();
-    const user = me?.user as { id: string; username: string; display_name?: string; avatar_key?: string } | undefined;
+    const user = getSessionUser() as
+      | { id: string; username: string; display_name?: string; avatar_key?: string }
+      | undefined;
     const { createArcadePage } = await import('../../components/ArcadePage.ts');
     const page = createArcadePage({
       sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',

@@ -3,6 +3,7 @@ import { onMount } from 'svelte';
 import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
+import { getSessionUser } from '../../lib/svelte/session.ts';
 
 let host: HTMLDivElement;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
@@ -14,11 +15,9 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { getMe } = await import('../../lib/auth-cache.ts');
     const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
-    const me = await getMe();
-    const user = me?.user as { id: string; username: string } | undefined;
+    const user = getSessionUser() as { id: string; username: string } | undefined;
     const { createMapsPage } = await import('../../components/MapsPage.ts');
     const map = createMapsPage();
     host.appendChild(map.getElement());
