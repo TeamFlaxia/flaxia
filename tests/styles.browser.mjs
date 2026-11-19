@@ -34,7 +34,11 @@ const svelteCss = existsSync(svelteCssDir)
   : [];
 const cssCandidates = [...legacyCss, ...svelteCss];
 assert.ok(cssCandidates.length > 0, 'vite build must produce a legacy CSS bundle in dist before this test');
-const cssHref = cssCandidates.find((href) => href.includes('/main')) ?? cssCandidates[0];
+// Svelte routes add their own CSS bundles; pick the one that actually holds
+// the legacy primitive rules the fixture below measures.
+const cssHref =
+  cssCandidates.find((href) => readFileSync(join(distDir, href.replace(/^\//, '')), 'utf8').includes('.fx-box')) ??
+  cssCandidates[0];
 
 const html = `<!doctype html>
 <html lang="en">
