@@ -63,6 +63,7 @@ const groups = {
     'ai-tags',
     'ai-tags-e2e',
     'duplicate-posts',
+    'iframe-reload',
     'link-preview',
     'link-preview-integration',
     'linucb',
