@@ -11,6 +11,7 @@ const groups = {
   guardrails: [
     'architecture',
     'csp-hashes',
+    'lazy-imports',
     'ssr-head',
     'svelte-migration',
     'svelte-shell',
