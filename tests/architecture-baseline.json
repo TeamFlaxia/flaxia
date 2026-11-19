@@ -7,6 +7,7 @@
   "functions/api/ogp-player/[id].ts": ["D1Database"],
   "functions/api/routes/activitypub.ts": ["c.env"],
   "functions/api/routes/admin.ts": ["D1Database", "R2Bucket", "c.env"],
+  "functions/api/routes/admin/ads.ts": ["c.env"],
   "functions/api/routes/ads.ts": ["c.env"],
   "functions/api/routes/auth.ts": ["c.env"],
   "functions/api/routes/bug-reports.ts": ["D1Database", "R2Bucket", "c.env"],
