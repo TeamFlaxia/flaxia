@@ -25,6 +25,11 @@
       "!!scripts/test-fixtures/test-serviceworker.html"
     ]
   },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

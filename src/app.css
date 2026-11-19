@@ -1,3 +1,50 @@
-/* Tailwind is wired through @tailwindcss/vite in vite.config.ts. F3 will add
-   the theme tokens here; do not import it into the legacy CSS bundle yet,
-   because that bundle must stay unlayered for the CSP/style smoke tests. */
+/* Tailwind v4 token layer (F3).
+ *
+ * These mirror src/styles/legacy/theme.css so Svelte components can use
+ * utilities like `bg-primary` / `text-link` without changing the legacy skin.
+ * The legacy stylesheet is still authoritative; F5-F8 will switch surfaces to
+ * these tokens one at a time. Kept out of the legacy CSS bundle for now so the
+ * unlayered-CSS invariant stays true.
+ */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f0fdf4;
+  --color-bg-tertiary: #f0f0f0;
+  --color-bg-input: #f1f5f9;
+  --color-surface-glass: #ffffff;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #334155;
+  --color-text-muted: #64748b;
+
+  --color-primary: #16a34a;
+  --color-primary-hover: #15803d;
+  --color-primary-fg: #ffffff;
+  --color-accent: #22c55e;
+  --color-accent-hover: #16a34a;
+  --color-accent-soft: rgba(22, 163, 74, 0.15);
+  --color-on-accent: #ffffff;
+
+  --color-coral: #f43f5e;
+  --color-coral-strong: #e11d48;
+  --color-coral-soft: rgba(244, 63, 94, 0.1);
+
+  --color-danger: #ef4444;
+  --color-danger-strong: #dc2626;
+  --color-danger-text: #dc2626;
+  --color-warning: #f59e0b;
+  --color-link: #3b82f6;
+  --color-link-hover: #2563eb;
+  --color-ring: rgba(34, 197, 94, 0.45);
+
+  --tracking-tight: 0;
+  --tracking-wide: 0;
+}
