@@ -1,10 +1,10 @@
+import { CROWD_NODE_VERSION } from '../../shared/crowd-node.ts';
 import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
+
+export { CROWD_NODE_VERSION };
 
 // Shared by the SPA, native build preparation, and Pages Functions.
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
-
-/** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.9.0';
 
 export const CROWD_SITE_ID = 'flaxia';
 
