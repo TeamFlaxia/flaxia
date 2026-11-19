@@ -53,6 +53,20 @@ test('settings route mounts the legacy settings page', async () => {
   assert.match(route, /createSettingsPage/);
 });
 
+test('mail routes share the shell-backed mail view', async () => {
+  const view = await read('src/lib/svelte/MailView.svelte');
+  assert.match(view, /ShellLayout/);
+  assert.match(view, /createMailPage/);
+  assert.match(view, /createMailSettingsPage/);
+  assert.match(view, /createMailThreadPage/);
+  assert.match(view, /createMailComposePage/);
+  assert.match(view, /me\?\.user/);
+  for (const route of ['mail', 'mail/settings', 'mail/compose', 'mail/thread/[id]']) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /MailView/);
+  }
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
