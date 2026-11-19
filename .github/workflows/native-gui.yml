@@ -1,15 +1,14 @@
 name: Native GUI
 
+# The Tauri/WebKit smoke test builds the desktop app in release mode and boots
+# a virtual desktop and WebDriver. That is too heavy for every PR, so it runs
+# on demand from the Actions tab (or `gh workflow run native-gui.yml`).
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/native-gui.yml'
-      - 'src/**'
-      - 'src-tauri/**'
-      - 'public/**'
-      - 'package*.json'
-      - 'scripts/native-gui-smoke.py'
-      - 'scripts/build-native-crowd.mjs'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
