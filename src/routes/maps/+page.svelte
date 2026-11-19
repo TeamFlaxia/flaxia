@@ -9,6 +9,8 @@ let host: HTMLDivElement;
 let navProps: Record<string, unknown> = {};
 
 onMount(() => {
+  // Maps has no bottom-nav tab; clear it before any awaits.
+  getBottomNav()?.setActiveItem('');
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
@@ -21,8 +23,6 @@ onMount(() => {
     const map = createMapsPage();
     host.appendChild(map.getElement());
     dispose = map.destroy;
-    // Maps has no bottom-nav tab; clear the tab lit by the previous route.
-    getBottomNav()?.setActiveItem('');
     navProps = {
       activeItem: 'maps',
       currentUser: user,
