@@ -1,15 +1,17 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: rendered in markup
+import { onMount } from 'svelte';
+import { ensureBottomNav } from '../../lib/bottom-nav-setup.ts';
 import LeftNav from './LeftNav.svelte';
-// biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import RightPanel from './RightPanel.svelte';
+
+void LeftNav;
+void RightPanel;
 
 // Standalone shell slot for F6-F8 pages. The legacy three-column classes and
 // role="main" landmark are kept so CSS and accessibility behave identically.
 let {
   // biome-ignore lint/correctness/noUnusedVariables: Svelte snippet used in markup
   children,
-  // biome-ignore lint/correctness/noUnusedVariables: Svelte prop used in markup
   navProps = {},
   // biome-ignore lint/correctness/noUnusedVariables: Svelte prop used in markup
   showRightPanel = true,
@@ -18,6 +20,23 @@ let {
   navProps?: Record<string, unknown>;
   showRightPanel?: boolean;
 } = $props();
+
+onMount(() => {
+  const active = String(navProps.activeItem ?? 'home');
+  void ensureBottomNav({
+    navigate: (view, postId, username) => {
+      const path =
+        view === 'timeline'
+          ? '/home'
+          : view === 'profile'
+            ? `/profile/${username ?? ''}`
+            : `/${view}${postId ? `/${postId}` : ''}`;
+      window.location.assign(path);
+    },
+    getCurrentUser: () => navProps.currentUser as never,
+    getActiveItem: () => active,
+  });
+});
 </script>
 
 <div class="main-container">
