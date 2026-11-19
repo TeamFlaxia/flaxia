@@ -97,8 +97,8 @@ test('built app CSS stays unlayered and keeps primitive geometry', { timeout: 60
     const page = await browser.newPage({ viewport: { width: 900, height: 700 } });
     await page.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: 'load' });
 
-    const result = await page.evaluate(() => {
-      const sheet = [...document.styleSheets].find((entry) => entry.href?.includes('/assets/main-'));
+    const result = await page.evaluate((href) => {
+      const sheet = [...document.styleSheets].find((entry) => entry.href?.includes(href));
       if (!sheet) return { error: 'stylesheet missing' };
 
       // Guard the regression that reverted the redesign: the app CSS must not
@@ -154,7 +154,7 @@ test('built app CSS stays unlayered and keeps primitive geometry', { timeout: 60
           return { width: bounds.width, height: bounds.height };
         })(),
       };
-    });
+    }, cssHref);
 
     assert.equal(result.error, undefined, result.error);
     assert.equal(result.layerBlocks, 0, 'app CSS must not use @layer (it would lose to the inline critical CSS)');
