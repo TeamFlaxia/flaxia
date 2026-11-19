@@ -17,6 +17,15 @@ test('legacy shell skips routes owned by SvelteKit', async () => {
   const main = await read('src/main.ts');
   assert.match(main, /SVELTE_ROUTES/);
   assert.match(main, /billing\\?\/\(success\|canceled\)/);
+  assert.match(main, /\/download/);
+});
+
+test('download route mounts the legacy page declaratively', async () => {
+  const route = await read('src/routes/download/+page.svelte');
+  assert.match(route, /createDownloadPage/);
+  assert.match(route, /initI18n/);
+  assert.match(route, /host\.appendChild/);
+  assert.match(route, /:global\(#app\)/);
 });
 
 test('Svelte markup keeps the legacy classes and copy', async () => {
