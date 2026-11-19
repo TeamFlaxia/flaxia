@@ -76,6 +76,14 @@ test('thread route owns its three-column page', async () => {
   assert.doesNotMatch(route, /ShellLayout/, 'ThreadPage already renders its own shell');
 });
 
+test('home feed route keeps the iframe-safe timeline', async () => {
+  const route = await read('src/routes/home/+page.svelte');
+  assert.match(route, /ShellLayout/);
+  assert.match(route, /createTimeline/);
+  assert.match(route, /openLeftNav/);
+  assert.match(route, /me\?\.user/);
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
