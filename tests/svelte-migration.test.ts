@@ -40,6 +40,19 @@ test('notifications route wires data fetching and shell', async () => {
   assert.match(route, /onNavigateToPost/);
 });
 
+test('auth-gated routes read currentUser from getMe().user', async () => {
+  for (const route of ['bookmarks', 'notifications', 'settings']) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /me\?\.user/, `${route} must not pass the whole /api/me response as currentUser`);
+    assert.match(source, /ShellLayout/);
+  }
+});
+
+test('settings route mounts the legacy settings page', async () => {
+  const route = await read('src/routes/settings/+page.svelte');
+  assert.match(route, /createSettingsPage/);
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
