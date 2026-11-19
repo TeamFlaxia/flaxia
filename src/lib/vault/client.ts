@@ -13,7 +13,7 @@ import {
   unlockVaultWithPassword,
   unlockVaultWithRecovery,
   type VaultKdfParams,
-} from './primitives.ts';
+} from '../../../shared/vault/primitives.ts';
 
 export interface VaultKeysResponse {
   enabled: boolean;

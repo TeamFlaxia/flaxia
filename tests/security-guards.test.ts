@@ -454,7 +454,7 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   });
 
   it('validates recovery phrases with the BIP-39 checksum', () => {
-    const primitives = readFileSync(join(ROOT, 'src/lib/vault/primitives.ts'), 'utf8');
+    const primitives = readFileSync(join(ROOT, 'shared/vault/primitives.ts'), 'utf8');
     assert.ok(primitives.includes('validateMnemonic'), 'recovery phrases must carry a valid checksum');
   });
 

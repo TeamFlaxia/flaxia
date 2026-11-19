@@ -12,7 +12,7 @@ import {
   generateVaultSalt,
   rewrapVaultKeyForPassword,
   unlockVaultWithPassword,
-} from '../src/lib/vault/primitives.ts';
+} from '../shared/vault/primitives.ts';
 import { BASE_URL, createSrpProof, loginUser, resetDb, seedUserAndLogin, srpVerifierPayload } from './helpers/setup.ts';
 
 const PHRASE = 'legal winner thank year wave sausage worth useful legal winner thank yellow';

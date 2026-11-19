@@ -6,13 +6,6 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import {
-  buildPairingUri,
-  generateEphemeralKeyPair,
-  parsePairingUri,
-  unwrapVaultKeyForPairing,
-  wrapVaultKeyForPairing,
-} from '../src/lib/vault/pairing.ts';
-import {
   createVaultEnvelope,
   decryptVaultItem,
   encodeB64,
@@ -22,7 +15,14 @@ import {
   rewrapItemKeyForVaultKey,
   rewrapVaultKeyForPassword,
   rewrapVaultKeyForRecovery,
-} from '../src/lib/vault/primitives.ts';
+} from '../shared/vault/primitives.ts';
+import {
+  buildPairingUri,
+  generateEphemeralKeyPair,
+  parsePairingUri,
+  unwrapVaultKeyForPairing,
+  wrapVaultKeyForPairing,
+} from '../src/lib/vault/pairing.ts';
 import { BASE_URL, createSrpProof, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 const PASSWORD = 'password123';

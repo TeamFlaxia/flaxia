@@ -1,9 +1,9 @@
 // Vault cryptography primitives.
 //
-// Everything here runs in the browser: the server only ever stores the byte
-// strings these functions produce (see docs/e2ee.md for the threat model and
-// the full key hierarchy). Nothing in this module may be moved server-side,
-// and no secret it derives may be sent to an endpoint.
+// Key derivation and encryption run in the browser; the server only stores the
+// byte strings these functions produce and imports the validation helpers
+// (see docs/e2ee.md for the threat model and the full key hierarchy). No
+// secret derived here may be sent to an endpoint.
 //
 //   password ──PBKDF2(600k, salt)────────► KEK ─┐
 //   recovery phrase ──PBKDF2(600k, recovery_salt)──► REK ─┤─wrap─► VK

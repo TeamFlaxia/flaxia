@@ -13,14 +13,14 @@ import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { prepareVaultRewrap } from '../src/lib/vault/client.ts';
-import { generateEphemeralKeyPair, wrapVaultKeyForPairing } from '../src/lib/vault/pairing.ts';
 import {
   DEFAULT_VAULT_KDF_PARAMS,
   encodeB64,
   isValidRecoveryPhrase,
   unlockVaultWithPassword,
-} from '../src/lib/vault/primitives.ts';
+} from '../shared/vault/primitives.ts';
+import { prepareVaultRewrap } from '../src/lib/vault/client.ts';
+import { generateEphemeralKeyPair, wrapVaultKeyForPairing } from '../src/lib/vault/pairing.ts';
 import {
   adoptPairedVaultKey,
   enableVault,

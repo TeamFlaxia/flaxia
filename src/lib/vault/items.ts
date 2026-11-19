@@ -2,7 +2,12 @@
 // bridge from application records to /api/vault/items: callers pass plaintext
 // values, and only ciphertext plus wrapped item keys cross the network.
 
-import { decryptVaultItem, encodeB64, encryptVaultItem, type VaultItemCiphertext } from './primitives.ts';
+import {
+  decryptVaultItem,
+  encodeB64,
+  encryptVaultItem,
+  type VaultItemCiphertext,
+} from '../../../shared/vault/primitives.ts';
 import { getVaultKey, getVaultKeyVersion } from './session.ts';
 
 export type VaultItemKind =

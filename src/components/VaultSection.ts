@@ -11,6 +11,7 @@
 // for desktops without a camera. Reading the code IS the second factor
 // (docs/e2ee.md, "Pairing a second device").
 import { toDataURL } from 'qrcode';
+import { encodeB64 } from '../../shared/vault/primitives.ts';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { getLocale, t } from '../lib/i18n.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -31,7 +32,6 @@ import {
   parsePairingUri,
   wrapVaultKeyForPairing,
 } from '../lib/vault/pairing.js';
-import { encodeB64 } from '../lib/vault/primitives.js';
 import {
   adoptPairedVaultKey,
   enableVault,
