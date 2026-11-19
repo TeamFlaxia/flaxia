@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
 
@@ -20,6 +21,8 @@ onMount(() => {
     const map = createMapsPage();
     host.appendChild(map.getElement());
     dispose = map.destroy;
+    // Maps has no bottom-nav tab; clear the tab lit by the previous route.
+    getBottomNav()?.setActiveItem('');
     navProps = {
       activeItem: 'maps',
       currentUser: user,
