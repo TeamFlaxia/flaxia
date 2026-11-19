@@ -66,4 +66,5 @@ const cspLine = /^(\s*Content-Security-Policy: .+)$/m;
 const match = headers.match(cspLine);
 if (!match) throw new Error('Content-Security-Policy header not found in public/_headers');
 writeFileSync(headersFile, headers.replace(cspLine, match[1].replace(hashRun, hashes.join(' '))));
+copyFileSync(headersFile, join(dist, '_headers'));
 console.log(`Post-build: refreshed ${hashes.length} CSP script hashes`);
