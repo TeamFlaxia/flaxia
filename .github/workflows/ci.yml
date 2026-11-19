@@ -114,6 +114,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npx @biomejs/biome ci .
+      - run: npm run check:file-size
 
   typecheck:
     runs-on: ubuntu-latest
