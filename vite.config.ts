@@ -1,18 +1,13 @@
-import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import adapter from '@sveltejs/adapter-static';
+import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { CROWD_NODE_VERSION } from './shared/crowd-node.ts';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './src/lib/pdf-viewer-page';
 import { docsManifestPlugin } from './vite-docs-manifest';
 
-/** html file → entry chunk name (shared by rollup input and the preload plugin). */
-const ENTRY_INPUTS: Record<string, string> = {
-  main: 'index.html',
-  exportPopup: 'export-popup.html',
-};
-const HTML_ENTRY: Record<string, string> = Object.fromEntries(
-  Object.entries(ENTRY_INPUTS).map(([entry, html]) => [html, entry]),
-);
 const packageVersion = (
   JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 ).version;
@@ -23,7 +18,6 @@ export default defineConfig({
     outDir: 'dist',
     rollupOptions: {
       external: (id) => id.startsWith('/api/crowd/'),
-      input: ENTRY_INPUTS,
       output: {
         manualChunks(id) {
           if (!id.includes('/node_modules/')) return;
@@ -36,7 +30,6 @@ export default defineConfig({
         },
       },
     },
-    emptyOutDir: true,
   },
   optimizeDeps: {
     // Pre-bundling @ffmpeg/ffmpeg breaks its module worker in dev (worker.js
@@ -82,28 +75,13 @@ export default defineConfig({
     noExternal: ['hono'],
   },
   plugins: [
+    tailwindcss(),
+    sveltekit({
+      adapter: adapter({ pages: 'dist', assets: 'dist', fallback: 'index.html' }),
+      files: { assets: 'public' },
+      version: { name: 'f1-static-shell' },
+    }),
     docsManifestPlugin(),
-    {
-      name: 'modulepreload',
-      enforce: 'post',
-      apply: 'build',
-      generateBundle(_opts, bundle) {
-        const chunksByName = new Map(
-          Object.entries(bundle)
-            .filter(([, info]) => info.type === 'chunk' && info.isEntry)
-            .map(([file, info]) => [info.name, file]),
-        );
-        for (const [file, info] of Object.entries(bundle)) {
-          if (info.type !== 'asset' || !file.endsWith('.html') || !('source' in info)) continue;
-          const entryName = HTML_ENTRY[file];
-          if (!entryName) continue;
-          const entryFile = chunksByName.get(entryName);
-          if (!entryFile) continue;
-          const link = `<link rel="modulepreload" crossorigin href="/${entryFile}">`;
-          info.source = (info.source as string).replace('</head>', `  ${link}\n</head>`);
-        }
-      },
-    },
     {
       // vite dev has no _headers — apply the isolation headers the export
       // popup needs (SharedArrayBuffer / core-mt) only on that path.
@@ -141,6 +119,7 @@ export default defineConfig({
         const crowdSrc = 'node_modules/@flaxia/node/dist/assets';
         const crowdDest = 'dist/assets';
         if (existsSync(crowdSrc)) {
+          mkdirSync(crowdDest, { recursive: true });
           const entries = readdirSync(crowdSrc, { withFileTypes: true });
           for (const entry of entries) {
             // FriedFlaxia's wasm glue is 2.5 MB per copy and is served by the
@@ -162,7 +141,21 @@ export default defineConfig({
       },
     },
     {
+      // The export popup is a legacy standalone HTML entry kept outside the
+      // SvelteKit router; copy it into the static output unchanged.
+      name: 'copy-export-popup',
+      apply: 'build',
+      enforce: 'post',
+      writeBundle() {
+        if (existsSync('export-popup.html')) {
+          mkdirSync('dist', { recursive: true });
+          copyFileSync('export-popup.html', 'dist/export-popup.html');
+        }
+      },
+    },
+    {
       name: 'ssr-assets',
+      enforce: 'post',
       closeBundle() {
         const distIndex = join(process.cwd(), 'dist/index.html');
         if (!existsSync(distIndex)) return;

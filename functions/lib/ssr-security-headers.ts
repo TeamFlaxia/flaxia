@@ -3,6 +3,9 @@ const CSP_SCRIPT_HASHES = [
   "'sha256-deKHSl4CU3uw9E8UqWcJnKbStUScLNIbzheCC/iADH0=' 'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA='",
   "'sha256-8UZ1xbdoEGBJfbCFW7UdTEkjFZkH/d+8yO/eZ/JEOM0='",
   "'sha256-lf+0nM1TqVv41CHz3DTo1q7DzxErxegCLlYtVBZlTWg='",
+  // SvelteKit shell bootstrap (F1). The version is pinned in vite.config.ts,
+  // so this hash is stable; F2 will generate these hashes automatically.
+  "'sha256-O2fd5Fuua/AlzXOKy1bK/6iCXVeOytetpLh696gOeSI='",
   // Trusted SWF/Ruffle bootstrap, AdSense iframe bootstrap, and legacy sandbox wrapper.
   "'sha256-QkLYwXmQ/14wDFcYo7uqnujEIBSc/XWY1kMfskVSXuY='",
   "'sha256-L9NtTqBLxf1z3sIza7z/JTtm01m91a8xVl07p4WTMYw='",
