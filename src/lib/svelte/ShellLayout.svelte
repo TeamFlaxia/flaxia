@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import { ensureBottomNav } from '../../lib/bottom-nav-setup.ts';
+import { ensureBottomNav, getBottomNav } from '../../lib/bottom-nav-setup.ts';
 import LeftNav from './LeftNav.svelte';
 import RightPanel from './RightPanel.svelte';
 
@@ -20,6 +20,10 @@ let {
   navProps?: Record<string, unknown>;
   showRightPanel?: boolean;
 } = $props();
+
+$effect(() => {
+  getBottomNav()?.setActiveItem(String(navProps.activeItem ?? 'home'));
+});
 
 onMount(() => {
   const active = String(navProps.activeItem ?? 'home');
