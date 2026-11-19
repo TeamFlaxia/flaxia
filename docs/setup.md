@@ -15,11 +15,11 @@ npm install
 # Run local migrations (creates local D1 database)
 npm run migrate:local
 
-# Start dev server (build + wrangler pages dev)
+# Start Flaxia + local Auth (expects ../flaxia-auth; use npm run dev:guest without it)
 npm run dev
 ```
 
-The dev server starts at `http://localhost:8787`.
+Flaxia runs at `http://localhost:8787`; local Auth runs at `http://localhost:8799`.
 
 ## Package Manager
 
@@ -37,16 +37,34 @@ Do NOT use `yarn add`.
 
 ## Dev Server Modes
 
+Auth lives in `TeamFlaxia/flaxia-auth`; `npm run dev` starts it alongside the
+app so local login works.
+
 ```bash
-# Full build + dev server (default)
+# Flaxia + local Auth (default). Expects ../flaxia-auth, or FLAXIA_AUTH_DIR.
 npm run dev
 
-# Hot reload (watch mode for Vite build)
+# Same, with a Vite build watcher
 npm run dev:hot
 
-# API-only dev (skip Vite rebuild, use existing dist/)
+# UI-only: no Auth, login disabled (use when you do not need a session)
+npm run dev:guest
+
+# API-only dev (skip the Vite rebuild, use existing dist/)
 npm run dev:api
 ```
+
+`scripts/dev.mjs` applies both local D1 migrations, builds the Auth login UI,
+starts Auth on `:8799` and Flaxia on `:8787`, and wires the `AUTH_SERVICE`
+binding plus `AUTH_UI_ORIGIN`. If an Auth worker is already healthy on the
+configured port it is reused. Override the defaults with:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `FLAXIA_AUTH_DIR` | `../flaxia-auth` | Auth repository path |
+| `FLAXIA_DEV_PORT` | `8787` | Flaxia dev server port |
+| `FLAXIA_AUTH_PORT` | `8799` | Auth worker port |
+| `FLAXIA_AUTH_INSPECTOR_PORT` | `authPort + 100` | Auth inspector port |
 
 ## Environment Variables
 

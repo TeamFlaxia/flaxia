@@ -124,7 +124,8 @@ SSR/SEO, vector search, push need them).
 ## Commands
 
 ```bash
-npm run dev           # migrate + vite build + wrangler pages dev
+npm run dev           # Flaxia + local Auth (../flaxia-auth); login works
+npm run dev:guest     # UI-only dev without Auth (login disabled)
 npm run build         # vite build (also builds SDK/capture)
 npm run typecheck     # tsc --noEmit
 npm run lint          # biome check .
