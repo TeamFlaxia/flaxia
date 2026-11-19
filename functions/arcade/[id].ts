@@ -1,5 +1,3 @@
-import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
-import { isCrawler } from '../../src/lib/is-crawler';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import {
   escapeHtml,
@@ -8,6 +6,8 @@ import {
   renderHtmlShell,
   renderJsonLd,
 } from '../../src/lib/render-html';
+import { buildGameDescription, buildGameTitle } from '../lib/game-seo.ts';
+import { isCrawler } from '../lib/is-crawler.ts';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
   renderBreadcrumbJsonLd,

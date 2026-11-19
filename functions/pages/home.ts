@@ -1,5 +1,5 @@
-import { isCrawler } from '../../src/lib/is-crawler';
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
+import { isCrawler } from '../lib/is-crawler.ts';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
