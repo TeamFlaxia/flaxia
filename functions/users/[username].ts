@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { stripPostColors } from '../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import {
   escapeHtml,
   type PostRow,

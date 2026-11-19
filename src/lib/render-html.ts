@@ -1,8 +1,8 @@
+import { canUsePostColors } from '../../shared/entitlements.ts';
 import { resolveNameColor } from '../../shared/name-color.ts';
+import { parsePostColors, postTextStyleClass, stripPostColors } from '../../shared/post-colors.ts';
+import { stripMediaCues } from '../../shared/post-cues.ts';
 import { isTitleIconImage } from '../../shared/title-icon.ts';
-import { canUsePostColors } from './entitlements.ts';
-import { parsePostColors, postTextStyleClass, stripPostColors } from './post-colors.ts';
-import { stripMediaCues } from './post-cues.ts';
 
 /**
  * Lucide "leaf" icon as inline SVG. Used for the Fresh (like) count in SSR

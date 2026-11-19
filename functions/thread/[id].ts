@@ -1,4 +1,4 @@
-import { stripPostColors } from '../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import { type PostRow, renderBlogPostingJsonLd, renderHtmlShell, renderPostArticle } from '../../src/lib/render-html';
 import { buildGameDescription, buildGameTitle } from '../lib/game-seo.ts';
 import { isCrawler } from '../lib/is-crawler.ts';

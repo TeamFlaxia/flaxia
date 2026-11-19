@@ -1,4 +1,4 @@
-import { stripPostColors } from './post-colors.js';
+import { stripPostColors } from '../../shared/post-colors.ts';
 
 export interface ShareData {
   url: string;

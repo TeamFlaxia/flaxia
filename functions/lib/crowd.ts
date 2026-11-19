@@ -19,8 +19,8 @@ import {
   resolveNsfwTags,
   verifyCrowdWebhook,
 } from '@flaxia/sdk';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import { buildPlamoPrompt, PLAMO_MODEL_ID, PLAMO_TASK, translateModelFor } from '../../shared/translate-languages.ts';
-import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
 import { hmacHex, signatureEquals } from './hmac.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';

@@ -1,12 +1,12 @@
+import { canUsePostColors, maxMediaAttachmentsForUser } from '../../shared/entitlements.ts';
 import { attachmentMimeType } from '../../shared/file-extensions.ts';
-import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { stripPostColors } from '../../shared/post-colors.ts';
+import { stripMediaCues } from '../../shared/post-cues.ts';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { pauseMediaIn } from '../lib/media-mute.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
-import { stripPostColors } from '../lib/post-colors.js';
-import { stripMediaCues } from '../lib/post-cues.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';

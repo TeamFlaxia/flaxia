@@ -1,4 +1,4 @@
-import { stripPostColors } from '../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 
 /** SHA-256 of the exact text sent for embedding, also signed into the callback URL. */
 export async function postTextSha(text: string): Promise<string> {

@@ -1,7 +1,7 @@
+import type { MediaCue } from '../../shared/post-cues.ts';
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import type { MediaCue } from '../lib/post-cues.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
 import { createMediaCueOverlay } from './MediaCues.js';
 

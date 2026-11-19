@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { enrichPostsWithAiIndex, postTextSha } from '../functions/lib/ai-index.ts';
 import { embedPost, handleCrowdWebhook } from '../functions/lib/crowd.ts';
-import { stripPostColors } from '../src/lib/post-colors.ts';
+import { stripPostColors } from '../shared/post-colors.ts';
 
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');

@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { stripPostColors } from '../../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../../shared/post-colors.ts';
 import { getMeWithSession } from '../../lib/auth.ts';
 import { isSessionAuthorized } from '../../lib/flaxia-auth.ts';
 
