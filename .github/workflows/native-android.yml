@@ -1,14 +1,15 @@
 name: Native Android
+
+# Building the debug APK and running a full Android emulator with the WebView
+# smoke test is too heavy for every PR. Run it on demand from the Actions tab
+# (or `gh workflow run native-android.yml`) when changing native behavior.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/native-android.yml'
-      - 'src/**'
-      - 'public/**'
-      - 'scripts/**'
-      - 'tests/offline-games*'
-      - 'capacitor.config.ts'
-      - 'package*.json'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
