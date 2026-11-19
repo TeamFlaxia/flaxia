@@ -1,3 +1,3 @@
-/* F3 will move the legacy theme tokens into @theme. For now this only wires
-   Tailwind into the SvelteKit shell; the legacy CSS is loaded by main.ts. */
-@import "tailwindcss";
+/* Tailwind is wired through @tailwindcss/vite in vite.config.ts. F3 will add
+   the theme tokens here; do not import it into the legacy CSS bundle yet,
+   because that bundle must stay unlayered for the CSP/style smoke tests. */

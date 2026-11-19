@@ -1,7 +1,7 @@
 {
   "functions/api/routes/auth.ts": 877,
   "functions/api/routes/games.ts": 733,
-  "functions/api/routes/media.ts": 800,
+  "functions/api/routes/media.ts": 571,
   "functions/api/routes/posts/composer.ts": 899,
   "functions/api/routes/posts/engagement.ts": 753,
   "functions/api/routes/posts/manage.ts": 593,
@@ -41,5 +41,5 @@
   "src/components/Timeline.ts": 1162,
   "src/components/VaultSection.ts": 774,
   "src/components/VideoPlayer.ts": 507,
-  "src/main.ts": 1858
+  "src/main.ts": 1872
 }
