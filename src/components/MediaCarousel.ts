@@ -1,6 +1,6 @@
+import type { MediaCue } from '../../shared/post-cues.ts';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import type { MediaCue } from '../lib/post-cues.js';
 import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';

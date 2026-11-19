@@ -13,16 +13,16 @@ export interface PostComposerProps {
   quotedPost?: QuotedPost | null;
 }
 
+import { canUsePostColors, maxMediaAttachmentsForUser } from '../../shared/entitlements.ts';
 import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../../shared/file-extensions.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
-import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons, icon } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import { stripPostColors } from '../lib/post-colors.js';
 import { showToast } from '../lib/toast.js';
 import {
   deleteVaultItem,
@@ -39,7 +39,7 @@ import { openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 // Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
-// The count limit is plan-dependent — see src/lib/entitlements.ts.
+// The count limit is plan-dependent — see shared/entitlements.ts.
 const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
 const AUTOSAVE_ITEM_ID = 'post_autosave_main';

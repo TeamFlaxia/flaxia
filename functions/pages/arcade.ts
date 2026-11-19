@@ -1,4 +1,4 @@
-import { stripPostColors } from '../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import {
   escapeHtml,
   renderAvatarBadge,

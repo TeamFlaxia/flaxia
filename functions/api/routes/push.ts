@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { stripPostColors } from '../../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../../shared/post-colors.ts';
 import { getVapidPublicKey } from '../../lib/push';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { requireAuth } from '../helpers';

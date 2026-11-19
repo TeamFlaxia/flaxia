@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
+import { stripPostColors } from '../../../shared/post-colors.ts';
 import {
   type EncodedVector,
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
-import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';

@@ -1,12 +1,12 @@
 import type { MarkdownIt } from 'markdown-it';
-import { canUsePostColors } from '../lib/entitlements.js';
-import { parsePostColors } from '../lib/post-colors.js';
+import { canUsePostColors } from '../../shared/entitlements.ts';
+import { parsePostColors } from '../../shared/post-colors.ts';
+import { stripMediaCues } from '../../shared/post-cues.ts';
 import {
   type ColorPlaceholderEntry,
   insertColorPlaceholders,
   restoreColorPlaceholders,
 } from '../lib/post-colors-dom.js';
-import { stripMediaCues } from '../lib/post-cues.js';
 import { html, mount } from '../lib/render/index.ts';
 import { PostTextProps } from '../types/post.js';
 

@@ -1,11 +1,11 @@
+import { canUsePostColors } from '../../shared/entitlements.ts';
 import { applyNameColor } from '../../shared/name-color.ts';
+import { parsePostColors } from '../../shared/post-colors.ts';
+import { parseMediaCues, stripMediaCues } from '../../shared/post-cues.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
-import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import { parsePostColors } from '../lib/post-colors.js';
 import { renderColorizedText } from '../lib/post-colors-dom.js';
-import { parseMediaCues, stripMediaCues } from '../lib/post-cues.js';
 import { html, mount } from '../lib/render/index.ts';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';

@@ -1,13 +1,13 @@
 import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { canUsePostColors } from '../../../shared/entitlements.ts';
+import { hasPostColors, stripPostColors } from '../../../shared/post-colors.ts';
 import { cosineSimilarity } from '../../../shared/recommendation/vector.ts';
 import {
   type EncodedVector,
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
-import { canUsePostColors } from '../../../src/lib/entitlements.ts';
-import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';

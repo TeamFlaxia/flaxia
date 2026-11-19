@@ -1,3 +1,4 @@
+import { stripPostColors } from '../../shared/post-colors.ts';
 import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
@@ -5,7 +6,6 @@ import { createSkeletonCards } from '../lib/loading-ui.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { isNativeApp } from '../lib/native-api.ts';
 import { createPageHeader } from '../lib/page-header.js';
-import { stripPostColors } from '../lib/post-colors.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';

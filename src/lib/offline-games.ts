@@ -1,7 +1,7 @@
+import { stripPostColors } from '../../shared/post-colors.ts';
 import type { Game } from '../types/game.ts';
 import type { Post } from '../types/post.ts';
 import type { DownloadedGame, GameFile, OfflineGameStore } from './offline-game-store.ts';
-import { stripPostColors } from './post-colors.ts';
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const MAX_ZIP_BYTES = 25 * 1024 * 1024;

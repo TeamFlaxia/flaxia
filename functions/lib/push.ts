@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { stripPostColors } from '../../src/lib/post-colors.ts';
+import { stripPostColors } from '../../shared/post-colors.ts';
 import { sendPushToDevice } from './fcm';
 
 export type PushSubscription = {

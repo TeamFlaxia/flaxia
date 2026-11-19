@@ -7,7 +7,7 @@
  * without splitting a text node.
  */
 
-import { type PostColorSpan, type PostTextStyle, postTextStyleClass } from './post-colors.js';
+import { type PostColorSpan, type PostTextStyle, postTextStyleClass } from '../../shared/post-colors.ts';
 
 const TOKEN_START = '\uE000';
 const TOKEN_END = '\uE001';
