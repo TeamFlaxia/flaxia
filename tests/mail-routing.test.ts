@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { isReservedLocal } from '../src/lib/mail/address.ts';
+import { isReservedLocal } from '../shared/mail-address.ts';
 
 const DESTINATION = 'teamflaxia@proton.me';
 

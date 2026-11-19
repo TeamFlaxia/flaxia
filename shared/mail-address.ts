@@ -2,6 +2,9 @@
 //
 // Primary address is `username@flaxia.app` (lowercase). Reserved locals are
 // blocked at activation and never provisionable as primary addresses.
+//
+// This module lives in shared/ because the SPA, Pages Functions, and the Mail
+// Worker all need the same reserved-local list and address grammar.
 
 export const MAIL_DOMAIN = 'flaxia.app';
 export const USERNAME_PATTERN = /^[A-Za-z0-9_]{1,20}$/;

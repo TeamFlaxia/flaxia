@@ -7,7 +7,7 @@
 //
 // P1 ships: addresses, keys, quota. Threads/messages/send land in P2/P3.
 import { type Context, Hono } from 'hono';
-import { RESERVED_LOCALS } from '../../../src/lib/mail/address.ts';
+import { RESERVED_LOCALS } from '../../../shared/mail-address.ts';
 import { getSessionToken } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';

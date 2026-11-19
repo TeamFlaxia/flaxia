@@ -2,7 +2,7 @@
 // flaxia-mail Worker (docs/mail.md §5). Internal API is Service-Binding-only:
 // every fetch() call must carry a valid MAIL_INTERNAL_SECRET HMAC for the
 // authenticated user id. The Worker never trusts a bare user id.
-import { RESERVED_LOCALS } from '../../src/lib/mail/address.ts';
+import { RESERVED_LOCALS } from '../../shared/mail-address.ts';
 import { isValidP256SpkiB64, sha256Hex } from './crypto.ts';
 import { claimIdempotency, error, idempotencyKey, json, readJsonBody } from './http.ts';
 import { handleInboundEmail, type MailEnv } from './ingest.ts';
