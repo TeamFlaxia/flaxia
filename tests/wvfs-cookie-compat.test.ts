@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { createWvfsCookieCompatScript } from '../src/lib/wvfs-cookie-compat.ts';
-import { injectBaseTag } from '../src/lib/wvfs-zip-server.ts';
+import { createWvfsCookieCompatScript } from '../functions/lib/wvfs-cookie-compat.ts';
+import { injectBaseTag } from '../functions/lib/wvfs-zip-server.ts';
 
 function sandboxDocument() {
   let nativeWrites = 0;

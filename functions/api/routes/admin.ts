@@ -1,6 +1,5 @@
 import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
 import { isAdmin } from '../../lib/admin.ts';
 import { getAdminAnalytics, parseAnalyticsDays } from '../../lib/admin-analytics';
@@ -22,6 +21,7 @@ import {
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { rescreenQuarantinedObject } from '../../lib/scan/rescreen';
+import { extractFileFromZip } from '../../lib/wvfs-zip-server.ts';
 import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 

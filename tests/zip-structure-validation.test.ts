@@ -1,8 +1,8 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
-import { validateZipStructure } from '../src/lib/wvfs-zip-server.ts';
-import { ZIP_MAX_FILE_COUNT } from '../src/lib/zip-constants.ts';
+import { validateZipStructure } from '../functions/lib/wvfs-zip-server.ts';
+import { ZIP_MAX_FILE_COUNT } from '../shared/zip-constants.ts';
 
 async function createZip(files: Record<string, string | Uint8Array>): Promise<Uint8Array> {
   const zip = new JSZip();

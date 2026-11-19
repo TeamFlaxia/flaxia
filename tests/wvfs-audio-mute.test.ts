@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
+import { injectBaseTag } from '../functions/lib/wvfs-zip-server.ts';
 import { GAME_AUDIO_MUTE_MESSAGE, GAME_AUDIO_MUTE_RUNTIME } from '../sandbox/zip-preview-protocol.js';
-import { injectBaseTag } from '../src/lib/wvfs-zip-server.ts';
 
 test('WVFS HTML installs the audio mute runtime before game scripts', () => {
   const html = '<!doctype html><html><head><title>Game</title></head><body><script>bootGame()</script></body></html>';

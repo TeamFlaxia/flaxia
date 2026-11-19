@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { extractFileFromZip, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
+import { extractFileFromZip, extractZipToR2 } from '../../lib/wvfs-zip-server.ts';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 

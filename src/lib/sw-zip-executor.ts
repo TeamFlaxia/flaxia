@@ -1,5 +1,5 @@
+import { ZIP_FETCH_TIMEOUT, ZIP_READY_TIMEOUT, ZIP_SW_CONTROLLER_TIMEOUT } from '../../shared/zip-constants.ts';
 import { executeWvfsZip } from './wvfs-zip-client.js';
-import { ZIP_FETCH_TIMEOUT, ZIP_READY_TIMEOUT, ZIP_SW_CONTROLLER_TIMEOUT } from './zip-constants.js';
 import {
   createZipLoadingIndicator,
   createZipSandboxIframe,

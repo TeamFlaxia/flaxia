@@ -1,5 +1,5 @@
+import { ZIP_LOADING_TIMEOUT } from '../../shared/zip-constants.ts';
 import { t } from './i18n.js';
-import { ZIP_LOADING_TIMEOUT } from './zip-constants.js';
 
 export interface ZipIframeHandle {
   iframe: HTMLIFrameElement;

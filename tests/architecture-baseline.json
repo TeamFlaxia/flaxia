@@ -84,6 +84,7 @@
   "functions/lib/titles.ts": ["D1Database", "cloudflare-package"],
   "functions/lib/trust.ts": ["D1Database"],
   "functions/lib/web-index.ts": ["D1Database", "R2Bucket", "Vectorize"],
+  "functions/lib/wvfs-zip-server.ts": ["R2Bucket", "R2Object"],
   "functions/pages/_index.ts": ["D1Database"],
   "functions/pages/arcade.ts": ["D1Database"],
   "functions/pages/home.ts": ["D1Database"],
@@ -92,6 +93,5 @@
   "functions/users/[username].ts": ["D1Database", "KVNamespace", "c.env", "cloudflare-package"],
   "src/lib/db.ts": ["D1Database"],
   "src/lib/game-loader-routes.ts": ["c.env"],
-  "src/lib/r2.ts": ["R2Bucket"],
-  "src/lib/wvfs-zip-server.ts": ["R2Bucket", "R2Object"]
+  "src/lib/r2.ts": ["R2Bucket"]
 }

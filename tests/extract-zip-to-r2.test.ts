@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
-import { extractZipToR2 } from '../src/lib/wvfs-zip-server.ts';
+import { extractZipToR2 } from '../functions/lib/wvfs-zip-server.ts';
 
 class MockR2Bucket {
   store = new Map<string, Uint8Array>();

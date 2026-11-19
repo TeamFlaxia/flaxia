@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { type TestContext, test } from 'node:test';
-import { cacheWvfsResponse } from '../src/lib/wvfs-response-cache.ts';
+import { cacheWvfsResponse } from '../functions/lib/wvfs-response-cache.ts';
 
 registerHooks({
   resolve(specifier, context, nextResolve) {

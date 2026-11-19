@@ -6,7 +6,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 
-/** Mirrors the game ZIP limits in src/lib/zip-constants.ts (defensive cap). */
+/** Mirrors the game ZIP limits in shared/zip-constants.ts (defensive cap). */
 export const MAX_ZIP_ENTRIES = 4096;
 export const MAX_ZIP_PATH = 255;
 
