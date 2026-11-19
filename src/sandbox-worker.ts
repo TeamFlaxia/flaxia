@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { servePublicLoader } from '../functions/lib/game-loader-public.ts';
 import { isKeyBlocked } from '../functions/lib/scan/db';
-import { servePublicLoader } from './lib/game-loader-public';
 import { serveGameLoaderAsset } from './lib/game-loader-routes';
 import { GAME_SDK_IIFE } from './lib/game-sdk.generated';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';

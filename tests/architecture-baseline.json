@@ -67,6 +67,7 @@
   "functions/lib/flaxia-direct-credentials.ts": ["Fetcher"],
   "functions/lib/flaxia-direct-deletion.ts": ["D1Database", "Fetcher", "R2Bucket"],
   "functions/lib/flaxia-direct-email.ts": ["Fetcher"],
+  "functions/lib/game-loader-public.ts": ["D1Database", "KVNamespace", "R2Bucket", "c.env"],
   "functions/lib/mail-deletion-reap.ts": ["D1Database"],
   "functions/lib/mail-service.ts": ["Fetcher"],
   "functions/lib/multiplayer-ticket.ts": ["KVNamespace"],
@@ -90,7 +91,6 @@
   "functions/thread/[id].ts": ["D1Database"],
   "functions/users/[username].ts": ["D1Database", "KVNamespace", "c.env", "cloudflare-package"],
   "src/lib/db.ts": ["D1Database"],
-  "src/lib/game-loader-public.ts": ["D1Database", "KVNamespace", "R2Bucket", "c.env"],
   "src/lib/game-loader-routes.ts": ["c.env"],
   "src/lib/r2.ts": ["R2Bucket"],
   "src/lib/wvfs-zip-server.ts": ["R2Bucket", "R2Object"]

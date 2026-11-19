@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Hono } from 'hono';
+import { servePublicLoader } from '../functions/lib/game-loader-public.ts';
 import { launchWithFallback } from '../sandbox/game-loader/launch.js';
-import { servePublicLoader } from '../src/lib/game-loader-public.ts';
 
 test('cache miss displays WVFS before starting persistence and does not await persistence', async () => {
   const events: string[] = [];

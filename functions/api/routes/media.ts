@@ -1,10 +1,10 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { servePublicLoader } from '../../../src/lib/game-loader-public.ts';
 import { isAdmin } from '../../lib/admin.ts';
 import type { AttachmentKind } from '../../lib/attachments';
 import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from '../../lib/attachments';
 import { getUserPlan } from '../../lib/billing';
+import { servePublicLoader } from '../../lib/game-loader-public.ts';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
