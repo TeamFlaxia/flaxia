@@ -20,6 +20,15 @@ test('legacy shell skips routes owned by SvelteKit', async () => {
   assert.match(main, /\/download/);
   assert.match(main, /\(terms\|privacy\|child-safety\|about\)/);
   assert.match(main, /docs/);
+  assert.match(main, /bookmarks/);
+});
+
+test('bookmarks route uses the standalone shell', async () => {
+  const route = await read('src/routes/bookmarks/+page.svelte');
+  assert.match(route, /ShellLayout/);
+  assert.match(route, /createBookmarksPage/);
+  assert.match(route, /getMe/);
+  assert.match(route, /createLeftNavHandlers/);
 });
 
 test('docs routes cover the index and article slugs', async () => {
