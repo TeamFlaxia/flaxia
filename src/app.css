@@ -1,0 +1,3 @@
+/* F3 will move the legacy theme tokens into @theme. For now this only wires
+   Tailwind into the SvelteKit shell; the legacy CSS is loaded by main.ts. */
+@import "tailwindcss";
