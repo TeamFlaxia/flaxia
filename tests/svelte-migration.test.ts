@@ -19,6 +19,15 @@ test('legacy shell skips routes owned by SvelteKit', async () => {
   assert.match(main, /billing\\?\/\(success\|canceled\)/);
   assert.match(main, /\/download/);
   assert.match(main, /\(terms\|privacy\|child-safety\|about\)/);
+  assert.match(main, /docs/);
+});
+
+test('docs routes cover the index and article slugs', async () => {
+  const index = await read('src/routes/docs/+page.svelte');
+  const article = await read('src/routes/docs/[slug]/+page.svelte');
+  assert.match(index, /createDocsPage\(\{\}/);
+  assert.match(article, /createDocsPage\(\{ slug:/);
+  assert.match(article, /page\.params\.slug/);
 });
 
 test('legal pages use the shared legacy page wrapper', async () => {
