@@ -1,6 +1,5 @@
 {
   "$schema": null,
-  "extends": "$app/tsconfig",
   "compilerOptions": {
     "strict": true,
     "noImplicitAny": true,
@@ -24,7 +23,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["@cloudflare/workers-types", "$app/types"],
+    "types": ["@cloudflare/workers-types"],
     "verbatimModuleSyntax": false
   },
   "include": ["src/**/*", "functions/**/*", "shared/**/*", "status-worker/src/transition.ts", "mail-worker/src/**/*"],

@@ -1,12 +1,12 @@
 // Built-CSS smoke test for the stylesheet entry.
 //
-// This loads the actual output of `vite build` (dist/assets/main-*.css), not a
+// This loads the actual built CSS bundle (Vite or SvelteKit layout), not a
 // hand-written fixture. Run with:
 //   npm run test:styles:browser
 //   STYLES_BROWSER=firefox npm run test:styles:browser
 //   STYLES_BROWSER=webkit npm run test:styles:browser
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -19,10 +19,22 @@ const engine = { chromium, firefox, webkit }[browserName];
 assert.ok(engine, `unknown STYLES_BROWSER: ${browserName}`);
 
 const distDir = fileURLToPath(new URL('../dist/', import.meta.url));
-const assetsDir = join(distDir, 'assets');
-const cssFiles = readdirSync(assetsDir).filter((file) => file.startsWith('main-') && file.endsWith('.css'));
-assert.ok(cssFiles.length > 0, 'vite build must produce dist/assets/main-*.css before this test');
-const cssHref = `/assets/${cssFiles[0]}`;
+// Vite used to emit dist/assets/main-*.css; SvelteKit emits the legacy entry
+// CSS under dist/_app/immutable/assets. Accept either build layout.
+const legacyCss = existsSync(join(distDir, 'assets'))
+  ? readdirSync(join(distDir, 'assets'))
+      .filter((file) => file.startsWith('main-') && file.endsWith('.css'))
+      .map((file) => `/assets/${file}`)
+  : [];
+const svelteCssDir = join(distDir, '_app/immutable/assets');
+const svelteCss = existsSync(svelteCssDir)
+  ? readdirSync(svelteCssDir)
+      .filter((file) => file.endsWith('.css'))
+      .map((file) => `/_app/immutable/assets/${file}`)
+  : [];
+const cssCandidates = [...legacyCss, ...svelteCss];
+assert.ok(cssCandidates.length > 0, 'vite build must produce a legacy CSS bundle in dist before this test');
+const cssHref = cssCandidates.find((href) => href.includes('/main')) ?? cssCandidates[0];
 
 const html = `<!doctype html>
 <html lang="en">
@@ -63,7 +75,7 @@ test('built app CSS stays unlayered and keeps primitive geometry', { timeout: 60
     }
     if (url.pathname === cssHref) {
       response.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
-      response.end(readFileSync(join(distDir, cssHref)));
+      response.end(readFileSync(join(distDir, cssHref.replace(/^\//, ''))));
       return;
     }
     response.writeHead(404);
