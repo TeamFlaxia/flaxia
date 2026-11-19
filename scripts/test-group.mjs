@@ -8,7 +8,15 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const groups = {
   // Repository guardrails. These need no dev server.
-  guardrails: ['architecture', 'csp-hashes', 'ssr-head', 'svelte-migration', 'tailwind-tokens', 'media-upload-ports'],
+  guardrails: [
+    'architecture',
+    'csp-hashes',
+    'ssr-head',
+    'svelte-migration',
+    'svelte-shell',
+    'tailwind-tokens',
+    'media-upload-ports',
+  ],
   'auth-vault': [
     'auth',
     'auth-cache',
