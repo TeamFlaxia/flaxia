@@ -6,7 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 
 const sdkPath = join(root, 'packages/capture/dist/capture-bridge.iife.js');
-const outputPath = join(root, 'src/lib/capture-bridge.generated.ts');
+const outputPath = join(root, 'shared/capture-bridge.generated.ts');
 
 try {
   const sdkContent = readFileSync(sdkPath, 'utf-8');

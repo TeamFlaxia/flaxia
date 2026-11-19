@@ -9,7 +9,6 @@ import {
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
 import type { ReportCategory } from '../../../shared/types/post.ts';
-import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../lib/activitypub/authors';
 import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
@@ -45,6 +44,7 @@ import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { deleteGameTitlesForPosts, USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
+import { copyHtmlToWvfs, extractZipToR2 } from '../../lib/wvfs-zip-server.ts';
 import {
   enrichPostsForFeed,
   enrichPostsWithPolls,

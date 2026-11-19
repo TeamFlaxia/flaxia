@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runInNewContext } from 'node:vm';
-import { createWvfsImageCorsCompatScript } from '../src/lib/wvfs-image-cors.ts';
-import { injectBaseTag } from '../src/lib/wvfs-zip-server.ts';
+import { createWvfsImageCorsCompatScript } from '../functions/lib/wvfs-image-cors.ts';
+import { injectBaseTag } from '../functions/lib/wvfs-zip-server.ts';
 
 const GAME_BASE = '/api/wvfs-zip/test-post/';
 const DOCUMENT_BASE = `https://sandbox.example${GAME_BASE}`;

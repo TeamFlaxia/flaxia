@@ -3,11 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { servePublicLoader } from '../functions/lib/game-loader-public.ts';
 import { isKeyBlocked } from '../functions/lib/scan/db';
-import { serveGameLoaderAsset } from './lib/game-loader-routes';
-import { GAME_SDK_IIFE } from './lib/game-sdk.generated';
-import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
-import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
-import { cacheWvfsResponse } from './lib/wvfs-response-cache';
+import { cacheWvfsResponse } from '../functions/lib/wvfs-response-cache.ts';
 import {
   copyHtmlToWvfs,
   ensureFileInWvfs,
@@ -15,7 +11,11 @@ import {
   persistFileToWvfsR2,
   serveFileFromR2,
   serveFileFromWvfs,
-} from './lib/wvfs-zip-server';
+} from '../functions/lib/wvfs-zip-server.ts';
+import { serveGameLoaderAsset } from './lib/game-loader-routes';
+import { GAME_SDK_IIFE } from './lib/game-sdk.generated';
+import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
+import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 
 type Bindings = {
   BUCKET: R2Bucket;

@@ -429,7 +429,7 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   });
 
   it('caps ZIP inflation and enforces hidden-post media', () => {
-    const wvfs = readFileSync(join(ROOT, 'src/lib/wvfs-zip-server.ts'), 'utf8');
+    const wvfs = readFileSync(join(ROOT, 'functions/lib/wvfs-zip-server.ts'), 'utf8');
     assert.ok(wvfs.includes('inflateSync(compressedData, { out:'), 'inflate output must be bounded');
 
     const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');

@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
-import { ZIP_MAX_FILE_COUNT } from '../src/lib/zip-constants.ts';
+import { ZIP_MAX_FILE_COUNT } from '../shared/zip-constants.ts';
 import { validateZipLegacy } from '../src/lib/zip-executor.ts';
 
 async function createZip(files: Record<string, string | Uint8Array>): Promise<ArrayBuffer> {

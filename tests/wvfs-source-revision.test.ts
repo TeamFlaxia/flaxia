@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { type TestContext, test } from 'node:test';
 import JSZip from 'jszip';
-import { extractZipToR2 } from '../src/lib/wvfs-zip-server.ts';
+import { extractZipToR2 } from '../functions/lib/wvfs-zip-server.ts';
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
