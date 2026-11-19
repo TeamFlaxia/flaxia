@@ -299,7 +299,7 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(auth.includes('SRP verifier required'), 'plaintext registration must be rejected');
     assert.ok(auth.includes('CUTOFF: delete this route'), 'legacy /login must document when it dies');
 
-    const admin = readFileSync(join(ROOT, 'functions/api/routes/admin.ts'), 'utf8');
+    const admin = readFileSync(join(ROOT, 'functions/api/routes/admin/maintenance.ts'), 'utf8');
     assert.ok(admin.includes('cutoff_reached'), 'the removal condition must be measurable, not folklore');
   });
 
