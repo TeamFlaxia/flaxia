@@ -31,6 +31,15 @@ test('bookmarks route uses the standalone shell', async () => {
   assert.match(route, /createLeftNavHandlers/);
 });
 
+test('notifications route wires data fetching and shell', async () => {
+  const route = await read('src/routes/notifications/+page.svelte');
+  assert.match(route, /ShellLayout/);
+  assert.match(route, /fetchNotifications/);
+  assert.match(route, /createNotificationsPage/);
+  assert.match(route, /onMarkAllRead/);
+  assert.match(route, /onNavigateToPost/);
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
