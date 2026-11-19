@@ -1,14 +1,15 @@
 <script lang="ts">
-import { onMount } from 'svelte';
 import { createRightPanel } from '../../components/RightPanel.ts';
 
 let host: HTMLDivElement;
+let panel: ReturnType<typeof createRightPanel> | null = null;
 
-onMount(() => {
-  const panel = createRightPanel();
-  host.appendChild(panel.getElement());
-  return () => panel.destroy();
+$effect(() => {
+  if (!host) return;
+  panel = createRightPanel();
+  host.replaceChildren(panel.getElement());
+  return () => panel?.destroy();
 });
 </script>
 
-<div bind:this={host}></div>
+<div bind:this={host} style="display: contents"></div>
