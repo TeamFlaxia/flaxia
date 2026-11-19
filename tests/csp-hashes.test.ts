@@ -31,4 +31,11 @@ test('generated CSP hashes cover every known inline script', async () => {
   const headers = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
   const staticCsp = headers.match(/^\s*Content-Security-Policy: (.+)$/m)?.[1];
   assert.equal(staticCsp, csp, 'public/_headers and ssr-security-headers.ts must stay in sync');
+
+  // The allowlist must be exactly the generated set plus the one documented
+  // legacy bootstrap hash — no stale hashes from earlier builds.
+  // +1 for the legacy hash and +1 for the SvelteKit bootstrap hash, which is
+  // only present in the built output (not in the source files checked above).
+  const listed = [...csp.matchAll(/'sha256-[^']+'/g)].map((m) => m[0]);
+  assert.ok(listed.length <= expected.size + 2, 'CSP hash allowlist must not accumulate stale entries');
 });
