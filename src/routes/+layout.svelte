@@ -1,5 +1,7 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedVariables: Svelte 5 snippet prop used by {@render children()}
+import '../styles/index.css';
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte snippet used in markup
 let { children } = $props();
 </script>
 
