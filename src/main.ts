@@ -137,6 +137,7 @@ const SVELTE_ROUTES = [
   /^\/settings\/?$/,
   /^\/mail(?:\/(settings|compose|thread\/[^/]+))?\/?$/,
   /^\/thread\/[^/]+\/?$/,
+  /^\/(home)?\/?$/,
 ];
 
 export async function mountLegacyApp(): Promise<void> {
