@@ -1,8 +1,8 @@
+import { GifPreviewProps } from '../../shared/types/post.ts';
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
-import { GifPreviewProps } from '../types/post.js';
 import { AudioVisualizer } from './AudioVisualizer.js';
 import { createMediaCueOverlay } from './MediaCues.js';
 

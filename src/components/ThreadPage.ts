@@ -1,4 +1,5 @@
 import { stripPostColors } from '../../shared/post-colors.ts';
+import { Post } from '../../shared/types/post.ts';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
@@ -7,7 +8,6 @@ import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree, type PostNode } from '../lib/thread.ts';
-import { Post } from '../types/post.js';
 import { createLeftNav } from './LeftNav.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';

@@ -1,5 +1,5 @@
+import type { Post, QuotedPost } from '../../shared/types/post.ts';
 import { createPostComposer, PostComposer } from '../components/PostComposer.js';
-import type { Post, QuotedPost } from '../types/post.js';
 import { t } from './i18n.js';
 import { icon } from './icons.js';
 import { registerModal } from './modal-state.js';

@@ -1,5 +1,5 @@
+import { Post } from '../../shared/types/post.ts';
 import { PostNode } from '../lib/thread.js';
-import { Post } from '../types/post.js';
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
 import { showSignInPrompt } from './SignInPrompt.js';

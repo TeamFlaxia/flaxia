@@ -2,6 +2,13 @@ import { canUsePostColors, maxMediaAttachmentsForUser } from '../../shared/entit
 import { attachmentMimeType } from '../../shared/file-extensions.ts';
 import { stripPostColors } from '../../shared/post-colors.ts';
 import { stripMediaCues } from '../../shared/post-cues.ts';
+import {
+  type PostAttachment,
+  PostCardMode,
+  type PostCardProps,
+  type QuotedPost,
+  type ReactionSummary,
+} from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
@@ -13,13 +20,6 @@ import { getShowNsfw } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { showToast } from '../lib/toast.js';
 import { markRecommendationProfileDirty } from '../lib/vault/recommendation-profile.js';
-import {
-  type PostAttachment,
-  PostCardMode,
-  type PostCardProps,
-  type QuotedPost,
-  type ReactionSummary,
-} from '../types/post.js';
 import { openCounterNoticeModal } from './CounterNoticeModal.js';
 import { openGameUpdateModal } from './GameUpdateModal.js';
 import { createPollElement } from './PollWidget.js';

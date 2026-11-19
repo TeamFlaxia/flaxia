@@ -1,3 +1,4 @@
+import { Post } from '../../shared/types/post.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
@@ -7,7 +8,6 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { each, flushEffects, html, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { showToast } from '../lib/toast.js';
 import { markRecommendationProfileDirty } from '../lib/vault/recommendation-profile.js';
-import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
 type SuggestionEntry =

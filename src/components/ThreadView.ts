@@ -1,6 +1,6 @@
+import { Post } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { buildTree } from '../lib/thread.js';
-import { Post } from '../types/post.js';
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
 import { createReplyNode, ReplyNode } from './ReplyNode.js';
 

@@ -1,11 +1,11 @@
 import { applyNameColor } from '../../shared/name-color.ts';
+import { PostHeaderProps } from '../../shared/types/post.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { html, mount } from '../lib/render/index.ts';
 import { createUserTitleBadge } from '../lib/user-title.js';
-import { PostHeaderProps } from '../types/post.js';
 
 export function createPostHeader(props: PostHeaderProps & { editedAt?: string }): HTMLElement {
   const header = document.createElement('div');

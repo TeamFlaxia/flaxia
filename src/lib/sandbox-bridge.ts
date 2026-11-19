@@ -1,8 +1,8 @@
 import { canUsePostColors } from '../../shared/entitlements.ts';
 import { stripPostColors } from '../../shared/post-colors.ts';
+import type { Post } from '../../shared/types/post.ts';
 import { isParentMessage, SandboxMessage } from '../lib/bridge.js';
 import { t } from '../lib/i18n.js';
-import type { Post } from '../types/post.js';
 import { registerModal } from './modal-state.js';
 
 export interface SandboxBridgeOptions {

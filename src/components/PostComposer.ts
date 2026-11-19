@@ -1,4 +1,4 @@
-import type { Post, QuotedPost } from '../types/post.js';
+import type { Post, QuotedPost } from '../../shared/types/post.ts';
 
 export interface PostComposerProps {
   onPostCreated?: (post: Post) => void;

@@ -3,6 +3,7 @@ import {
   type EncodedVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../shared/recommendation/vector-codec.ts';
+import type { Post } from '../../shared/types/post.ts';
 import { findAvailableArcadeGame } from '../lib/arcade-availability.js';
 import { ArcadeAvailabilityPrefetch } from '../lib/arcade-availability-prefetch.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
@@ -26,7 +27,6 @@ import {
 } from '../lib/vault/recommendation-profile.js';
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
-import type { Post } from '../types/post.js';
 import { GameUploadModal } from './GameUploadModal.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';

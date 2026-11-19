@@ -1,8 +1,8 @@
+import type { ReportCategory } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { showToast } from '../lib/toast.js';
-import type { ReportCategory } from '../types/post.js';
 
 /** Leading cosmetic emoji (v3 keeps labels typographic). */
 const LEADING_EMOJI = /^(?:\p{Extended_Pictographic}|\uFE0F|\s)+/u;

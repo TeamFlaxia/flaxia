@@ -1,11 +1,11 @@
 import { canUsePostColors } from '../../shared/entitlements.ts';
 import { applyNameColor } from '../../shared/name-color.ts';
 import { stripPostColors } from '../../shared/post-colors.ts';
+import { Post } from '../../shared/types/post.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import { Post } from '../types/post.js';
 
 export interface SearchResultsProps {
   query: string;

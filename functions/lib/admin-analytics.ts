@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AnalyticsMetrics } from '../../src/types/admin-analytics';
+import type { AdminAnalytics, AnalyticsMetrics } from '../../shared/types/admin-analytics.ts';
 
 export function parseAnalyticsDays(value: string | undefined): number | null {
   if (value === undefined) return 30;

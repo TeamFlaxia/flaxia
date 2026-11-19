@@ -1,3 +1,4 @@
+import { GifPreviewProps } from '../../shared/types/post.ts';
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
@@ -7,7 +8,6 @@ import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
-import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const container = document.createElement('div');

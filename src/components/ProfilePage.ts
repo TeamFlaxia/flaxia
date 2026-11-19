@@ -1,4 +1,5 @@
 import { applyNameColor } from '../../shared/name-color.ts';
+import { Post } from '../../shared/types/post.ts';
 import { clearMeCache } from '../lib/auth-cache.js';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
@@ -9,7 +10,6 @@ import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createUserTitleBadge } from '../lib/user-title.js';
-import { Post } from '../types/post.js';
 import { createBlockedUsersModal } from './BlockedUsersModal.js';
 import { createEditProfileModal } from './EditProfileModal.js';
 import { createFollowerListModal } from './FollowerListModal.js';

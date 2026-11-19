@@ -1,5 +1,19 @@
 // Main PostCard component
 
+// Types
+export type {
+  GifPreviewProps,
+  Post,
+  PostActionsProps,
+  PostCardProps,
+  PostHeaderProps,
+  PostStageProps,
+  PostTextProps,
+  SandboxFrameProps,
+  TimelineProps,
+  TimelineState,
+} from '../shared/types/post.ts';
+export { PostCardMode } from '../shared/types/post.ts';
 export { createImagePreview } from './components/ImagePreview.js';
 export { createPostActions } from './components/PostActions.js';
 export { createPostCard, PostCard } from './components/PostCard.js';
@@ -16,17 +30,3 @@ export { isParentMessage, isSandboxMessage } from './lib/bridge.js';
 export type { SandboxBridgeOptions } from './lib/sandbox-bridge.js';
 // Sandbox bridge
 export { SandboxBridge, useSandboxBridge } from './lib/sandbox-bridge.js';
-// Types
-export type {
-  GifPreviewProps,
-  Post,
-  PostActionsProps,
-  PostCardProps,
-  PostHeaderProps,
-  PostStageProps,
-  PostTextProps,
-  SandboxFrameProps,
-  TimelineProps,
-  TimelineState,
-} from './types/post.js';
-export { PostCardMode } from './types/post.js';

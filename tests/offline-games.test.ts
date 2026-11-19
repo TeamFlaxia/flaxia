@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { IDBFactory } from 'fake-indexeddb';
+import type { Post } from '../shared/types/post.ts';
 import { createOfflineGameStore, type DownloadedGame } from '../src/lib/offline-game-store.ts';
 import { createOfflineGames } from '../src/lib/offline-games.ts';
-import type { Post } from '../src/types/post.ts';
 
 const post = (id = 'game1'): Post => ({
   id,

@@ -1,4 +1,4 @@
-import { Post } from '../types/post';
+import { Post } from '../../shared/types/post.ts';
 
 export interface PostNode {
   post: Post;

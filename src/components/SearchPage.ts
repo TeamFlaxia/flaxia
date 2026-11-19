@@ -1,5 +1,6 @@
 import { applyNameColor } from '../../shared/name-color.ts';
 import { stripPostColors } from '../../shared/post-colors.ts';
+import { Post, PostCardMode } from '../../shared/types/post.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -7,7 +8,6 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { uniqueBy } from '../lib/unique.ts';
-import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 interface WebSearchResult {

@@ -2,13 +2,13 @@ import type { MarkdownIt } from 'markdown-it';
 import { canUsePostColors } from '../../shared/entitlements.ts';
 import { parsePostColors } from '../../shared/post-colors.ts';
 import { stripMediaCues } from '../../shared/post-cues.ts';
+import { PostTextProps } from '../../shared/types/post.ts';
 import {
   type ColorPlaceholderEntry,
   insertColorPlaceholders,
   restoreColorPlaceholders,
 } from '../lib/post-colors-dom.js';
 import { html, mount } from '../lib/render/index.ts';
-import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
 let md: MarkdownIt | null = null;
