@@ -360,8 +360,8 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   });
 
   it('queries chronological timelines fresh with user-specific filters', () => {
-    const src = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
-    const handler = src.match(/posts\.get\('\/posts',[\s\S]*?(?=\/\/ GET \/api\/posts\/trending)/)?.[0] ?? '';
+    const src = readFileSync(join(ROOT, 'functions/api/routes/posts/feed.ts'), 'utf8');
+    const handler = src.match(/feed\.get\('\/posts',[\s\S]*?(?=\/\/ GET \/api\/posts\/trending)/)?.[0] ?? '';
     assert.ok(handler, 'chronological timeline handler must be discoverable');
     assert.ok(handler.includes('follower_id = ?'), 'Following must bind the authenticated follower id');
     assert.ok(handler.includes('WHERE p.username = ?'), 'profile timelines must bind the requested username');
@@ -423,7 +423,9 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   });
 
   it('validates client-supplied media keys against the caller', () => {
-    const posts = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
+    const posts = [join(ROOT, 'functions/api/routes/posts.ts'), ...walk(join(ROOT, 'functions/api/routes/posts'))]
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
     assert.ok(posts.includes('isOwnedMediaKey'), 'media keys must be ownership-checked');
     assert.ok(
       !/BUCKET\.delete\(k\)/.test(posts) || posts.includes('isOwnedMediaKey'),
