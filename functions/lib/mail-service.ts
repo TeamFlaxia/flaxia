@@ -5,34 +5,15 @@
 // timestamp, the HTTP method, the exact path+query, and the body hash, so a
 // captured signature cannot be replayed against a different endpoint.
 
+import { hmacHex } from './hmac.ts';
+import { sha256Hex } from './sha256.ts';
+
+export { sha256Hex };
+
 export type MailServiceEnv = {
   MAIL_SERVICE?: Fetcher;
   MAIL_INTERNAL_SECRET?: string;
 };
-
-const encoder = new TextEncoder();
-
-function hex(buffer: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-async function hmacHex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret) as BufferSource,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(message) as BufferSource);
-  return hex(signature);
-}
-
-export async function sha256Hex(value: string): Promise<string> {
-  return hex(await crypto.subtle.digest('SHA-256', encoder.encode(value) as BufferSource));
-}
 
 export async function signMailInternal(
   env: MailServiceEnv,
