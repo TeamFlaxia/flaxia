@@ -1,4 +1,4 @@
-import { escapeHtml, renderJsonLd } from '../../src/lib/render-html';
+import { escapeHtml, renderJsonLd } from './render-html.ts';
 
 export interface BreadcrumbItem {
   label: string;

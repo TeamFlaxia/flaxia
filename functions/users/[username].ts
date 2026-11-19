@@ -2,6 +2,8 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { stripPostColors } from '../../shared/post-colors.ts';
+import { handlePersonalInbox } from '../lib/activitypub/inbox';
+import { isCrawler } from '../lib/is-crawler.ts';
 import {
   escapeHtml,
   type PostRow,
@@ -10,9 +12,7 @@ import {
   renderPostList,
   renderProfileHeader,
   type UserRow,
-} from '../../src/lib/render-html';
-import { handlePersonalInbox } from '../lib/activitypub/inbox';
-import { isCrawler } from '../lib/is-crawler.ts';
+} from '../lib/render-html.ts';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 

@@ -4,11 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { onRequest } from '../functions/_middleware.ts';
 import { onRequest as onOgpPlayerRequest } from '../functions/api/ogp-player/[id].ts';
+import { renderHtmlShell } from '../functions/lib/render-html.ts';
 import { applySecurityHeaders, SECURITY_HEADERS } from '../functions/lib/ssr-security-headers.ts';
 import { ADSENSE_INLINE_BOOTSTRAP } from '../src/lib/adsense-bootstrap.ts';
 import { buildFlashPlayerDocument } from '../src/lib/flash-player-document.ts';
 import { PDF_VIEWER_HTML } from '../src/lib/pdf-viewer-page.ts';
-import { renderHtmlShell } from '../src/lib/render-html.ts';
 
 test('Pages middleware adds security headers to dynamic responses', async () => {
   const response = await onRequest({
