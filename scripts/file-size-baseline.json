@@ -1,5 +1,6 @@
 {
-  "functions/api/routes/admin.ts": 1316,
+  "functions/api/routes/admin.ts": 825,
+  "functions/api/routes/admin/ads.ts": 501,
   "functions/api/routes/auth.ts": 877,
   "functions/api/routes/games.ts": 733,
   "functions/api/routes/media.ts": 800,
