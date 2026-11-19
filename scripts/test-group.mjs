@@ -8,7 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const groups = {
   // Repository guardrails. These need no dev server.
-  guardrails: ['architecture', 'media-upload-ports'],
+  guardrails: ['architecture', 'csp-hashes', 'ssr-head', 'media-upload-ports'],
   'auth-vault': [
     'auth',
     'auth-cache',
