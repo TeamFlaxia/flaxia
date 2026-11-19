@@ -20,3 +20,11 @@ test('Svelte right panel wraps the legacy component', async () => {
   assert.match(source, /host\.appendChild/);
   assert.match(source, /dispose = panel\.destroy/);
 });
+
+test('shell layout keeps the three-column landmark structure', async () => {
+  const source = await read('src/lib/svelte/ShellLayout.svelte');
+  assert.match(source, /class="main-container"/);
+  assert.match(source, /role="main"/);
+  assert.match(source, /<LeftNav/);
+  assert.match(source, /<RightPanel/);
+});
