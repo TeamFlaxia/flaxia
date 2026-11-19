@@ -1,5 +1,5 @@
 import type { Context, Next } from 'hono';
-import { isAdmin } from '../../src/lib/admin';
+import { isAdmin } from '../lib/admin.ts';
 import { getMeWithSession, getSessionToken } from '../lib/auth';
 import { NATIVE_APP_ORIGINS } from '../lib/native-origins';
 import type { Bindings, Variables } from './types';

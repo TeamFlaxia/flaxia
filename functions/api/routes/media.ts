@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
-import { isAdmin } from '../../../src/lib/admin';
 import { servePublicLoader } from '../../../src/lib/game-loader-public.ts';
+import { isAdmin } from '../../lib/admin.ts';
 import type { AttachmentKind } from '../../lib/attachments';
 import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from '../../lib/attachments';
 import { getUserPlan } from '../../lib/billing';
