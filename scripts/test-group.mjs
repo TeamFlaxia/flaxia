@@ -164,6 +164,7 @@ const groups = {
     'dataset-export',
     'deploy-config',
     'device-platform',
+    'import-boundary',
     'left-nav-handlers',
     'left-nav-layout',
     'nav-items',
