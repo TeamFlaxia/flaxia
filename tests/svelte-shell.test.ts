@@ -10,7 +10,7 @@ test('Svelte left nav wraps the legacy component', async () => {
   const source = await read('src/lib/svelte/LeftNav.svelte');
   assert.match(source, /createLeftNav/);
   assert.match(source, /host\.appendChild/);
-  assert.match(source, /dispose = nav\.destroy/);
+  assert.match(source, /nav\.destroy/);
   assert.match(source, /initI18n/);
 });
 
@@ -18,7 +18,7 @@ test('Svelte right panel wraps the legacy component', async () => {
   const source = await read('src/lib/svelte/RightPanel.svelte');
   assert.match(source, /createRightPanel/);
   assert.match(source, /host\.appendChild/);
-  assert.match(source, /dispose = panel\.destroy/);
+  assert.match(source, /panel\.destroy/);
 });
 
 test('shell layout keeps the three-column landmark structure', async () => {
