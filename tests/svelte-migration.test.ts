@@ -84,6 +84,22 @@ test('home feed route keeps the iframe-safe timeline', async () => {
   assert.match(route, /getSessionUser/);
 });
 
+test('remaining legacy views now have Svelte routes', async () => {
+  const cases = [
+    ['explore', 'createExplorePage'],
+    ['search', 'createSearchPage'],
+    ['translate', 'createTranslatePage'],
+    ['profile/[username]', 'createProfilePage'],
+    ['users/[username]', 'createProfilePage'],
+    ['@[domain]/[username]', 'createRemoteProfilePage'],
+  ] as const;
+  for (const [route, component] of cases) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /LegacyShellPage/);
+    assert.ok(source.includes(component), `${route} must mount ${component}`);
+  }
+});
+
 test('F8 routes use the shell with correct rails', async () => {
   const arcade = await read('src/lib/svelte/ArcadeView.svelte');
   assert.match(arcade, /createArcadePage/);
