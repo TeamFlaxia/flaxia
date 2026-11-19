@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import { getSession, getSessionToken } from './auth.ts';
 import { NATIVE_APP_ORIGINS } from './native-origins.ts';
+import type { Db } from './ports/index.ts';
 
 /**
  * Environment bindings required by the billing code. Stripe secrets are only
@@ -8,7 +9,7 @@ import { NATIVE_APP_ORIGINS } from './native-origins.ts';
  * from the shared `Bindings` type.
  */
 export type BillingEnv = {
-  DB: D1Database;
+  DB: Db;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   /** Stripe Price ID for Flaxia+ (e.g. price_xxx). Optional for local dev. */
@@ -62,7 +63,7 @@ export async function setUserBadgeType(env: BillingDbEnv, userId: string, badgeT
 }
 
 /** Minimal env for helpers that only need the database (usable from Hono routes). */
-export type BillingDbEnv = { DB: D1Database };
+export type BillingDbEnv = { DB: Db };
 
 /** Statuses the UI should treat as "has a subscription". */
 export const VISIBLE_STATUSES = ['active', 'trialing', 'past_due'] as const;

@@ -13,7 +13,7 @@
 export interface DbResult<T = unknown> {
   results: T[];
   success: boolean;
-  meta?: unknown;
+  meta?: { changes?: number; rows_read?: number; rows_written?: number; [key: string]: unknown };
   error?: string;
 }
 

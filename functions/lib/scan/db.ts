@@ -1,3 +1,4 @@
+import type { Db, Kv } from '../ports/index.ts';
 // D1 state for the file scanning pipeline: schema bootstrap plus the
 // file_scans row lifecycle (pending -> submitted -> clean|infected|failed|
 // skipped). Mirrors functions/lib/crowd.ts's ensure* helpers.
@@ -43,9 +44,9 @@ export interface FileScanRow {
 
 // One bootstrap per database connection; cleared on failure so a transient D1
 // error does not disable the table for the isolate's lifetime.
-const ensurePromises = new WeakMap<D1Database, Promise<void>>();
+const ensurePromises = new WeakMap<Db, Promise<void>>();
 
-export async function ensureFileScansTable(db: D1Database): Promise<void> {
+export async function ensureFileScansTable(db: Db): Promise<void> {
   const existing = ensurePromises.get(db);
   if (existing) return existing;
   const promise = (async () => {
@@ -70,7 +71,7 @@ export async function ensureFileScansTable(db: D1Database): Promise<void> {
  * re-referencing identical bytes keeps the existing verdict, so a clean row is
  * not re-submitted and an infected row can never be downgraded by a re-upload.
  */
-export async function upsertFileScan(db: D1Database, r2Key: string, features: FileFeatures): Promise<void> {
+export async function upsertFileScan(db: Db, r2Key: string, features: FileFeatures): Promise<void> {
   await ensureFileScansTable(db);
   await db
     .prepare(
@@ -102,7 +103,7 @@ export async function upsertFileScan(db: D1Database, r2Key: string, features: Fi
     .run();
 }
 
-export async function getFileScan(db: D1Database, r2Key: string): Promise<FileScanRow | null> {
+export async function getFileScan(db: Db, r2Key: string): Promise<FileScanRow | null> {
   const row = await db.prepare('SELECT * FROM file_scans WHERE r2_key = ?').bind(r2Key).first<FileScanRow>();
   return row ?? null;
 }
@@ -129,7 +130,7 @@ export interface StatusOptions {
  * without a second read.
  */
 export async function setScanStatus(
-  db: D1Database,
+  db: Db,
   r2Key: string,
   status: ScanStatus,
   opts: StatusOptions = {},
@@ -157,7 +158,7 @@ export async function setScanStatus(
     .prepare(sql)
     .bind(...(binds as [string, string | null, string | null, string, ...string[]]))
     .run();
-  return (result.meta.changes ?? 0) > 0;
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 /**
@@ -166,12 +167,12 @@ export async function setScanStatus(
  * asynchronous: without it, a task submitted for an older upload of the same
  * key could mark newer bytes as `submitted`.
  */
-export async function setScanTask(db: D1Database, r2Key: string, taskId: string, sha256: string): Promise<boolean> {
+export async function setScanTask(db: Db, r2Key: string, taskId: string, sha256: string): Promise<boolean> {
   const result = await db
     .prepare('UPDATE file_scans SET task_id = ?, status = ? WHERE r2_key = ? AND sha256 = ?')
     .bind(taskId, 'submitted', r2Key, sha256)
     .run();
-  return (result.meta.changes ?? 0) > 0;
+  return (result.meta?.changes ?? 0) > 0;
 }
 
 /**
@@ -179,7 +180,7 @@ export async function setScanTask(db: D1Database, r2Key: string, taskId: string,
  * the row still hashes to `shaPrefix`, so a late callback for bytes A cannot
  * overwrite the hashes of re-uploaded bytes B.
  */
-export async function setScanPhash(db: D1Database, r2Key: string, phash: string, shaPrefix?: string): Promise<void> {
+export async function setScanPhash(db: Db, r2Key: string, phash: string, shaPrefix?: string): Promise<void> {
   let sql = 'UPDATE file_scans SET phash = ? WHERE r2_key = ?';
   const binds: unknown[] = [phash, r2Key];
   if (shaPrefix) {
@@ -201,8 +202,8 @@ export async function setScanPhash(db: D1Database, r2Key: string, phash: string,
  * rollout. They can only be resolved while the current row still matches.
  */
 export async function recordInfection(
-  db: D1Database,
-  cache: KVNamespace | undefined,
+  db: Db,
+  cache: Kv | undefined,
   r2Key: string,
   signature: string | null,
   reason: string,
@@ -237,11 +238,11 @@ export async function recordInfection(
 
   // The blocklist is content-scoped and remains useful after a key is reused.
   // The key-level KV marker is only valid when the row update matched this sha.
-  if ((results[0]?.meta.changes ?? 0) > 0) await markKeyBlocked(cache, r2Key);
+  if ((results[0]?.meta?.changes ?? 0) > 0) await markKeyBlocked(cache, r2Key);
 }
 
 /** Flag an R2 key as blocked in KV. Replaced bytes are cleared lazily below. */
-export async function markKeyBlocked(cache: KVNamespace | undefined, r2Key: string): Promise<void> {
+export async function markKeyBlocked(cache: Kv | undefined, r2Key: string): Promise<void> {
   if (!cache) return;
   try {
     await cache.put(`fileblk:${r2Key}`, '1');
@@ -258,7 +259,7 @@ export async function markKeyBlocked(cache: KVNamespace | undefined, r2Key: stri
  * write failed. Checking D1 on delivery also lets fresh bytes recover from a
  * stale infection marker without unblocking infected content.
  */
-export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string, db?: D1Database): Promise<boolean> {
+export async function isKeyBlocked(cache: Kv | undefined, r2Key: string, db?: Db): Promise<boolean> {
   // Fail closed (#81, docs/file-scanning.md): CACHE is required in production.
   if (!cache) return true;
   try {
@@ -279,7 +280,7 @@ export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string
   }
 }
 
-export async function clearKeyBlocked(cache: KVNamespace | undefined, r2Key: string): Promise<void> {
+export async function clearKeyBlocked(cache: Kv | undefined, r2Key: string): Promise<void> {
   if (!cache) return;
   try {
     await cache.delete(`fileblk:${r2Key}`);

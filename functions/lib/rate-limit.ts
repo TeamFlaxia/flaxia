@@ -1,3 +1,4 @@
+import type { Kv } from './ports/index.ts';
 /**
  * KV-based rate limiter for media endpoints.
  *
@@ -31,7 +32,7 @@ const DEFAULT_CONFIG: RateLimitConfig = {
  * Returns true if the request is allowed, false if rate-limited.
  */
 export async function checkRateLimit(
-  kv: KVNamespace | undefined,
+  kv: Kv | undefined,
   key: string,
   config: RateLimitConfig = DEFAULT_CONFIG,
 ): Promise<boolean> {

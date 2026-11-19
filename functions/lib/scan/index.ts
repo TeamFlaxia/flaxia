@@ -1,3 +1,4 @@
+import type { Db } from '../ports/index.ts';
 // Steps 2-4 of the file scanning pipeline, synchronously, for one upload:
 //
 //   2. MIME masquerade checks (declared type + extension vs magic bytes)
@@ -37,7 +38,7 @@ export type SyncScanVerdict =
  * Run steps 2-4 for one upload. Never throws: extraction failures degrade to
  * sha256-only features, and matcher errors fail closed.
  */
-export async function scanUploadSync(db: D1Database, input: SyncScanInput): Promise<SyncScanVerdict> {
+export async function scanUploadSync(db: Db, input: SyncScanInput): Promise<SyncScanVerdict> {
   const bytes = input.bytes instanceof Uint8Array ? input.bytes : new Uint8Array(input.bytes);
 
   // Step 2: file type detection + masquerade checks.

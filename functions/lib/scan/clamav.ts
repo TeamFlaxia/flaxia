@@ -1,3 +1,4 @@
+import type { Db } from '../ports/index.ts';
 // Step 1 (async): hand uploaded bytes to the Crowd orchestrator's `container`
 // workload, which runs ClamAV (and the video keyframe hasher) outside the
 // Worker. Results arrive on the `/api/crowd/webhook` callback with
@@ -68,7 +69,7 @@ function toBase64(bytes: Uint8Array): string {
  * already on its way.
  */
 export async function submitFileScans(
-  db: D1Database,
+  db: Db,
   env: CrowdEnv,
   r2Key: string,
   mime: string,

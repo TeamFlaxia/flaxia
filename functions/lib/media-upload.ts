@@ -60,11 +60,11 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
     if (!isLocalEnv) {
       const uploadIp = getClientIp(c.req.raw);
       if (
-        !(await checkRateLimit(services.kv as Parameters<typeof checkRateLimit>[0], `upload:user:${user.id}`, {
+        !(await checkRateLimit(services.kv, `upload:user:${user.id}`, {
           maxRequests: 20,
           windowSeconds: 60,
         })) ||
-        !(await checkRateLimit(services.kv as Parameters<typeof checkRateLimit>[0], `upload:ip:${uploadIp}`, {
+        !(await checkRateLimit(services.kv, `upload:ip:${uploadIp}`, {
           maxRequests: 60,
           windowSeconds: 60,
         }))
@@ -84,7 +84,7 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
     // Enforce the same plan ceiling as prepare/commit before consuming a body
     // or writing a forged, out-of-plan attachment slot into R2.
     if (attachment) {
-      const plan = await getUserPlan({ DB: services.db as Parameters<typeof getUserPlan>[0]['DB'] }, user.id);
+      const plan = await getUserPlan({ DB: services.db }, user.id);
       const allowedSlots = plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
       if (attachment.position > allowedSlots) {
         return c.json({ error: 'Attachment position exceeds your plan limit' }, 403);
@@ -217,7 +217,7 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
 
     // Steps 2-4 of the file scanning pipeline: masquerade checks, feature
     // extraction and the synchronous blocklist match. A hit never reaches R2.
-    const verdict = await scanUploadSync(services.db as Parameters<typeof scanUploadSync>[0], {
+    const verdict = await scanUploadSync(services.db, {
       bytes: fileData,
       declaredType: isDocumentAttachment ? undefined : declaredContentType,
       name: key,
