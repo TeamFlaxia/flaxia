@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { defineConfig } from 'vite';
-import { CROWD_NODE_VERSION } from './src/lib/crowd-node';
+import { CROWD_NODE_VERSION } from './shared/crowd-node.ts';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './src/lib/pdf-viewer-page';
 import { docsManifestPlugin } from './vite-docs-manifest';
 
