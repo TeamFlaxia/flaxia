@@ -1,7 +1,7 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { each, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';

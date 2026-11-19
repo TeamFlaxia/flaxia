@@ -10,7 +10,7 @@
  *   bucketPrefix: gif (images) | audio | video | docs (pdf)
  */
 
-import { GAME_FILE_EXTENSIONS } from '../../src/lib/file-extensions.ts';
+import { GAME_FILE_EXTENSIONS } from '../../shared/file-extensions.ts';
 import { enrichPostsWithAiIndex } from './ai-index.ts';
 
 export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';

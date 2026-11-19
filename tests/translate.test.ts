@@ -6,7 +6,7 @@ import {
   isPlamoSupported,
   PLAMO_MODEL_ID,
   translateModelFor,
-} from '../src/lib/translate-languages.ts';
+} from '../shared/translate-languages.ts';
 import { BASE_URL } from './helpers/setup.ts';
 
 describe('translate model routing', () => {

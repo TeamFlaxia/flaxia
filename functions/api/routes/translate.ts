@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { hasReservedPlamoTokens, isPlamoSupported, TRANSLATE_LANGUAGES } from '../../../src/lib/translate-languages.ts';
+import { hasReservedPlamoTokens, isPlamoSupported, TRANSLATE_LANGUAGES } from '../../../shared/translate-languages.ts';
 import { ensureTranslateJobsTable, submitTranslate } from '../../lib/crowd';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import type { Bindings, Variables } from '../types';

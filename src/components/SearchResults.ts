@@ -1,8 +1,8 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';

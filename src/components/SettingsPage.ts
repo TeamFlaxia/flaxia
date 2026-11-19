@@ -1,3 +1,4 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { clearMeCache } from '../lib/auth-cache';
 import {
   clearCredentialOperation,
@@ -23,7 +24,6 @@ import {
 import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '../lib/maps/cache.js';
-import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';

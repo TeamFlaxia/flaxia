@@ -1,6 +1,6 @@
+import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 import type { Game } from '../types/game.js';
 import { nativeApiHref } from './native-api.js';
-import { createWvfsGameUrl } from './wvfs-game-url.js';
 
 /** Check the entry document that will actually be loaded in the game frame. */
 export async function isArcadeGameAvailable(game: Game, sandboxOrigin: string, signal?: AbortSignal): Promise<boolean> {

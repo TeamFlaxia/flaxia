@@ -13,9 +13,9 @@ export interface PostComposerProps {
   quotedPost?: QuotedPost | null;
 }
 
+import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../../shared/file-extensions.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
-import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';

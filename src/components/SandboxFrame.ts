@@ -1,8 +1,8 @@
+import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 import type { ParentMessage } from '../lib/bridge.js';
 import { isParentMessage } from '../lib/bridge.js';
 import { registerGameFrame } from '../lib/game-badge-bridge.js';
 import { MultiplayerManager } from '../lib/multiplayer-manager.js';
-import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import type { SandboxFrameProps } from '../types/post.js';
 
 export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {

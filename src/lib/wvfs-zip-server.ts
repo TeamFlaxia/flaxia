@@ -1,6 +1,6 @@
 import { GAME_AUDIO_MUTE_RUNTIME } from '../../sandbox/zip-preview-protocol.js';
+import { getMimeType, validateFileType } from '../../shared/file-extensions.ts';
 import { CAPTURE_BRIDGE_IIFE } from './capture-bridge.generated.ts';
-import { getMimeType, validateFileType } from './file-extensions.ts';
 import { createWvfsCookieCompatScript } from './wvfs-cookie-compat.ts';
 import { createWvfsImageCorsCompatScript } from './wvfs-image-cors.ts';
 import {

@@ -1,5 +1,5 @@
+import { isTitleIconImage } from '../../shared/title-icon.ts';
 import { getLocale } from './i18n.js';
-import { isTitleIconImage } from './title-icon.js';
 
 /** A title definition plus (optionally) ownership metadata from the API. */
 export interface UserTitle {

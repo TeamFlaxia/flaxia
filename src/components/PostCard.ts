@@ -1,5 +1,5 @@
+import { attachmentMimeType } from '../../shared/file-extensions.ts';
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
-import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';

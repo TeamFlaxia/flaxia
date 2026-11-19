@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWvfsGameUrl } from '../src/lib/wvfs-game-url.ts';
+import { createWvfsGameUrl } from '../shared/wvfs-game-url.ts';
 
 test('game documents use a fresh URL instead of the old immutable cache key', () => {
   const url = new URL(createWvfsGameUrl('https://sandbox.example', 'game-id'));

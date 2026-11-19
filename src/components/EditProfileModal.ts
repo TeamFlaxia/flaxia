@@ -1,9 +1,9 @@
+import { NAME_COLOR_PALETTE, normalizeNameColor } from '../../shared/name-color.ts';
 import { updateMeCache } from '../lib/auth-cache';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
-import { NAME_COLOR_PALETTE, normalizeNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 import { createTitleIcon, titleName } from '../lib/user-title.js';

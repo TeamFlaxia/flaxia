@@ -1,8 +1,8 @@
+import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 import { registerGameFrame } from './game-badge-bridge.js';
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 import { isNativeApp } from './native-api.ts';
 import { isOffline } from './offline-status.js';
-import { createWvfsGameUrl } from './wvfs-game-url.js';
 import {
   createZipLoadingIndicator,
   createZipSandboxIframe,

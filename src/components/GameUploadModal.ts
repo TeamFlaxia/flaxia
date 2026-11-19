@@ -1,4 +1,4 @@
-import { getMimeType } from '../lib/file-extensions.js';
+import { getMimeType } from '../../shared/file-extensions.ts';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';

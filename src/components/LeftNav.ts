@@ -1,3 +1,4 @@
+import { applyNameColor } from '../../shared/name-color.ts';
 import { recommendedAppPlatform } from '../lib/app-download.js';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { detectDevicePlatform } from '../lib/device-platform.js';
@@ -7,7 +8,6 @@ import { type IconName, icon } from '../lib/icons.js';
 import { closeLeftNav } from '../lib/left-nav-drawer.js';
 import { setupLeftNavResize } from '../lib/left-nav-resize.js';
 import { isModalOpen } from '../lib/modal-state';
-import { applyNameColor } from '../lib/name-color.js';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
 import { navItemsFor } from '../lib/nav-items.js';
 
