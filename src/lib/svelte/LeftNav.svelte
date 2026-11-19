@@ -5,7 +5,6 @@ import { initI18n } from '../../lib/i18n.ts';
 
 // Svelte-owned shell slot. F6-F8 pages can drop this in instead of letting
 // the legacy main.ts create the nav; the DOM/behavior stays identical.
-// biome-ignore lint/correctness/noUnusedVariables: Svelte 5 prop used below
 let { props = {} }: { props?: Parameters<typeof createLeftNav>[0] } = $props();
 let host: HTMLDivElement;
 

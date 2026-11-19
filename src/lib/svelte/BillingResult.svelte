@@ -24,10 +24,3 @@ function backHome() {
   </div>
 </div>
 
-<style>
-  /* The legacy shell reserves a full-viewport #app; on a Svelte-owned route
-     it stays empty, so hide it instead of pushing the real page below the fold. */
-  :global(#app) {
-    display: none;
-  }
-</style>
