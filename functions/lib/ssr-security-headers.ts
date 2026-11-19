@@ -9,6 +9,7 @@ const CSP_SCRIPT_HASHES = [
   "'sha256-QkLYwXmQ/14wDFcYo7uqnujEIBSc/XWY1kMfskVSXuY='",
   "'sha256-O2fd5Fuua/AlzXOKy1bK/6iCXVeOytetpLh696gOeSI='",
   "'sha256-9jpcqwJpr7kicF5b0vRUbAJtyA6CqjotdcnTjIv8i4U='",
+  "'sha256-RUhq29f8lTtRu4znbYEqjvvVG8U9N3lJfX4gXkpWzD8='",
 ].join(' ');
 
 const CONTENT_SECURITY_POLICY =
