@@ -67,6 +67,15 @@ test('mail routes share the shell-backed mail view', async () => {
   }
 });
 
+test('thread route owns its three-column page', async () => {
+  const route = await read('src/routes/thread/[id]/+page.svelte');
+  assert.match(route, /createThreadPage/);
+  assert.match(route, /page\.params\.id/);
+  assert.match(route, /sandboxOrigin/);
+  assert.match(route, /onBack/);
+  assert.doesNotMatch(route, /ShellLayout/, 'ThreadPage already renders its own shell');
+});
+
 test('docs routes cover the index and article slugs', async () => {
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
