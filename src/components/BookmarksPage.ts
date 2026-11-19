@@ -1,4 +1,5 @@
 import { stripPostColors } from '../../shared/post-colors.ts';
+import { Post } from '../../shared/types/post.ts';
 import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
@@ -11,7 +12,6 @@ import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/render/index.ts';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { appendUniqueBy } from '../lib/unique.ts';
-import { Post } from '../types/post.js';
 import { createOfflineDownloads } from './OfflineDownloads.ts';
 import { createPostCard } from './PostCard.js';
 import { isZipGame } from './PostStage.js';

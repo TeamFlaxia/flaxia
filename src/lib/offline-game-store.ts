@@ -1,4 +1,4 @@
-import type { Post } from '../types/post.ts';
+import type { Post } from '../../shared/types/post.ts';
 
 export interface GameFile {
   path: string;

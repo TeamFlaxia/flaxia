@@ -1,4 +1,4 @@
-import { Ad, Post, TimelineItem } from '../types/post.js';
+import { Ad, Post, TimelineItem } from '../../shared/types/post.ts';
 
 export function injectAds(posts: Post[], ads: Ad[], everyN: number): TimelineItem[] {
   if (!ads.length) return posts;

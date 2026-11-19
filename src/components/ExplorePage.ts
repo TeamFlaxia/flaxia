@@ -1,4 +1,5 @@
 import { applyNameColor } from '../../shared/name-color.ts';
+import { Post } from '../../shared/types/post.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createFabButton } from '../lib/fab-button.js';
 import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format.js';
@@ -13,7 +14,6 @@ import { each, legacy, type Mounted, mount, type Signal, signal } from '../lib/r
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { appendUniqueBy, uniqueBy } from '../lib/unique.ts';
-import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 export interface ExplorePageProps {

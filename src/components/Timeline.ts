@@ -3,6 +3,7 @@ import {
   type EncodedVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../shared/recommendation/vector-codec.ts';
+import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../../shared/types/post.ts';
 import { getMe } from '../lib/auth-cache.js';
 import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
@@ -21,7 +22,6 @@ import {
 } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { getRecommendationProfile, type RecommendationProfile } from '../lib/vault/recommendation-profile.js';
-import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';

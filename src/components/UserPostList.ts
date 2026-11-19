@@ -1,9 +1,9 @@
+import { Post } from '../../shared/types/post.ts';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createLoadingSpinner } from '../lib/loading-ui.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { each, legacy, mount, signal } from '../lib/render/index.ts';
 import { appendUniqueBy, uniqueBy } from '../lib/unique.ts';
-import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 export interface CurrentUser {

@@ -1,5 +1,5 @@
+import { Post } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
-import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 export interface SimilarPostsProps {

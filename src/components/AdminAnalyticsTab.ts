@@ -1,5 +1,5 @@
+import type { AdminAnalytics, GameRanking } from '../../shared/types/admin-analytics.ts';
 import { t } from '../lib/i18n.js';
-import type { AdminAnalytics, GameRanking } from '../types/admin-analytics.js';
 
 function createGameRankingTable(
   titleKey: string,

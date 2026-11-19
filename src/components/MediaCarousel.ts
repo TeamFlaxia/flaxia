@@ -1,7 +1,7 @@
 import type { MediaCue } from '../../shared/post-cues.ts';
+import type { PostAttachment } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';
 import { createImagePreview } from './ImagePreview.js';

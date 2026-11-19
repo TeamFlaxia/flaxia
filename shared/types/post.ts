@@ -1,4 +1,4 @@
-import type { MediaCue } from '../../shared/post-cues.ts';
+import type { MediaCue } from '../post-cues.ts';
 
 export type ReportCategory =
   | 'spam'

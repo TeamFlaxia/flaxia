@@ -1,11 +1,11 @@
 import { parseMediaCues } from '../../shared/post-cues.ts';
+import { PostCardMode, PostStageProps } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { setMediaMuted } from '../lib/media-mute.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
 import { executeZipAuto, type UniversalZipExecutorHandle } from '../lib/zip-manager.js';
-import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';

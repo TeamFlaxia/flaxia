@@ -1,10 +1,10 @@
+import { Ad } from '../../shared/types/post.ts';
 import { adImpressionTracker } from '../lib/ad-impression-tracker.js';
 import { ADSENSE_INLINE_BOOTSTRAP } from '../lib/adsense-bootstrap.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js';
-import { Ad } from '../types/post.js';
 import { executeFlash, FlashPlayerHandle } from './FlashPlayer.js';
 
 // Global handles for cleanup

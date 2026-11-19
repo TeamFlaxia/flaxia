@@ -8,8 +8,8 @@ import {
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
+import type { ReportCategory } from '../../../shared/types/post.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
-import type { ReportCategory } from '../../../src/types/post';
 import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../lib/activitypub/authors';
 import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
