@@ -1,22 +1,21 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { createLeftNav } from '../../components/LeftNav.ts';
+import { initI18n } from '../../lib/i18n.ts';
 
 // Svelte-owned shell slot. F6-F8 pages can drop this in instead of letting
 // the legacy main.ts create the nav; the DOM/behavior stays identical.
-let { props = {} }: { props?: Parameters<typeof import('../../components/LeftNav.ts')['createLeftNav']>[0] } = $props();
+// biome-ignore lint/correctness/noUnusedVariables: Svelte 5 prop used below
+let { props = {} }: { props?: Parameters<typeof createLeftNav>[0] } = $props();
 let host: HTMLDivElement;
 
 onMount(() => {
-  let dispose = () => {};
-  void (async () => {
-    const { initI18n } = await import('../../lib/i18n.ts');
-    await initI18n();
-    const { createLeftNav } = await import('../../components/LeftNav.ts');
-    const nav = createLeftNav(props);
-    host.appendChild(nav.getElement());
-    dispose = nav.destroy;
-  })();
-  return () => dispose();
+  // Fire-and-forget like the legacy bootstrap: waiting for locale JSON here
+  // would shift the shell after first paint and regress CLS.
+  void initI18n();
+  const nav = createLeftNav(props);
+  host.appendChild(nav.getElement());
+  return () => nav.destroy();
 });
 </script>
 
