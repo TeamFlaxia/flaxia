@@ -269,24 +269,18 @@ export class LeftNav {
     }
   }
 
-  public createPostButton(): HTMLButtonElement {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'nav-post-button';
-    btn.setAttribute('data-nav-id', 'compose');
-
-    const iconWrap = document.createElement('span');
-    iconWrap.className = 'nav-post-icon';
-    iconWrap.appendChild(icon('edit', { width: '16', height: '16' }));
-
-    const labelEl = document.createElement('span');
-    labelEl.className = 'nav-post-label';
-    labelEl.textContent = t('composer.post_button');
-
-    btn.appendChild(iconWrap);
-    btn.appendChild(labelEl);
-    btn.addEventListener('click', () => this.openComposer());
-    return btn;
+  /** The game promo is guest-only; keep it in sync with the auth state. */
+  public syncPromoCard(): void {
+    const existing = this.element.querySelector('.nav-promo');
+    if (!this.props.currentUser) {
+      if (existing) return;
+      const promo = this.createPromoCard();
+      const footer = this.element.querySelector('.nav-footer');
+      if (footer) footer.insertAdjacentElement('beforebegin', promo);
+      else this.element.appendChild(promo);
+      return;
+    }
+    existing?.remove();
   }
 
   public openComposer(): void {
@@ -516,10 +510,6 @@ export class LeftNav {
 
     nav.appendChild(this.createBrand());
 
-    if (this.props.currentUser) {
-      nav.appendChild(this.createPostButton());
-    }
-
     const menu = document.createElement('section');
     menu.className = 'nav-section nav-section--menu';
     // The nav items are the rail's body; a "Menu" caption above five obvious
@@ -529,7 +519,9 @@ export class LeftNav {
     nav.appendChild(menu);
 
     nav.appendChild(this.createTagsSection());
-    nav.appendChild(this.createPromoCard());
+    if (!this.props.currentUser) {
+      nav.appendChild(this.createPromoCard());
+    }
     nav.appendChild(this.createFooter());
 
     return nav;
@@ -672,22 +664,6 @@ export function createLeftNav(props: LeftNavProps = {}): LeftNav {
   return new LeftNav(props);
 }
 
-/**
- * Keep the post button in sync with the auth state (guests get no composer).
- */
-function syncPostButton(leftNav: LeftNav): void {
-  const element = leftNav.getElement();
-  const existing = element.querySelector('.nav-post-button');
-  if (leftNav.props.currentUser && !existing) {
-    const postButton = leftNav.createPostButton();
-    const menu = element.querySelector('.nav-section--menu');
-    if (menu) menu.insertAdjacentElement('beforebegin', postButton);
-    else element.appendChild(postButton);
-  } else if (!leftNav.props.currentUser && existing) {
-    existing.remove();
-  }
-}
-
 // Update function to handle user changes
 export function updateLeftNavUser(
   leftNav: LeftNav,
@@ -744,7 +720,7 @@ export function updateLeftNavUser(
     }
   }
 
-  syncPostButton(leftNav);
+  leftNav.syncPromoCard();
 
   // Rebuild the pinned footer: account (or guest auth), then the colophon.
   let footer = leftNav.getElement().querySelector('.nav-footer') as HTMLElement | null;

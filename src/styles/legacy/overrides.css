@@ -192,24 +192,6 @@ body {
   display: none;
 }
 
-/* `.left-nav .nav-post-button` in shell.css outranks the legacy rule. */
-#app .nav-post-button {
-  min-height: 0;
-  margin: 0 0 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 9999px;
-  background: var(--accent-dark);
-  color: #ffffff;
-  font-family: var(--font-sans);
-  font-size: 1rem;
-  font-weight: 700;
-  box-shadow: none;
-}
-
-#app .nav-post-button:hover {
-  background: #15803d;
-}
-
 #app .nav-user-area {
   border-top: 1px solid var(--border);
   padding-top: 0.75rem;

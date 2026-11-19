@@ -371,6 +371,11 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
     assert.equal(result.postCard.margin, '0px', `post card margin: ${result.postCard.margin}`);
     assert.equal(result.postCard.borderRadius, '0px');
 
+    // The rail no longer carries a compose button, and the game promo is
+    // guest-only.
+    assert.equal(await page.$('.nav-post-button'), null, 'guest rail must not show a compose button');
+    assert.ok(await page.$('.nav-promo'), 'guest rail should show the game promo');
+
     // The stubbed timeline post exercises PostCard's header, actions and quote.
     await page.waitForSelector('.post-card', { timeout: 20_000 });
     // Rich text is rendered on idle after the plain-text placeholder.
@@ -697,6 +702,10 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
     await page.waitForSelector('.post-card', { timeout: 30_000 });
+
+    // Signed-in users get neither the rail compose button nor the guest promo.
+    assert.equal(await page.$('.nav-post-button'), null, 'signed-in rail must not show a compose button');
+    assert.equal(await page.$('.nav-promo'), null, 'signed-in rail must not show the guest promo');
 
     await page.click('.post-card .action-button--reply');
     await page.waitForSelector('.reply-composer', { timeout: 10_000 });
