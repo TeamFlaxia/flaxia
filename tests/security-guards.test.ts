@@ -289,7 +289,9 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(!/current_password\s*:/.test(settings), 'settings must prove the password with SRP, not send it');
     assert.ok(!/new_password\s*:/.test(settings), 'a new password only travels as a verifier');
 
-    const users = readFileSync(join(ROOT, 'functions/api/routes/users.ts'), 'utf8');
+    const users = walk(join(ROOT, 'functions/api/routes/users'))
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
     assert.ok(!/current_password\s*:/.test(users), 'the server must not accept a plaintext current password');
     assert.ok(!/new_password\s*:/.test(users), 'the server must not accept a plaintext new password');
   });
@@ -378,8 +380,9 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(linkPreview.includes('fetchWithSsrfGuard'));
     assert.ok(!linkPreview.includes("redirect: 'follow'"), 'redirects must be validated hop by hop');
 
-    const users = readFileSync(join(ROOT, 'functions/api/routes/users.ts'), 'utf8');
+    const users = readFileSync(join(ROOT, 'functions/api/routes/users/helpers.ts'), 'utf8');
     assert.ok(users.includes('fetchRemoteJson'), 'webfinger/actor fetches must use the guard');
+    assert.ok(users.includes('fetchWithSsrfGuard'), 'the helper must actually enforce the SSRF guard');
 
     const queue = readFileSync(join(ROOT, 'functions/queue-worker.ts'), 'utf8');
     assert.ok(queue.includes('parsePublicHttpUrl'), 'delivery inboxes must be re-validated');
