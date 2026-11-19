@@ -1,7 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { isCrawler } from '../../src/lib/is-crawler';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import {
   escapeHtml,
@@ -13,6 +12,7 @@ import {
   type UserRow,
 } from '../../src/lib/render-html';
 import { handlePersonalInbox } from '../lib/activitypub/inbox';
+import { isCrawler } from '../lib/is-crawler.ts';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
