@@ -7,7 +7,7 @@ import {
   normalizeMailAddress,
   primaryAddressForUsername,
   RESERVED_LOCALS,
-} from '../src/lib/mail/address.ts';
+} from '../shared/mail-address.ts';
 
 describe('mail addresses', () => {
   it('builds lowercase primary addresses from usernames', () => {
@@ -43,7 +43,7 @@ describe('mail addresses', () => {
   it('keeps the Pages proxy and Mail Worker on the shared reserved list', () => {
     for (const path of ['../functions/api/routes/mail.ts', '../mail-worker/src/index.ts']) {
       const source = readFileSync(new URL(path, import.meta.url), 'utf8');
-      assert.match(source, /src\/lib\/mail\/address\.ts/, `${path} must import the shared address module`);
+      assert.match(source, /shared\/mail-address\.ts/, `${path} must import the shared address module`);
       assert.ok(!source.includes('const RESERVED_LOCALS = new Set'), `${path} must not duplicate the list`);
     }
     assert.ok(RESERVED_LOCALS.size >= 20, 'operational lookalikes must stay reserved');

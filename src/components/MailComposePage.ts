@@ -1,9 +1,10 @@
 // Mail compose (docs/mail.md §10). Seals the message client-side and posts only
 // ciphertext for internal Flaxia recipients; drafts are encrypted the same way
 // and can be reopened from the Drafts folder.
+
+import { primaryAddressForUsername } from '../../shared/mail-address.ts';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
-import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { deleteDraft, type MailSecurity } from '../lib/mail/api.js';
 import { mailBack } from '../lib/mail/navigation.js';
 import { type ComposeAttachmentInput, type ComposeFields, MAX_ATTACHMENTS, MAX_SEND_BYTES } from '../lib/mail/seal.js';

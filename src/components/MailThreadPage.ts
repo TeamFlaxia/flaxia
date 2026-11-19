@@ -1,9 +1,10 @@
 // Mail thread reader (docs/mail.md §10). Consumes the P2 thread API; when the
 // backend is still 501 it shows a calm "getting ready" state instead of an
 // error.
+
+import { primaryAddressForUsername } from '../../shared/mail-address.ts';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
-import { primaryAddressForUsername } from '../lib/mail/address.js';
 import {
   applyMessageAction,
   getThread,

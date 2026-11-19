@@ -1,9 +1,10 @@
 // Mail settings (docs/mail.md §10, §11.2). Mailbox activation, quota and the
 // encryption boundary live here; the compact vault unlock form is shared with
 // the mailbox so a reload never forces a detour through Settings.
+
+import { primaryAddressForUsername } from '../../shared/mail-address.ts';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
-import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { getQuota, listAddresses } from '../lib/mail/api.js';
 import { goToMail, mailBack } from '../lib/mail/navigation.js';
 import { mailButton } from '../lib/mail/ui.js';

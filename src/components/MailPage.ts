@@ -1,8 +1,9 @@
 // Flaxia Mail mailbox (docs/mail.md §10). P1 activates the address; the list
 // and reading surfaces consume the P2 API and fail gracefully while it is 501.
+
+import { primaryAddressForUsername } from '../../shared/mail-address.ts';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
-import { primaryAddressForUsername } from '../lib/mail/address.js';
 import {
   applyMessageAction,
   type EncryptedThreadList,
