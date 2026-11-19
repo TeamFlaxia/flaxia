@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 
@@ -32,6 +33,7 @@ onMount(() => {
     });
     host.appendChild(page.getElement());
     dispose = page.destroy;
+    getBottomNav()?.setActiveItem('arcade');
     navProps = {
       activeItem: 'arcade',
       currentUser: user,
