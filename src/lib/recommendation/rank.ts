@@ -2,7 +2,7 @@
 // embeddings plus its own per-user ordering hints; the decrypted preference
 // vector never leaves this module's caller.
 
-import { cosineSimilarity, normalizedCosine } from './vector.ts';
+import { cosineSimilarity, normalizedCosine } from '../../../shared/recommendation/vector.ts';
 
 export interface RankOptions<T> {
   items: readonly T[];

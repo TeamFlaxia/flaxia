@@ -3,7 +3,7 @@ import {
   type EncodedVector,
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
-} from '../../../src/lib/recommendation/vector-codec.ts';
+} from '../../../shared/recommendation/vector-codec.ts';
 import { checkRateLimit } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';

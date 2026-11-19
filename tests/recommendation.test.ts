@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { normalizeVector, weightedMeanVector } from '../shared/recommendation/vector.ts';
+import { decodeVector, encodeVector } from '../shared/recommendation/vector-codec.ts';
 import { rankCandidates } from '../src/lib/recommendation/rank.ts';
-import { normalizeVector, weightedMeanVector } from '../src/lib/recommendation/vector.ts';
-import { decodeVector, encodeVector } from '../src/lib/recommendation/vector-codec.ts';
 
 describe('recommendation vectors', () => {
   it('round-trips int8 vectors within quantization error', () => {
