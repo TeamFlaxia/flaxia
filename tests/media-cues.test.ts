@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { type PostRow, renderPostArticle } from '../functions/lib/render-html.ts';
 import { hasPostColors, stripPostColors } from '../shared/post-colors.ts';
 import { parseMediaCues, stripMediaCues } from '../shared/post-cues.ts';
-import { type PostRow, renderPostArticle } from '../src/lib/render-html.ts';
 
 function post(overrides: Partial<PostRow> = {}): PostRow {
   return {

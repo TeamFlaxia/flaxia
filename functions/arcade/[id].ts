@@ -1,13 +1,7 @@
 import { stripPostColors } from '../../shared/post-colors.ts';
-import {
-  escapeHtml,
-  renderAvatarBadge,
-  renderFreshIcon,
-  renderHtmlShell,
-  renderJsonLd,
-} from '../../src/lib/render-html';
 import { buildGameDescription, buildGameTitle } from '../lib/game-seo.ts';
 import { isCrawler } from '../lib/is-crawler.ts';
+import { escapeHtml, renderAvatarBadge, renderFreshIcon, renderHtmlShell, renderJsonLd } from '../lib/render-html.ts';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
   renderBreadcrumbJsonLd,

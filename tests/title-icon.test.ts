@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
+import { renderUserTitle } from '../functions/lib/render-html.ts';
 import { isTitleIconImage } from '../shared/title-icon.ts';
-import { renderUserTitle } from '../src/lib/render-html.ts';
 
 describe('title icons', () => {
   it('detects image icons without treating emoji as URLs', () => {

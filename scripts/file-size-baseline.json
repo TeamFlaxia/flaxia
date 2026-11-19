@@ -11,6 +11,7 @@
   "functions/lib/auth.ts": 633,
   "functions/lib/crowd.ts": 1517,
   "functions/lib/flaxia-auth.ts": 660,
+  "functions/lib/render-html.ts": 780,
   "functions/lib/web-index.ts": 566,
   "src/components/AdCard.ts": 526,
   "src/components/AdminAdsTab.ts": 994,
@@ -37,7 +38,6 @@
   "src/components/Timeline.ts": 1162,
   "src/components/VaultSection.ts": 774,
   "src/components/VideoPlayer.ts": 507,
-  "src/lib/render-html.ts": 780,
   "src/lib/wvfs-zip-server.ts": 1088,
   "src/main.ts": 1858
 }

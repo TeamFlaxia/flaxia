@@ -4,7 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import testsRouter from '../functions/api/routes/tests.ts';
-import { renderJsonLd } from '../src/lib/render-html.ts';
+import { renderJsonLd } from '../functions/lib/render-html.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
