@@ -21,11 +21,12 @@ onMount(() => {
     const { fetchNotifications, invalidateNotificationsCache } = await import('../../lib/notifications-api.ts');
     await initI18n();
     const me = await getMe();
-    if (!me) {
+    const user = me?.user;
+    if (!user) {
       window.location.replace('/explore');
       return;
     }
-    const currentUser = me as Parameters<
+    const currentUser = user as Parameters<
       typeof import('../../components/NotificationsPage.ts')['createNotificationsPage']
     >[0]['currentUser'];
     const data = await fetchNotifications();

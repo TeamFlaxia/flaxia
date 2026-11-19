@@ -19,11 +19,12 @@ onMount(() => {
     const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
     const me = await getMe();
-    if (!me) {
+    const user = me?.user;
+    if (!user) {
       window.location.replace('/explore');
       return;
     }
-    const currentUser = me as Parameters<
+    const currentUser = user as Parameters<
       typeof import('../../components/BookmarksPage.ts')['createBookmarksPage']
     >[0]['currentUser'];
     const { createBookmarksPage } = await import('../../components/BookmarksPage.ts');
