@@ -104,6 +104,7 @@ const groups = {
     'game-storage-migration',
     'game-titles',
     'game-versions',
+    'i18n-bridge',
     'image-dimensions',
     'legacy-sandbox-disabled',
     'media-cues',
