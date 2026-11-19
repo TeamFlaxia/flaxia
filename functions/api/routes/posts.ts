@@ -6,7 +6,6 @@ import {
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
-import { isAdmin } from '../../../src/lib/admin';
 import { canUsePostColors } from '../../../src/lib/entitlements.ts';
 import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
@@ -15,6 +14,7 @@ import { buildDeleteActivity, buildLikeActivity, buildUndoActivity } from '../..
 import { enrichPostsWithRemoteAuthors } from '../../lib/activitypub/authors';
 import { deliverToActorInbox, deliverToFollowers } from '../../lib/activitypub/delivery';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
+import { isAdmin } from '../../lib/admin.ts';
 import {
   type AttachmentInput,
   type AttachmentKind,
