@@ -132,6 +132,7 @@ const SVELTE_ROUTES = [
   /^\/download\/?$/,
   /^\/(terms|privacy|child-safety|about)\/?$/,
   /^\/docs(?:\/[^/]+)?\/?$/,
+  /^\/bookmarks\/?$/,
 ];
 
 export async function mountLegacyApp(): Promise<void> {
