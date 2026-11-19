@@ -105,3 +105,29 @@ export async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentU
   ]);
   await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, db);
 }
+
+export async function autoRestoreIfEligible(db: D1Database, postId: string): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const result = await db
+      .prepare(
+        `SELECT id FROM counter_notifications
+         WHERE post_id = ? AND status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+      )
+      .bind(postId, now)
+      .first();
+
+    if (result) {
+      await db.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
+      await db
+        .prepare("UPDATE counter_notifications SET status = ? WHERE post_id = ? AND status = 'pending'")
+        .bind('auto_restored', postId)
+        .run();
+      console.log(`Auto-restored post ${postId} after counter-notification period`);
+    }
+  } catch (err) {
+    console.error('Auto-restore check failed:', err);
+  }
+}
+
+// POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
