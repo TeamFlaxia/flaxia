@@ -1,10 +1,10 @@
 // Test-only entry: copied into the APK only by native-android.yml.
 
+import type { Post } from '../shared/types/post.ts';
 import { initOfflineGames } from '../src/lib/native-offline-games.ts';
 import { executeDownloadedGame } from '../src/lib/offline-game-player.ts';
 import { setOffline } from '../src/lib/offline-status.ts';
 import { executeWvfsZip } from '../src/lib/wvfs-zip-client.ts';
-import type { Post } from '../src/types/post.ts';
 
 const post = {
   id: 'offline-fixture',

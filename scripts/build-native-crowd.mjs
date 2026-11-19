@@ -1,6 +1,6 @@
 import { cpSync, mkdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { CROWD_NODE_VERSION } from '../src/lib/crowd-node.ts';
+import { CROWD_NODE_VERSION } from '../shared/crowd-node.ts';
 
 // Desktop-only: preserve relative module/worker URLs without adding the large
 // inference runtime to the Pages deployment or Capacitor bundles.

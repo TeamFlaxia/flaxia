@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { Hono } from 'hono';
 import JSZip from 'jszip';
-import { servePublicLoader } from '../src/lib/game-loader-public.ts';
+import { servePublicLoader } from '../functions/lib/game-loader-public.ts';
 import { serveGameLoaderAsset } from '../src/lib/game-loader-routes.ts';
 
 const { chromium, firefox, webkit } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
