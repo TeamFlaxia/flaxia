@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { type CrowdEnv, FILE_SCAN_SOURCE_MAX_BYTES } from '../crowd.ts';
+import type { Db } from '../ports/index.ts';
 import { clamavMaxBytes, submitFileScans } from './clamav.ts';
 import { ensureFileScansTable, getFileScan, setScanStatus } from './db.ts';
 import { extractFileFeatures } from './features.ts';
@@ -14,7 +15,7 @@ export type RescreenResult = 'submitted' | 'missing' | 'unsupported' | 'too_larg
  * clean verdict is received.
  */
 export async function rescreenQuarantinedObject(
-  db: D1Database,
+  db: Db,
   bucket: R2Bucket | undefined,
   env: CrowdEnv & { CROWD_MAX_PAYLOAD_BYTES?: string },
   key: string,
@@ -53,7 +54,7 @@ export async function rescreenQuarantinedObject(
                   AND detail IN ('too_large', 'orchestrator_unconfigured')`)
       .bind(features.kind, features.structureHash ?? null, features.textHash ?? null, features.phash ?? null, key, sha)
       .run();
-    if ((reopened.meta.changes ?? 0) !== 1) return 'not_eligible';
+    if ((reopened.meta?.changes ?? 0) !== 1) return 'not_eligible';
     const refreshed = await getFileScan(db, key);
     if (!refreshed || refreshed.sha256 !== sha || refreshed.status !== 'pending') return 'not_eligible';
 

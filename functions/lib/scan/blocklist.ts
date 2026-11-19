@@ -1,3 +1,4 @@
+import type { Db } from '../ports/index.ts';
 // Step 4: blocklist matching. The pure matcher is separated from the D1
 // fetch so it can be unit-tested without a database.
 //
@@ -64,7 +65,7 @@ export function matchBlocklistEntries(features: FileFeatures, entries: Blocklist
   return null;
 }
 
-export async function loadBlocklist(db: D1Database): Promise<BlocklistEntry[]> {
+export async function loadBlocklist(db: Db): Promise<BlocklistEntry[]> {
   await ensureFileScansTable(db);
   const result = await db
     .prepare('SELECT id, kind, value, signature, reason FROM file_blocklist ORDER BY id')
@@ -78,7 +79,7 @@ export async function loadBlocklist(db: D1Database): Promise<BlocklistEntry[]> {
  * or fail open (a callback must not permanently block clean content on a
  * transient blip).
  */
-export async function matchBlocklist(db: D1Database, features: FileFeatures): Promise<BlocklistEntry | null> {
+export async function matchBlocklist(db: Db, features: FileFeatures): Promise<BlocklistEntry | null> {
   const entries = await loadBlocklist(db);
   if (entries.length === 0) return null;
   return matchBlocklistEntries(features, entries);
@@ -106,7 +107,7 @@ export interface BlocklistAdminRow extends BlocklistEntry {
   created_at: string;
 }
 
-export async function listBlocklist(db: D1Database): Promise<BlocklistAdminRow[]> {
+export async function listBlocklist(db: Db): Promise<BlocklistAdminRow[]> {
   await ensureFileScansTable(db);
   const result = await db
     .prepare('SELECT id, kind, value, signature, reason, added_by, created_at FROM file_blocklist ORDER BY id')
@@ -148,7 +149,7 @@ export interface AddBlocklistInput {
 }
 
 /** Insert an entry, refreshing signature/reason/added_by on an exact duplicate. */
-export async function addBlocklistEntry(db: D1Database, input: AddBlocklistInput): Promise<void> {
+export async function addBlocklistEntry(db: Db, input: AddBlocklistInput): Promise<void> {
   await ensureFileScansTable(db);
   await db
     .prepare(
@@ -164,7 +165,7 @@ export async function addBlocklistEntry(db: D1Database, input: AddBlocklistInput
 }
 
 /** Remove an entry by id. Returns false when no row matched. */
-export async function removeBlocklistEntry(db: D1Database, id: number): Promise<boolean> {
+export async function removeBlocklistEntry(db: Db, id: number): Promise<boolean> {
   const result = await db.prepare('DELETE FROM file_blocklist WHERE id = ?').bind(id).run();
-  return (result.meta.changes ?? 0) > 0;
+  return (result.meta?.changes ?? 0) > 0;
 }
