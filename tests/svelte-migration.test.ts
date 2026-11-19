@@ -18,6 +18,18 @@ test('legacy shell skips routes owned by SvelteKit', async () => {
   assert.match(main, /SVELTE_ROUTES/);
   assert.match(main, /billing\\?\/\(success\|canceled\)/);
   assert.match(main, /\/download/);
+  assert.match(main, /\(terms\|privacy\|child-safety\|about\)/);
+});
+
+test('legal pages use the shared legacy page wrapper', async () => {
+  const wrapper = await read('src/lib/svelte/LegacyPage.svelte');
+  assert.match(wrapper, /initI18n/);
+  assert.match(wrapper, /host\.appendChild/);
+  for (const route of ['terms', 'privacy', 'child-safety', 'about']) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /createLegalPage/);
+    assert.ok(source.includes(`type: '${route}'`), `${route} must use its legal page type`);
+  }
 });
 
 test('download route mounts the legacy page declaratively', async () => {
