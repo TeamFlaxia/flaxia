@@ -1,4 +1,11 @@
-// The legacy SPA owns rendering for now. F5-F8 will move pages into Svelte
-// one at a time; until then SvelteKit only supplies the static shell.
 export const ssr = false;
 export const prerender = false;
+
+// Legacy components call t() while building their DOM, so locale strings must
+// be loaded before any route component mounts.
+export async function load() {
+  if (typeof window === 'undefined') return {};
+  const { initI18n } = await import('../lib/i18n.ts');
+  await initI18n();
+  return {};
+}
