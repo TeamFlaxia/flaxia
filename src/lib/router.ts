@@ -163,7 +163,9 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   }
 
   // Settings route - requires auth
-  if (cleanPath === '/settings') {
+  // `/settings/connections` is the return URI registered with Auth for
+  // account-connection flows; it opens the settings page on the keyring.
+  if (cleanPath === '/settings' || cleanPath === '/settings/connections') {
     return { view: 'settings', postId: null, username: null, tag: null };
   }
 

@@ -35,6 +35,7 @@ const groups = {
     'mail-send-internal',
     'mail-send-seal',
     'market-auth-session',
+    'opencode-org',
     'password-policy',
     'security-guards',
     'security-review-regressions',
