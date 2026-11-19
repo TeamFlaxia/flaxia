@@ -115,6 +115,17 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx @biomejs/biome ci .
 
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:group -- guardrails
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
