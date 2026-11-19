@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const groups = {
+  // Repository guardrails. These need no dev server.
+  guardrails: ['architecture'],
   'auth-vault': [
     'auth',
     'auth-cache',
