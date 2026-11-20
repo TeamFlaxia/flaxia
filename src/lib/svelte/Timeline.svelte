@@ -212,14 +212,21 @@ async function loadMore(): Promise<void> {
 
 async function loadAdConfig(): Promise<void> {
   try {
-    const [adsRes, configRes] = await Promise.all([
-      fetch('/api/ads/active').then((r) => (r.ok ? r.json() : { ads: [] })),
-      fetch('/api/ads/config').then((r) => (r.ok ? r.json() : { every_n: 8 })),
-    ]);
+    // The spacing config is an authenticated admin endpoint; guests would only
+    // get a 404, so skip it for them (matches the legacy timeline).
+    const fetches: Array<Promise<Response>> = [fetch('/api/ads/active')];
+    if (currentUser) fetches.push(fetch('/api/admin/ads/config'));
+    const [adsRes, configRes] = await Promise.all(fetches);
     if (destroyed) return;
-    ads = Array.isArray(adsRes.ads) ? adsRes.ads : [];
-    const base = Number(configRes.every_n) || 8;
-    everyN = isDataSaverEnabled() ? Math.max(1, Math.round(base * DATA_SAVER_AD_SPACING_MULTIPLIER)) : base;
+    if (adsRes.ok) {
+      const data = (await adsRes.json()) as { ads?: Ad[] };
+      ads = Array.isArray(data.ads) ? data.ads : [];
+    }
+    if (configRes?.ok) {
+      const data = (await configRes.json()) as { every_n?: number };
+      const base = Number(data.every_n) || 8;
+      everyN = isDataSaverEnabled() ? Math.max(1, Math.round(base * DATA_SAVER_AD_SPACING_MULTIPLIER)) : base;
+    }
   } catch {
     // ads are optional
   }
