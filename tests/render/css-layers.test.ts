@@ -12,10 +12,12 @@ function read(path: string): string {
 
 describe('styles/css-entry', () => {
   it('loads the app through one stylesheet entry', () => {
-    const main = read('src/main.ts');
-    assert.match(main, /import '\.\/styles\/index\.css';/);
-    assert.doesNotMatch(main, /styles\/redesign\//);
-    assert.doesNotMatch(main, /styles\/render\/primitives\.css/);
+    // The single stylesheet entry moved from legacy main.ts into the Svelte
+    // root layout when main.ts was removed (#420).
+    const layout = read('src/routes/+layout.svelte');
+    assert.match(layout, /import '\.\.\/styles\/index\.css';/);
+    assert.doesNotMatch(layout, /styles\/redesign\//);
+    assert.doesNotMatch(layout, /styles\/render\/primitives\.css/);
   });
 
   it('imports the app CSS in cascade order and never in @layer', () => {

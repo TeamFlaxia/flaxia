@@ -213,10 +213,14 @@ describe('security guards', () => {
   });
 
   it('does not log session tokens, signed requests, or push response bodies', () => {
-    const main = readFileSync(join(ROOT, 'src/main.ts'), 'utf8');
-    assert.ok(!main.includes("console.log('[push] connecting to', url)"));
-    assert.ok(!main.includes("console.log('[push] received:', data)"));
-    assert.doesNotMatch(main, /console\.(?:log|info|warn|error)\([^\n]*window\.location\.href/);
+    // Global side effects (formerly main.ts) now live across the Svelte shell
+    // and the split-out lib modules, so scan all of src instead of one file.
+    const sources = walk(join(ROOT, 'src'))
+      .map((file) => scanableSource(readFileSync(file, 'utf8')))
+      .join('\n');
+    assert.ok(!sources.includes("console.log('[push] connecting to', url)"));
+    assert.ok(!sources.includes("console.log('[push] received:', data)"));
+    assert.doesNotMatch(sources, /console\.(?:log|info|warn|error)\([^\n]*window\.location\.href/);
 
     const signature = readFileSync(join(ROOT, 'functions/lib/activitypub/signature.ts'), 'utf8');
     const requestSigner = signature.match(
