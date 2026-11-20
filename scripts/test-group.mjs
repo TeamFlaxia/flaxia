@@ -12,6 +12,7 @@ const groups = {
     'architecture',
     'csp-hashes',
     'lazy-imports',
+    'legacy-adapters',
     'ssr-head',
     'svelte-migration',
     'svelte-shell',
