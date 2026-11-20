@@ -11,6 +11,9 @@ let { children } = $props();
 // The legacy app used to sync the bottom bar on popstate. Keep this at the
 // root so it survives every Svelte route transition.
 onMount(() => {
+  // The static first-fold placeholder is replaced by the mounted app in the
+  // same frame, so slow clients do not produce a layout shift.
+  queueMicrotask(() => document.getElementById('initial-feed-skeleton')?.remove());
   const sync = () => getBottomNav()?.setActiveItem(viewToBottomNavId(parseCurrentRoute()?.view ?? ''));
   window.addEventListener('popstate', sync);
   sync();

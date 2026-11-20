@@ -285,7 +285,16 @@
       <div>Loading Flaxia...</div>
     </div>
   </div>
-  <div id="app">%sveltekit.body%</div>
+  <div id="app">
+    <!-- Static feed placeholder: reserves the first-fold height so the app
+         mounting on a slow client does not shift the page (CLS). -->
+    <div id="initial-feed-skeleton" aria-hidden="true">
+      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
+      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
+      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
+    </div>
+    %sveltekit.body%
+  </div>
   
   <script>
     // Hide initial loader when app is ready
