@@ -1,9 +1,8 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 
+// Every known view has its own Svelte route; unknown paths go home.
 onMount(() => {
-  // Mount the existing app verbatim. It owns #app, routing, styles and every
-  // component until the F5-F8 migration moves them into Svelte routes.
-  void import('../../main.ts').then(({ mountLegacyApp }) => mountLegacyApp());
+  window.location.replace('/home');
 });
 </script>
