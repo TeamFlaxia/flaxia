@@ -100,7 +100,14 @@ test('remaining legacy views now have Svelte routes', async () => {
 
 test('home feed owns the composer through a Svelte mount point', async () => {
   const composer = await read('src/lib/svelte/Composer.svelte');
-  assert.match(composer, /createPostComposer/);
+  assert.match(composer, /PostComposer/);
+  const implementation = await read('src/lib/svelte/PostComposer.svelte');
+  assert.match(implementation, /composer-textarea/);
+  assert.match(implementation, /submitPost/);
+  assert.match(implementation, /composer-poll-section/);
+  const bridge = await read('src/components/PostComposer.ts');
+  assert.match(bridge, /mount\(Composer/);
+  assert.doesNotMatch(bridge, /className = 'post-composer'/, 'DOM construction must live in Svelte');
   const home = await read('src/routes/home/+page.svelte');
   assert.match(home, /composerHost/);
   assert.match(home, /mount\(Composer/);
