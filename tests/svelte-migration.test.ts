@@ -100,6 +100,18 @@ test('remaining legacy views now have Svelte routes', async () => {
   }
 });
 
+test('home feed owns the composer through a Svelte mount point', async () => {
+  const composer = await read('src/lib/svelte/Composer.svelte');
+  assert.match(composer, /createPostComposer/);
+  const home = await read('src/routes/home/+page.svelte');
+  assert.match(home, /composerHost/);
+  assert.match(home, /mount\(Composer/);
+  const timeline = await read('src/components/Timeline.ts');
+  assert.match(timeline, /composerHost/);
+  const types = await read('shared/types/post.ts');
+  assert.match(types, /composerHost\?: HTMLElement/);
+});
+
 test('admin routes render the standalone admin layout', async () => {
   for (const route of ['admin', 'admin/[tab]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);

@@ -59,6 +59,7 @@ export class Timeline {
   private loadGeneration = 0;
   private destroyed = false;
   private composer!: PostComposer;
+  private composerElement: HTMLElement | null = null;
   private fabButton?: HTMLElement;
   private composerObserver: IntersectionObserver | null = null;
   private headSentinel!: HTMLElement;
@@ -136,12 +137,17 @@ export class Timeline {
 
     // Post composer directly below the header (only for logged-in users);
     // guests see an Arcade promo card instead
-    if (this.props.currentUser) {
+    if (this.props.composerHost instanceof HTMLElement) {
+      // Svelte owns the composer; the host element is moved into the timeline.
+      this.composerElement = this.props.composerHost;
+      container.appendChild(this.composerElement);
+    } else if (this.props.currentUser) {
       this.composer = createPostComposer({
         onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         currentUser: this.props.currentUser,
       });
-      container.appendChild(this.composer.getElement());
+      this.composerElement = this.composer.getElement();
+      container.appendChild(this.composerElement);
     } else {
       container.appendChild(this.createArcadePromo());
     }
@@ -1103,7 +1109,7 @@ export class Timeline {
   }
 
   private setupComposerObserver(): void {
-    if (!this.composer || !this.fabButton) return;
+    if (!this.composerElement || !this.fabButton) return;
     this.composerObserver = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
@@ -1111,7 +1117,7 @@ export class Timeline {
       },
       { threshold: 0 },
     );
-    this.composerObserver.observe(this.composer.getElement());
+    this.composerObserver.observe(this.composerElement);
   }
 
   private openPostModal(): void {
