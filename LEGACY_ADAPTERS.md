@@ -21,7 +21,6 @@ this ratchet.
 - `src/lib/svelte/RightPanel.svelte`: `createRightPanel`
 - `src/routes/bookmarks/+page.svelte`: `createBookmarksPage`
 - `src/routes/explore/+page.svelte`: `createExplorePage`
-- `src/routes/home/+page.svelte`: `createTimeline`
 - `src/routes/maps/+page.svelte`: `createMapsPage`
 - `src/routes/profile/[username]/+page.svelte`: `createProfilePage`
 - `src/routes/search/+page.svelte`: `createSearchPage`
