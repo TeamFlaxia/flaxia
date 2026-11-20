@@ -39,9 +39,9 @@ export class PerformanceMonitor {
         });
         clsObserver.observe({ entryTypes: ['layout-shift'] });
         this.observers.push(clsObserver);
-      } else {
-        console.warn('layout-shift entry type not supported in this browser');
       }
+      // Some engines (e.g. Firefox) do not expose `layout-shift`; that is
+      // expected, so skip CLS collection without logging a warning.
 
       // Check for largest-contentful-paint support
       if (PerformanceObserver.supportedEntryTypes.includes('largest-contentful-paint')) {
