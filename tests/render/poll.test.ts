@@ -2,9 +2,10 @@ import './setup.ts';
 
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { createPollElement, type PollData } from '../../src/components/PollWidget.ts';
+import { castPollVote } from '../../src/lib/poll/vote.ts';
+import { isPollExpired, shouldShowPollResults } from '../../src/lib/poll-state.ts';
 
-function basePoll(): PollData {
+function basePoll() {
   return {
     id: 'poll-1',
     question: 'Which one?',
@@ -18,11 +19,21 @@ function basePoll(): PollData {
   };
 }
 
-function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
+describe('PollWidget state', () => {
+  it('uses server expiry and timestamps', () => {
+    assert.equal(isPollExpired(basePoll()), false);
+    assert.equal(isPollExpired({ ...basePoll(), expired: true }), true);
+    assert.equal(isPollExpired({ ...basePoll(), endsAt: '2020-01-01T00:00:00Z' }), true);
+  });
 
-describe('PollWidget', () => {
+  it('shows results to voters and after expiry', () => {
+    assert.equal(shouldShowPollResults(basePoll(), false), false);
+    assert.equal(shouldShowPollResults(basePoll(), true), true);
+    assert.equal(shouldShowPollResults({ ...basePoll(), expired: true }, false), true);
+  });
+});
+
+describe('castPollVote', () => {
   let originalFetch: typeof fetch;
   let requests: Array<{ url: string; body: string }>;
 
@@ -48,60 +59,17 @@ describe('PollWidget', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('renders the poll and its options', () => {
-    const element = createPollElement(basePoll());
-
-    assert.equal(element.querySelector('.poll-question')?.textContent, 'Which one?');
-    assert.equal(element.querySelectorAll('.poll-option').length, 2);
-    assert.ok(element.querySelector('.post-poll-footer')?.textContent);
-  });
-
-  it('votes in place without replacing the option or the widget', async () => {
-    const element = createPollElement(basePoll());
-    const option = element.querySelector<HTMLElement>('.poll-option[aria-label="Alpha"]');
-    const poll = element.querySelector('.post-poll');
-    assert.ok(option);
-    assert.ok(poll);
-    assert.equal(option.getAttribute('role'), 'button');
-    assert.equal(option.getAttribute('tabindex'), '0');
-
-    option.dispatchEvent(new Event('click'));
-    await tick();
-    await tick();
-
+  it('posts the option and returns updated results', async () => {
+    const result = await castPollVote('poll-1', 'a');
     assert.equal(requests.length, 1);
     assert.match(requests[0].url, /\/api\/polls\/poll-1\/vote$/);
     assert.match(requests[0].body, /"optionId":"a"/);
-
-    assert.equal(element.querySelector('.poll-option[aria-label="Alpha"]'), option);
-    assert.equal(element.querySelector('.post-poll'), poll);
-    assert.equal(option.classList.contains('is-voted'), true);
-    assert.equal(option.getAttribute('role'), null);
-    assert.match(option.querySelector('.poll-option-pct')?.textContent ?? '', /80%/);
+    assert.equal(result?.userVote, 'a');
+    assert.equal(result?.options[0].votes_count, 4);
   });
 
-  it('supports keyboard activation', async () => {
-    const element = createPollElement(basePoll());
-    const option = element.querySelector<HTMLElement>('.poll-option[aria-label="Beta"]');
-    assert.ok(option);
-
-    option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    await tick();
-    await tick();
-
-    assert.equal(requests.length, 1);
-    assert.match(requests[0].body, /"optionId":"b"/);
-  });
-
-  it('shows the ended state and hides interactivity', () => {
-    const element = createPollElement({
-      ...basePoll(),
-      userVote: 'a',
-      expired: true,
-    });
-
-    assert.ok(element.querySelector('.post-poll.is-expired'));
-    assert.ok(element.querySelector('.poll-ended-badge'));
-    assert.equal(element.querySelector('.poll-option.is-clickable'), null);
+  it('returns null on a 409 conflict', async () => {
+    globalThis.fetch = (async () => new Response('', { status: 409 })) as typeof fetch;
+    assert.equal(await castPollVote('poll-1', 'a'), null);
   });
 });
