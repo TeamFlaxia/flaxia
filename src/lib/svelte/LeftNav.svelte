@@ -1,5 +1,6 @@
 <script lang="ts">
 import { createLeftNav } from '../../components/LeftNav.ts';
+import { setupMobileLeftNav } from '../../lib/left-nav-drawer.ts';
 
 // Svelte-owned shell slot. F6-F8 pages can drop this in instead of letting
 // the legacy main.ts create the nav; the DOM/behavior stays identical.
@@ -15,6 +16,7 @@ $effect(() => {
   nav?.destroy();
   nav = createLeftNav(next);
   host.replaceChildren(nav.getElement());
+  setupMobileLeftNav(nav.getElement());
   return () => nav?.destroy();
 });
 </script>

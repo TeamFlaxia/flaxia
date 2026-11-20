@@ -34,6 +34,16 @@ test('left nav rebuilds when auth props arrive', async () => {
   assert.match(source, /host\.replaceChildren/);
 });
 
+test('left nav installs mobile swipe handling', async () => {
+  const source = await read('src/lib/svelte/LeftNav.svelte');
+  assert.match(source, /setupMobileLeftNav/);
+});
+
+test('bottom nav user state follows session props', async () => {
+  const source = await read('src/lib/svelte/ShellLayout.svelte');
+  assert.match(source, /updateUser/);
+});
+
 test('shell layout keeps the three-column landmark structure', async () => {
   const source = await read('src/lib/svelte/ShellLayout.svelte');
   assert.match(source, /class="main-container"/);

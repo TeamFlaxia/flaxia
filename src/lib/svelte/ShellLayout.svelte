@@ -50,6 +50,11 @@ $effect(() => {
   getBottomNav()?.setActiveItem(String(navProps.activeItem ?? 'home'));
 });
 
+$effect(() => {
+  const user = navProps.currentUser;
+  getBottomNav()?.updateUser(user as never);
+});
+
 onMount(() => {
   void ensureBottomNav({
     navigate: (view, postId, username) => {
