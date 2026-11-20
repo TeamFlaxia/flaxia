@@ -75,12 +75,24 @@ test('thread route owns its three-column page', async () => {
   assert.doesNotMatch(route, /ShellLayout/, 'ThreadPage already renders its own shell');
 });
 
-test('home feed route keeps the iframe-safe timeline', async () => {
+test('timeline feed is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/Timeline.svelte');
+  assert.match(component, /CardHost/);
+  assert.match(component, /loadInitial/);
+  assert.match(component, /<Composer \/>/);
+  const cards = await read('src/lib/timeline/cards.ts');
+  assert.match(cards, /mountPostCard/);
+  assert.match(cards, /mountAdCard/);
+});
+
+test('home feed route renders the Svelte timeline', async () => {
   const route = await read('src/routes/home/+page.svelte');
   assert.match(route, /ShellLayout/);
-  assert.match(route, /createTimeline/);
-  assert.match(route, /openLeftNav/);
+  assert.match(route, /lib\/svelte\/Timeline\.svelte/);
   assert.match(route, /getSessionUser/);
+  const timeline = await read('src/lib/svelte/Timeline.svelte');
+  assert.match(timeline, /openLeftNav/);
+  assert.match(timeline, /post-list/);
 });
 
 test('remaining legacy views now have Svelte routes', async () => {
@@ -108,13 +120,9 @@ test('home feed owns the composer through a Svelte mount point', async () => {
   const bridge = await read('src/components/PostComposer.ts');
   assert.match(bridge, /mount\(Composer/);
   assert.doesNotMatch(bridge, /className = 'post-composer'/, 'DOM construction must live in Svelte');
-  const home = await read('src/routes/home/+page.svelte');
-  assert.match(home, /composerHost/);
-  assert.match(home, /mount\(Composer/);
-  const timeline = await read('src/components/Timeline.ts');
-  assert.match(timeline, /composerHost/);
-  const types = await read('shared/types/post.ts');
-  assert.match(types, /composerHost\?: HTMLElement/);
+  const timeline = await read('src/lib/svelte/Timeline.svelte');
+  assert.match(timeline, /<Composer \/>/);
+  assert.match(timeline, /CardHost/);
 });
 
 test('admin routes render the standalone admin layout', async () => {
