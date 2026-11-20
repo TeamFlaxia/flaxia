@@ -90,7 +90,6 @@ test('remaining legacy views now have Svelte routes', async () => {
     ['translate', 'createTranslatePage'],
     ['profile/[username]', 'createProfilePage'],
     ['users/[username]', 'createProfilePage'],
-    ['@[domain]/[username]', 'createRemoteProfilePage'],
   ] as const;
   for (const [route, component] of cases) {
     const source = await read(`src/routes/${route}/+page.svelte`);
@@ -143,6 +142,15 @@ test('docs routes cover the index and article slugs', async () => {
   const article = await read('src/routes/docs/[slug]/+page.svelte');
   assert.match(index, /lib\/svelte\/DocsPage\.svelte/);
   assert.match(article, /slug=\{page\.params\.slug\}/);
+});
+
+test('remote profile route renders the Svelte component directly', async () => {
+  const route = await read('src/routes/@[domain]/[username]/+page.svelte');
+  assert.match(route, /lib\/svelte\/RemoteProfilePage\.svelte/);
+  assert.match(route, /ShellLayout/);
+  const component = await read('src/lib/svelte/RemoteProfilePage.svelte');
+  assert.match(component, /remote-profile-page/);
+  assert.match(component, /profile-follow-button/);
 });
 
 test('legal pages render the Svelte component directly', async () => {

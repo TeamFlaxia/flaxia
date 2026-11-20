@@ -20,7 +20,6 @@ this ratchet.
 - `src/lib/svelte/MailView.svelte`: `createMailSettingsPage`
 - `src/lib/svelte/MailView.svelte`: `createMailThreadPage`
 - `src/lib/svelte/RightPanel.svelte`: `createRightPanel`
-- `src/routes/@[domain]/[username]/+page.svelte`: `createRemoteProfilePage`
 - `src/routes/bookmarks/+page.svelte`: `createBookmarksPage`
 - `src/routes/explore/+page.svelte`: `createExplorePage`
 - `src/routes/home/+page.svelte`: `createTimeline`

@@ -1,18 +1,15 @@
 <script lang="ts">
 import { page } from '$app/state';
+import RemoteProfilePage from '../../../lib/svelte/RemoteProfilePage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
-import LegacyShellPage from '../../../lib/svelte/LegacyShellPage.svelte';
+import ShellLayout from '../../../lib/svelte/ShellLayout.svelte';
 import { getSessionUser } from '../../../lib/svelte/session.ts';
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
-const load = async () => {
-  const { createRemoteProfilePage } = await import('../../../components/RemoteProfilePage.ts');
-  return createRemoteProfilePage({
-    domain: page.params.domain,
-    username: page.params.username,
-    currentUser: getSessionUser() ?? undefined,
-  });
-};
 </script>
 
-<LegacyShellPage {load} activeItem="profile" />
+<ShellLayout navProps={{ activeItem: 'profile', currentUser: getSessionUser() ?? undefined }}>
+  <RemoteProfilePage
+    domain={page.params.domain}
+    username={page.params.username}
+    currentUser={getSessionUser() ?? null}
+  />
+</ShellLayout>
