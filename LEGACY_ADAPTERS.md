@@ -32,8 +32,6 @@ this ratchet.
 - `src/routes/home/+page.svelte`: `createTimeline`
 - `src/routes/maps/+page.svelte`: `createLeftNavHandlers`
 - `src/routes/maps/+page.svelte`: `createMapsPage`
-- `src/routes/notifications/+page.svelte`: `createLeftNavHandlers`
-- `src/routes/notifications/+page.svelte`: `createNotificationsPage`
 - `src/routes/profile/[username]/+page.svelte`: `createProfilePage`
 - `src/routes/search/+page.svelte`: `createSearchPage`
 - `src/routes/settings/+page.svelte`: `createLeftNavHandlers`
