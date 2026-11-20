@@ -1,5 +1,6 @@
 <script lang="ts">
-import { onMount } from 'svelte';
+import { untrack } from 'svelte';
+import { page } from '$app/state';
 import { createLeftNavHandlers } from '../../lib/left-nav-handlers.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
@@ -28,13 +29,31 @@ const navProps = {
   }),
 };
 
-onMount(() => {
-  let dispose = () => {};
-  void load().then((page) => {
-    host.appendChild(page.getElement());
-    dispose = page.destroy;
+let dispose = () => {};
+let mountedUrl: string | null = null;
+
+// Legacy DOM callers navigate by pushState + spaNavigate, which SvelteKit sees
+// as a URL change on the *same* route. Re-run the legacy page factory so search
+// queries, explore tags and other URL-encoded state actually take effect.
+$effect(() => {
+  const url = page.url.href;
+  if (!host || url === mountedUrl) return;
+  mountedUrl = url;
+  const pending = untrack(() => load());
+  let cancelled = false;
+  void pending.then((handle) => {
+    if (cancelled) {
+      handle.destroy();
+      return;
+    }
+    host.replaceChildren(handle.getElement());
+    dispose = handle.destroy;
   });
-  return () => dispose();
+  return () => {
+    cancelled = true;
+    dispose();
+    dispose = () => {};
+  };
 });
 </script>
 

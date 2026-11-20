@@ -199,6 +199,17 @@ test('stamp picker UI is owned by Svelte', async () => {
   assert.doesNotMatch(bridge, /stamp-picker-tabs/, 'DOM construction must live in the Svelte component');
 });
 
+test('spaNavigate updates SvelteKit routing', async () => {
+  const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
+  assert.match(bridge, /'spaNavigate'/);
+  assert.match(bridge, /PopStateEvent/);
+  const bootstrap = await read('src/lib/svelte/bootstrap.ts');
+  assert.match(bootstrap, /initSpaNavigateBridge/);
+  const shell = await read('src/lib/svelte/LegacyShellPage.svelte');
+  assert.match(shell, /page\.url\.href/);
+  assert.match(shell, /replaceChildren/);
+});
+
 test('audio player UI is owned by Svelte', async () => {
   const component = await read('src/lib/svelte/AudioPlayer.svelte');
   assert.match(component, /audio-player-visualizer|audio-visualizer-canvas/);
