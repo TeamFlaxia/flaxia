@@ -388,6 +388,7 @@ export function insertText(value: string): void {
           {#each suggestions as suggestion, i (suggestion.key)}
             <div
               class="mention-item"
+              data-value={suggestion.value}
               class:mention-item--active={i === activeSuggestion}
               style="padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;"
               onclick={() => selectSuggestion(i)}
