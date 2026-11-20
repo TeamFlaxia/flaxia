@@ -162,9 +162,8 @@ test('download route renders the Svelte page directly', async () => {
   assert.match(component, /download-chip/);
 });
 
-test('Svelte markup keeps the legacy classes and copy', async () => {
+test('billing result keeps its legacy classes and copy in Svelte', async () => {
   const svelte = await read('src/lib/svelte/BillingResult.svelte');
-  const legacy = await read('src/components/BillingResultPage.ts');
   for (const token of [
     'billing-result-page--success',
     'billing-result-page--canceled',
@@ -177,7 +176,6 @@ test('Svelte markup keeps the legacy classes and copy', async () => {
     'Payment Canceled',
     'Back to Home',
   ]) {
-    assert.ok(legacy.includes(token), `legacy component lost ${token}`);
     assert.ok(svelte.includes(token), `Svelte component lost ${token}`);
   }
 });
