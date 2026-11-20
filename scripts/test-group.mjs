@@ -62,6 +62,7 @@ const groups = {
   ],
   'posts-feeds': [
     'ai-index',
+    'composer-logic',
     'ai-tags',
     'ai-tags-e2e',
     'duplicate-posts',
