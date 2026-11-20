@@ -5,6 +5,7 @@ import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
 import { getSessionUser } from '../../lib/svelte/session.ts';
 
 let host: HTMLDivElement;
+let composerHost: HTMLDivElement;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
 let navProps: Record<string, unknown> = {};
 
@@ -30,10 +31,14 @@ onMount(() => {
           badge_type?: string | null;
         }
       | undefined;
+    const { mount, unmount } = await import('svelte');
+    const { default: Composer } = await import('../../lib/svelte/Composer.svelte');
+    const composerInstance = user && composerHost ? mount(Composer, { target: composerHost }) : null;
     const { createTimeline } = await import('../../components/Timeline.ts');
     const timeline = createTimeline({
       sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',
       currentUser: user ?? null,
+      composerHost: composerInstance ? composerHost : undefined,
     });
     const element = timeline.getElement();
     element.addEventListener('openLeftNav', () => {
@@ -41,7 +46,10 @@ onMount(() => {
       if (nav) openLeftNav(nav);
     });
     host.appendChild(element);
-    dispose = timeline.destroy;
+    dispose = () => {
+      if (composerInstance) unmount(composerInstance);
+      timeline.destroy();
+    };
     navProps = {
       activeItem: 'home',
       currentUser: user,
@@ -56,5 +64,6 @@ onMount(() => {
 </script>
 
 <ShellLayout {navProps}>
+  <div bind:this={composerHost}></div>
   <div bind:this={host}></div>
 </ShellLayout>

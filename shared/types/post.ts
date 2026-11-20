@@ -237,6 +237,8 @@ export interface TimelineProps {
     avatar_key?: string;
     badge_type?: string | null;
   } | null;
+  /** Svelte-owned mount point for the inline composer; legacy path creates its own. */
+  composerHost?: HTMLElement | null;
 }
 
 export interface TimelineState {
