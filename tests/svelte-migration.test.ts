@@ -154,12 +154,12 @@ test('legal pages render the Svelte component directly', async () => {
   }
 });
 
-test('download route mounts the legacy page declaratively', async () => {
+test('download route renders the Svelte page directly', async () => {
   const route = await read('src/routes/download/+page.svelte');
-  assert.match(route, /createDownloadPage/);
-  assert.match(route, /initI18n/);
-  assert.match(route, /host\.appendChild/);
-  assert.doesNotMatch(route, /:global\(#app\)/, 'Svelte shell must render inside #app');
+  assert.match(route, /lib\/svelte\/DownloadPage\.svelte/);
+  const component = await read('src/lib/svelte/DownloadPage.svelte');
+  assert.match(component, /download-card/);
+  assert.match(component, /download-chip/);
 });
 
 test('Svelte markup keeps the legacy classes and copy', async () => {
