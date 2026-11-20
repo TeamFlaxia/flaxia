@@ -1,3 +1,7 @@
+// Legacy-compatible bridge: the preview DOM is owned by ImagePreview.svelte.
+// The fullscreen lightbox (pinch/zoom/pan/gallery) stays here for now; callers
+// only append the returned element, so they keep working unchanged.
+import { mount, unmount } from 'svelte';
 import { GifPreviewProps } from '../../shared/types/post.ts';
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
@@ -8,249 +12,64 @@ import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
+import ImagePreview from '../lib/svelte/ImagePreview.svelte';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
-  const container = document.createElement('div');
-  container.className = 'image-preview';
+  const target = document.createElement('div');
 
-  // Data-saver: don't fetch image bytes until the user taps. Blob URLs
-  // (already fetched+decrypted) and confirmed reloads bypass the gate.
+  // Data-saver: don't fetch image bytes until the user taps.
   if (!props.src && !props.dataSaverConfirmed && isDataSaverEnabled()) {
-    container.appendChild(
-      createDataSaverPlaceholder(t('media.data_saver_load_image'), () => {
-        const real = createImagePreview({ ...props, dataSaverConfirmed: true });
-        container.replaceWith(real);
-      }),
-    );
-    return container;
+    const placeholder = createDataSaverPlaceholder(t('media.data_saver_load_image'), () => {
+      const real = createImagePreview({ ...props, dataSaverConfirmed: true });
+      target.replaceWith(real);
+    });
+    target.className = 'image-preview';
+    target.appendChild(placeholder);
+    return target;
   }
 
   if (!props.gifKey) {
-    // Fallback for posts without image
     const fallback = document.createElement('div');
     fallback.className = 'image-preview-error';
     fallback.textContent = t('image_preview.no_preview');
-    container.appendChild(fallback);
-    return container;
+    target.className = 'image-preview';
+    target.appendChild(fallback);
+    return target;
   }
 
-  // If a pre-fetched src is provided (e.g. decrypted blob URL), use it directly
-  if (props.src) {
-    const img = document.createElement('img');
-    img.className = 'image-preview-img';
-    img.alt = t('image_preview.post_preview', { id: props.postId });
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.draggable = false;
-    img.oncontextmenu = (e) => e.preventDefault();
-    img.src = props.src;
-    img.style.cssText =
-      'width: 100%; height: auto; max-height: 700px; cursor: pointer; display: block; border-radius: var(--radius-md);';
-    container.style.cssText =
-      'position: relative; width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; background: var(--bg-input); border-radius: var(--radius-md);';
-    container.appendChild(img);
-    return container;
-  }
-
+  const imageUrl =
+    props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
   const baseImageUrl = nativeApiHref(
     props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`,
   );
-  // Keep the URL stable so the browser and the edge cache can reuse the image
-  // instead of re-downloading it on every card mount. Media edits overwrite
-  // the key, so a short max-age is still applied server-side.
-  const imageUrl = baseImageUrl;
 
-  const img = document.createElement('img');
-  img.className = 'image-preview-img';
-  img.alt = t('image_preview.post_preview', { id: props.postId });
-  img.loading = 'lazy';
-  img.decoding = 'async';
-  img.draggable = false;
-  img.oncontextmenu = (e) => e.preventDefault();
+  const instance = mount(ImagePreview, {
+    target,
+    props: {
+      imageUrl,
+      baseImageUrl,
+      postId: props.postId,
+      alt: t('image_preview.post_preview', { id: props.postId }),
+      ratio: props.ratio,
+      fit: props.fit,
+      isThumbnail: props.isThumbnail,
+      simple: !!props.src,
+      onOpenOverlay: props.src
+        ? () => {}
+        : () => {
+            createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
+          },
+    },
+  });
 
-  // Add click handler for overlay display
-  img.onclick = (e) => {
-    e.stopPropagation();
-    createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
-  };
+  const observer = new MutationObserver(() => {
+    if (target.isConnected) return;
+    observer.disconnect();
+    unmount(instance);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
 
-  // Forced 16:9 preview: reserve the box before the image loads so late image
-  // loads can never push the timeline down. Fill the frame by default, cropping
-  // the edges while preserving the image's aspect ratio.
-  if (props.ratio === '16:9') {
-    container.classList.add('fx-box');
-    container.style.cssText = `
-      --fx-ratio: 16 / 9;
-      --fx-min: 0px;
-      background: var(--bg-input);
-      ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
-    `;
-
-    img.style.cssText = `
-      width: 100%;
-      height: 100%;
-      object-fit: ${props.fit ?? 'cover'};
-      object-position: center;
-      cursor: pointer;
-      display: block;
-      ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
-    `;
-
-    if (props.isThumbnail) {
-      setOfflineImage(img, baseImageUrl);
-      container.appendChild(img);
-      return container;
-    }
-
-    const placeholder = document.createElement('div');
-    placeholder.className = 'image-preview-loading';
-    placeholder.style.cssText = `
-      position: absolute;
-      inset: 0;
-      background: var(--bg-input);
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-      font-family: monospace;
-      font-size: 0.875rem;
-    `;
-    placeholder.textContent = t('common.loading');
-
-    img.onload = () => {
-      placeholder.style.display = 'none';
-    };
-    img.onerror = () => {
-      placeholder.style.display = 'none';
-      const fallback = document.createElement('div');
-      fallback.className = 'image-preview-error';
-      fallback.style.cssText = `
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-secondary);
-        color: var(--text-muted);
-        font-size: 0.875rem;
-        text-align: center;
-        padding: 2rem;
-        border-radius: var(--radius-md);
-      `;
-      fallback.textContent = t('image_preview.load_failed');
-      container.appendChild(fallback);
-    };
-
-    setOfflineImage(img, imageUrl);
-    container.appendChild(placeholder);
-    container.appendChild(img);
-    return container;
-  }
-
-  // Lay out the container as relative so the stage wraps the image's height.
-  container.style.cssText = `
-    position: relative;
-    width: 100%;
-    height: auto;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    ${props.isThumbnail ? '' : 'background: var(--bg-input); border-radius: var(--radius-md);'}
-  `;
-
-  const MAX_IMG_HEIGHT = 700;
-
-  // Fit the image to the container width, capping the height at MAX_IMG_HEIGHT
-  // while preserving the natural aspect ratio (explicit px sizing avoids the
-  // browser-inconsistent aspect-ratio/max-height transfer that leaves the width
-  // unsqueezed and distorts tall images).
-  const fit = () => {
-    if (img.naturalWidth <= 0 || img.naturalHeight <= 0) return;
-    const naturalRatio = img.naturalHeight / img.naturalWidth; // height per unit width
-    const containerW = container.clientWidth || img.parentElement?.clientWidth || 0;
-    if (containerW <= 0) return;
-    let w = containerW;
-    let h = w * naturalRatio;
-    if (h > MAX_IMG_HEIGHT) {
-      h = MAX_IMG_HEIGHT;
-      w = h / naturalRatio;
-    }
-    // Never upscale beyond the image's natural size
-    w = Math.min(w, img.naturalWidth);
-    h = w * naturalRatio;
-    img.style.width = `${w}px`;
-    img.style.height = `${h}px`;
-  };
-
-  // Re-fit on container size changes
-  const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
-  ro?.observe(container);
-  container.addEventListener('DOMNodeRemoved', () => ro?.disconnect(), { once: true });
-
-  img.style.cssText = `
-    width: 100%;
-    height: auto;
-    max-height: 700px;
-    cursor: pointer;
-    display: block;
-    ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
-  `;
-
-  if (props.isThumbnail) {
-    img.onload = fit;
-    if (img.complete) fit();
-    setOfflineImage(img, baseImageUrl);
-    container.appendChild(img);
-  } else {
-    // Show a placeholder with the same styling before load
-    const placeholder = document.createElement('div');
-    placeholder.className = 'image-preview-loading';
-    placeholder.style.cssText = `
-      width: 100%;
-      padding-bottom: 56.25%;
-      background: var(--bg-input);
-      border-radius: var(--radius-md);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-      font-family: monospace;
-      font-size: 0.875rem;
-    `;
-    placeholder.textContent = t('common.loading');
-
-    img.onload = () => {
-      placeholder.style.display = 'none';
-      fit();
-    };
-    img.onerror = () => {
-      placeholder.style.display = 'none';
-      const fallback = document.createElement('div');
-      fallback.className = 'image-preview-error';
-      fallback.style.cssText = `
-        width: 100%;
-        padding-bottom: 56.25%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--bg-secondary);
-        color: var(--text-muted);
-        font-size: 0.875rem;
-        text-align: center;
-        padding: 2rem;
-        border-radius: var(--radius-md);
-      `;
-      fallback.textContent = t('image_preview.load_failed');
-      container.appendChild(fallback);
-    };
-
-    setOfflineImage(img, imageUrl);
-    container.appendChild(placeholder);
-    container.appendChild(img);
-  }
-
-  return container;
+  return target;
 }
 
 // Create image overlay modal with pinch-to-zoom and pan.

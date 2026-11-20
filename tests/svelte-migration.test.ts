@@ -219,6 +219,15 @@ test('audio player UI is owned by Svelte', async () => {
   assert.doesNotMatch(bridge, /audio-player-controls/, 'DOM construction must live in the Svelte component');
 });
 
+test('image preview UI is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/ImagePreview.svelte');
+  assert.match(component, /image-preview-img/);
+  assert.match(component, /image-preview-loading/);
+  const bridge = await read('src/components/ImagePreview.ts');
+  assert.match(bridge, /mount\(ImagePreview/);
+  assert.doesNotMatch(bridge, /className = 'image-preview-img'/, 'DOM construction must live in the Svelte component');
+});
+
 test('video player UI is owned by Svelte', async () => {
   const component = await read('src/lib/svelte/VideoPlayer.svelte');
   assert.match(component, /video-player-controls/);
