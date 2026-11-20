@@ -13,14 +13,11 @@ test('billing result routes render the Svelte component', async () => {
   assert.match(canceled, /BillingResult success=\{false\}/);
 });
 
-test('legacy shell skips routes owned by SvelteKit', async () => {
-  const main = await read('src/main.ts');
-  assert.match(main, /SVELTE_ROUTES/);
-  assert.match(main, /billing\\?\/\(success\|canceled\)/);
-  assert.match(main, /\/download/);
-  assert.match(main, /\(terms\|privacy\|child-safety\|about\)/);
-  assert.match(main, /docs/);
-  assert.match(main, /bookmarks/);
+test('root route redirects to the home feed', async () => {
+  const root = await read('src/routes/+page.svelte');
+  assert.match(root, /location\.replace\('\/home'\)/);
+  const layout = await read('src/routes/+layout.ts');
+  assert.match(layout, /initShellBootstrap/);
 });
 
 test('bookmarks route uses the standalone shell', async () => {
@@ -186,4 +183,9 @@ test('Svelte markup keeps the legacy classes and copy', async () => {
 test('SvelteKit body renders inside #app so legacy CSS selectors apply', async () => {
   const app = await read('src/app.html');
   assert.match(app, /<div id="app">%sveltekit\.body%<\/div>/);
+});
+
+test('legacy main entrypoint is gone', async () => {
+  const { existsSync } = await import('node:fs');
+  assert.equal(existsSync(new URL('../src/main.ts', import.meta.url).pathname), false);
 });

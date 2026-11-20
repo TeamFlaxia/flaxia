@@ -5,8 +5,10 @@ export const prerender = false;
 // be loaded before any route component mounts.
 export async function load() {
   if (typeof window === 'undefined') return {};
+  const { initShellBootstrap } = await import('../lib/svelte/bootstrap.ts');
   const { initI18n } = await import('../lib/i18n.ts');
   const { loadSessionUser } = await import('../lib/svelte/session.ts');
+  initShellBootstrap();
   await initI18n();
   await loadSessionUser();
   return {};
