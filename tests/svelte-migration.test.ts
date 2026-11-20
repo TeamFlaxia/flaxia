@@ -32,9 +32,11 @@ test('notifications route wires data fetching and shell', async () => {
   const route = await read('src/routes/notifications/+page.svelte');
   assert.match(route, /ShellLayout/);
   assert.match(route, /fetchNotifications/);
-  assert.match(route, /createNotificationsPage/);
+  assert.match(route, /lib\/svelte\/NotificationsPage\.svelte/);
   assert.match(route, /onMarkAllRead/);
   assert.match(route, /onNavigateToPost/);
+  const component = await read('src/lib/svelte/NotificationsPage.svelte');
+  assert.match(component, /notification-row/);
 });
 
 test('auth-gated routes read currentUser from getMe().user', async () => {
