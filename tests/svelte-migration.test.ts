@@ -189,3 +189,12 @@ test('legacy main entrypoint is gone', async () => {
   const { existsSync } = await import('node:fs');
   assert.equal(existsSync(new URL('../src/main.ts', import.meta.url).pathname), false);
 });
+
+test('stamp picker UI is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/StampPicker.svelte');
+  assert.match(component, /emoji-picker-element/);
+  assert.match(component, /stamp-picker-tabs/);
+  const bridge = await read('src/components/StampPicker.ts');
+  assert.match(bridge, /mount\(StampPicker/);
+  assert.doesNotMatch(bridge, /stamp-picker-tabs/, 'DOM construction must live in the Svelte component');
+});
