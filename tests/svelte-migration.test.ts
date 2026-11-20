@@ -244,6 +244,16 @@ test('audio player UI is owned by Svelte', async () => {
   assert.doesNotMatch(bridge, /audio-player-controls/, 'DOM construction must live in the Svelte component');
 });
 
+test('quoted post card is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/QuotedPostCard.svelte');
+  assert.match(component, /quoted-post-card/);
+  assert.match(component, /mountQuotedAttachment/);
+  const media = await read('src/lib/post/quoted-media.ts');
+  assert.match(media, /createMediaCarousel/);
+  const bridge = await read('src/components/QuotedPostCard.ts');
+  assert.match(bridge, /mount\(QuotedPostCardView/);
+});
+
 test('post card sub-components are owned by Svelte', async () => {
   for (const [component, token] of [
     ['PostHeader', 'post-avatar'],
