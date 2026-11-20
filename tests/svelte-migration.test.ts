@@ -207,7 +207,8 @@ test('billing result keeps its legacy classes and copy in Svelte', async () => {
 
 test('SvelteKit body renders inside #app so legacy CSS selectors apply', async () => {
   const app = await read('src/app.html');
-  assert.match(app, /<div id="app">%sveltekit\.body%<\/div>/);
+  assert.match(app, /<div id="app">[\s\S]*%sveltekit\.body%[\s\S]*<\/div>/);
+  assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
 });
 
 test('legacy main entrypoint is gone', async () => {
