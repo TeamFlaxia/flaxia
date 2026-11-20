@@ -1,5 +1,9 @@
+// Legacy-compatible bridge: the prompt UI is owned by SignInPrompt.svelte;
+// this module only keeps modal registration and mount/unmount lifecycle.
+import { mount, unmount } from 'svelte';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import SignInPrompt from '../lib/svelte/SignInPrompt.svelte';
 
 export interface SignInPromptProps {
   subtitle?: string;
@@ -11,61 +15,38 @@ export interface SignInPromptProps {
 export function createSignInPrompt(props: SignInPromptProps = {}) {
   const unregister = registerModal();
   const subtitle = props.subtitle || t('auth.sign_up_subtitle');
+  const target = document.createElement('div');
+  document.body.appendChild(target);
 
-  // Create overlay
-  const overlay = document.createElement('div');
-  overlay.className = 'signin-prompt-overlay';
+  let instance: Parameters<typeof unmount>[0] | null = null;
 
-  // Create dialog
-  const dialog = document.createElement('div');
-  dialog.className = 'signin-prompt-dialog';
-
-  dialog.innerHTML = `
-    <div class="signin-prompt-badge" aria-hidden="true"><img src="/favicon.ico" alt="" width="40" height="40"></div>
-    <h3 class="signin-prompt-title fx-display">${t('auth.sign_up_title')}</h3>
-    <p class="signin-prompt-subtitle">${subtitle}</p>
-    <div class="signin-prompt-actions">
-      <button class="signin-btn signin-prompt-primary" type="button">${t('auth.sign_up')}</button>
-      <button class="signup-btn signin-prompt-secondary" type="button">${t('auth.sign_in')}</button>
-    </div>
-  `;
-
-  const signInBtn = dialog.querySelector('.signin-btn') as HTMLButtonElement;
-  const signUpBtn = dialog.querySelector('.signup-btn') as HTMLButtonElement;
-
-  signInBtn.addEventListener('click', () => {
-    destroy();
-    props.onSignUp?.();
-  });
-
-  signUpBtn.addEventListener('click', () => {
-    destroy();
-    props.onSignIn?.();
-  });
-
-  overlay.appendChild(dialog);
-  document.body.appendChild(overlay);
-
-  // Close on overlay click
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      unregister();
-      destroy();
-      props.onClose?.();
-    }
-  });
-
-  function destroy() {
+  const destroy = (): void => {
+    if (instance) unmount(instance);
+    instance = null;
     unregister();
-    if (overlay.parentNode) {
-      overlay.remove();
-    }
-  }
-
-  return {
-    element: overlay,
-    destroy,
+    target.remove();
   };
+
+  instance = mount(SignInPrompt, {
+    target,
+    props: {
+      subtitle,
+      onSignIn: () => {
+        destroy();
+        props.onSignIn?.();
+      },
+      onSignUp: () => {
+        destroy();
+        props.onSignUp?.();
+      },
+      onClose: () => {
+        destroy();
+        props.onClose?.();
+      },
+    },
+  });
+
+  return { element: target, destroy };
 }
 
 export type SignInPromptAction =
@@ -93,7 +74,6 @@ const signInPromptSubtitles: Record<SignInPromptAction, string> = {
   reaction: 'auth.sign_in_to_reaction',
 };
 
-// Convenience function to show sign-in prompt with preset subtitle
 export function showSignInPrompt(
   action: SignInPromptAction,
   onSignIn: () => void,
