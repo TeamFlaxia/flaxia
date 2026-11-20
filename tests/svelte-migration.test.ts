@@ -25,7 +25,7 @@ test('bookmarks route uses the standalone shell', async () => {
   assert.match(route, /ShellLayout/);
   assert.match(route, /createBookmarksPage/);
   assert.match(route, /getSessionUser/);
-  assert.match(route, /createLeftNavHandlers/);
+  assert.match(route, /leftNavCallbacks/);
 });
 
 test('notifications route wires data fetching and shell', async () => {

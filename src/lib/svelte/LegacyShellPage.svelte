@@ -1,7 +1,7 @@
 <script lang="ts">
 import { untrack } from 'svelte';
 import { page } from '$app/state';
-import { createLeftNavHandlers } from '../../lib/left-nav-handlers.ts';
+import { leftNavCallbacks } from '../../lib/left-nav-handlers.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
@@ -15,7 +15,7 @@ const user = getSessionUser();
 const navProps = {
   activeItem,
   currentUser: user ?? undefined,
-  ...createLeftNavHandlers({
+  ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {
       const path =
         view === 'timeline'
