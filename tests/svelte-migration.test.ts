@@ -198,3 +198,13 @@ test('stamp picker UI is owned by Svelte', async () => {
   assert.match(bridge, /mount\(StampPicker/);
   assert.doesNotMatch(bridge, /stamp-picker-tabs/, 'DOM construction must live in the Svelte component');
 });
+
+test('login and register routes start the external auth flow', async () => {
+  const login = await read('src/routes/login/+page.svelte');
+  assert.match(login, /startAuthRedirect\('login'\)/);
+  const register = await read('src/routes/register/+page.svelte');
+  assert.match(register, /startAuthRedirect\('register'\)/);
+  const helper = await read('src/lib/svelte/auth-start.ts');
+  assert.match(helper, /beginNativeAuthRedirect/);
+  assert.match(helper, /\/api\/auth\/start/);
+});
