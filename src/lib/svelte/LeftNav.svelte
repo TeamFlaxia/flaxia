@@ -1,6 +1,6 @@
 <script lang="ts">
 import { createLeftNav } from '../../components/LeftNav.ts';
-import { setupMobileLeftNav } from '../../lib/left-nav-drawer.ts';
+import { openLeftNav, setupMobileLeftNav } from '../../lib/left-nav-drawer.ts';
 
 // Svelte-owned shell slot. F6-F8 pages can drop this in instead of letting
 // the legacy main.ts create the nav; the DOM/behavior stays identical.
@@ -13,10 +13,15 @@ let nav: ReturnType<typeof createLeftNav> | null = null;
 $effect(() => {
   const next = props;
   if (!host) return;
+  // navProps arrives asynchronously, so this effect can re-run while the
+  // mobile drawer is open. Rebuild the DOM but carry the open state over —
+  // otherwise the freshly created nav silently loses `left-nav--open`.
+  const wasOpen = nav?.getElement().classList.contains('left-nav--open') ?? false;
   nav?.destroy();
   nav = createLeftNav(next);
   host.replaceChildren(nav.getElement());
   setupMobileLeftNav(nav.getElement());
+  if (wasOpen) openLeftNav(nav.getElement());
   return () => nav?.destroy();
 });
 </script>
