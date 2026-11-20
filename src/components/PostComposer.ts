@@ -14,9 +14,25 @@ export interface PostComposerProps {
 }
 
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../../shared/entitlements.ts';
-import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../../shared/file-extensions.ts';
+import { attachmentMimeType, getMimeType } from '../../shared/file-extensions.ts';
 import { stripPostColors } from '../../shared/post-colors.ts';
 import { attachPlusBadge } from '../lib/avatar.js';
+import {
+  buildPollData,
+  type ComposerAutosave,
+  type ComposerDraft,
+  canSubmit,
+  charMeter,
+  fileExtension,
+  isGameFile,
+  MAX_MEDIA_FILE_BYTES,
+  MAX_MEDIA_TOTAL_BYTES,
+  POST_CHAR_LIMIT,
+  type PollData,
+  parseComposerAutosave,
+  parseComposerDrafts,
+  validateSubmission,
+} from '../lib/composer/logic.ts';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -38,64 +54,9 @@ import { openMediaEditor } from './MediaEditorModal.js';
 import { openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
-// Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
-// The count limit is plan-dependent — see shared/entitlements.ts.
-const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
 const AUTOSAVE_ITEM_ID = 'post_autosave_main';
 
-interface ComposerDraft {
-  id: string;
-  text: string;
-  savedAt: number;
-}
-
-interface ComposerAutosave {
-  text: string;
-  savedAt: number;
-  poll?: { question: string; options: string[]; duration: string };
-}
-
 type DraftStorageMode = 'loading' | 'local' | 'vault' | 'locked';
-
-function parseComposerDrafts(value: unknown): ComposerDraft[] {
-  if (!Array.isArray(value)) return [];
-  const values: unknown[] = value;
-  return values.filter((draft): draft is ComposerDraft => {
-    if (typeof draft !== 'object' || draft === null) return false;
-    const candidate = draft as Record<string, unknown>;
-    return (
-      typeof candidate.id === 'string' &&
-      typeof candidate.text === 'string' &&
-      typeof candidate.savedAt === 'number' &&
-      Number.isFinite(candidate.savedAt)
-    );
-  });
-}
-
-function parseAutosave(value: unknown): ComposerAutosave | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const draft = value as Partial<ComposerAutosave>;
-  if (typeof draft.text !== 'string' || typeof draft.savedAt !== 'number' || !Number.isFinite(draft.savedAt))
-    return null;
-  if (
-    draft.poll &&
-    (typeof draft.poll.question !== 'string' ||
-      !Array.isArray(draft.poll.options) ||
-      !draft.poll.options.every((option) => typeof option === 'string') ||
-      typeof draft.poll.duration !== 'string')
-  )
-    return null;
-  return draft as ComposerAutosave;
-}
-
-function fileExtension(file: File): string {
-  return file.name.toLowerCase().split('.').pop() || '';
-}
-
-function isGameFile(file: File): boolean {
-  return GAME_FILE_EXTENSIONS.has(fileExtension(file));
-}
 
 export class PostComposer {
   private element: HTMLElement;
@@ -867,13 +828,6 @@ export class PostComposer {
     }
   }
 
-  private validateFile(file: File): { valid: boolean; error?: string } {
-    // Size is enforced at submit time (and by the server on upload) so users
-    // can attach an oversized file and compress it in the editor first.
-
-    return { valid: true };
-  }
-
   private handleDragOver(e: DragEvent): void {
     e.preventDefault();
     this.dragCounter++;
@@ -915,8 +869,8 @@ export class PostComposer {
     if (files.length === 0) return;
     this.clearError();
 
-    const games = files.filter(isGameFile);
-    const media = files.filter((f) => !isGameFile(f));
+    const games = files.filter((file) => isGameFile(file.name));
+    const media = files.filter((f) => !isGameFile(f.name));
 
     if (games.length > 0) {
       if (files.length > 1 || media.length > 0 || this.selectedMedia.length > 0) {
@@ -1065,12 +1019,6 @@ export class PostComposer {
       return;
     }
 
-    const validation = this.validateFile(file);
-    if (!validation.valid) {
-      this.clearFileSelection();
-      showToast(validation.error!, true);
-      return;
-    }
     // Check if file is an accepted format (MIME type validation)
     const allowedTypes = [
       'image/gif',
@@ -1294,15 +1242,14 @@ export class PostComposer {
     });
   }
 
-  private getPollData(): { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null {
-    if (!this.pollActive) return null;
-    const question = this.pollQuestion.trim();
-    const options = this.pollOptionsArr.map((o) => o.trim()).filter((o) => o.length > 0);
-    if (!question || options.length < 2) return null;
+  private getPollData(): PollData | null {
     const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
-    const durationMs = parseInt(select.value, 10);
-    const endsAt = new Date(Date.now() + durationMs).toISOString();
-    return { question, options, multipleChoice: false, endsAt };
+    return buildPollData({
+      active: this.pollActive,
+      question: this.pollQuestion,
+      options: this.pollOptionsArr,
+      durationMs: parseInt(select.value, 10),
+    });
   }
 
   private showFilePreview(file: File): void {
@@ -1345,21 +1292,19 @@ export class PostComposer {
   }
 
   private updateSubmitButton(): void {
-    const hasContent = this.textarea.value.trim().length > 0 || this.props.quotedPost != null;
-    this.submitButton.disabled = !hasContent || this.isSubmitting;
+    this.submitButton.disabled = !canSubmit(this.textarea.value, this.props.quotedPost, this.isSubmitting);
     this.submitButton.textContent = this.isSubmitting ? t('composer.posting') : t('composer.post_button');
     this.submitButton.dataset.state = this.isSubmitting ? 'sending' : 'idle';
   }
 
   /** Keep the text + conic-gradient progress ring in sync (ratio drives --fx-progress). */
   private updateCharMeter(length: number): void {
-    this.charCount.textContent = t('composer.char_count', { current: length, max: 200 });
-    const ratio = Math.max(0, Math.min(1, length / 200));
-    const state = length >= 200 ? 'max' : length > 180 ? 'warn' : 'idle';
+    this.charCount.textContent = t('composer.char_count', { current: length, max: POST_CHAR_LIMIT });
+    const { ratio, state, empty } = charMeter(length);
     this.element.style.setProperty('--fx-progress', ratio.toFixed(3));
     this.element.dataset.meterState = state;
     this.charMeter.dataset.state = state;
-    this.charMeter.dataset.empty = String(length === 0);
+    this.charMeter.dataset.empty = String(empty);
   }
 
   /** Auto-grow the field; the height transition itself lives in composer.css. */
@@ -1412,7 +1357,7 @@ export class PostComposer {
     try {
       const raw = localStorage.getItem(PostComposer.AUTOSAVE_KEY);
       const parsed: unknown = raw ? JSON.parse(raw) : null;
-      return parseAutosave(parsed);
+      return parseComposerAutosave(parsed);
     } catch {
       return null;
     }
@@ -1488,7 +1433,7 @@ export class PostComposer {
       ]);
       this.draftStorageMode = 'vault';
       this.savedDrafts = parseComposerDrafts(remoteDrafts.map(({ value }) => value)).slice(0, 20);
-      const remoteAutosave = parseAutosave(remoteAutosaves.find(({ id }) => id === AUTOSAVE_ITEM_ID)?.value);
+      const remoteAutosave = parseComposerAutosave(remoteAutosaves.find(({ id }) => id === AUTOSAVE_ITEM_ID)?.value);
       const autosave = await this.migrateLegacyDrafts(remoteAutosave);
       this.restoreAutosave(autosave);
       this.setVaultNotice(false);
@@ -2026,23 +1971,13 @@ export class PostComposer {
 
     // Enforce the upload caps at post time (attachments themselves are
     // unrestricted so oversized media can be compressed in the editor first).
-    if (this.selectedFile && this.selectedFile.size > MAX_MEDIA_FILE_BYTES) {
-      showToast(t('composer.error_file_too_large'), true);
-      return;
-    }
-    if (this.selectedMedia.length > this.maxMediaAttachments) {
-      showToast(t('composer.error_too_many_media', { max: this.maxMediaAttachments }), true);
-      return;
-    }
-    const mediaTotal = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
-    for (const file of this.selectedMedia) {
-      if (file.size > MAX_MEDIA_FILE_BYTES) {
-        showToast(t('composer.error_file_too_large'), true);
-        return;
-      }
-    }
-    if (mediaTotal > MAX_MEDIA_TOTAL_BYTES) {
-      showToast(t('composer.error_total_too_large', { max: 50 }), true);
+    const issue = validateSubmission({
+      selectedFile: this.selectedFile,
+      selectedMedia: this.selectedMedia,
+      maxMediaAttachments: this.maxMediaAttachments,
+    });
+    if (issue) {
+      showToast(t(issue.key, 'max' in issue ? { max: issue.max } : undefined), true);
       return;
     }
 
