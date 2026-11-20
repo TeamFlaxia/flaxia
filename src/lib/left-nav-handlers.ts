@@ -17,7 +17,7 @@ export interface LeftNavHandlers {
   onSignUp: () => void;
 }
 
-export function createLeftNavHandlers(deps: LeftNavDeps): LeftNavHandlers {
+export function leftNavCallbacks(deps: LeftNavDeps): LeftNavHandlers {
   return {
     onNavigate: (item: string): void => {
       if (item === 'home') {

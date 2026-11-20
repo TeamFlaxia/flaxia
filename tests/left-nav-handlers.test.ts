@@ -1,7 +1,7 @@
-// createLeftNavHandlers: deps-driven nav callbacks.
+// leftNavCallbacks: deps-driven nav callbacks.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createLeftNavHandlers } from '../src/lib/left-nav-handlers.ts';
+import { leftNavCallbacks } from '../src/lib/left-nav-handlers.ts';
 
 const pushed: string[] = [];
 (globalThis as unknown as Record<string, unknown>).window = {
@@ -11,7 +11,7 @@ const pushed: string[] = [];
 function setup(username: string | null) {
   pushed.length = 0;
   const navigated: string[] = [];
-  const handlers = createLeftNavHandlers({
+  const handlers = leftNavCallbacks({
     navigate: (view, _postId, uname) => {
       navigated.push(uname ? `${view}:${uname}` : view);
     },
@@ -20,7 +20,7 @@ function setup(username: string | null) {
   return { handlers, navigated };
 }
 
-describe('createLeftNavHandlers', () => {
+describe('leftNavCallbacks', () => {
   it('maps items to views and history entries', () => {
     const { handlers, navigated } = setup('alice');
     handlers.onNavigate('home');

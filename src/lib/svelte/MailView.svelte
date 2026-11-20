@@ -21,7 +21,7 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
+    const { leftNavCallbacks } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
     const user = getSessionUser() as { id: string; username: string } | undefined;
     if (!user) {
@@ -50,7 +50,7 @@ onMount(() => {
     navProps = {
       activeItem: 'mail',
       currentUser,
-      ...createLeftNavHandlers({
+      ...leftNavCallbacks({
         navigate: (target, postId, username) => window.location.assign(pathFor(target, postId, username)),
         getCurrentUsername: () => currentUser.username,
       }),

@@ -20,7 +20,7 @@ onMount(() => {
   let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
-    const { createLeftNavHandlers } = await import('../../lib/left-nav-handlers.ts');
+    const { leftNavCallbacks } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
     const user = getSessionUser() as
       | { id: string; username: string; display_name?: string; avatar_key?: string }
@@ -38,7 +38,7 @@ onMount(() => {
     navProps = {
       activeItem: 'arcade',
       currentUser: user,
-      ...createLeftNavHandlers({
+      ...leftNavCallbacks({
         navigate: (view, postId, username) => window.location.assign(pathFor(view, postId, username)),
         getCurrentUsername: () => user?.username ?? null,
       }),

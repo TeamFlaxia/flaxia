@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import { ensureBottomNav, getBottomNav } from '../../lib/bottom-nav-setup.ts';
-import { createLeftNavHandlers } from '../../lib/left-nav-handlers.ts';
+import { leftNavCallbacks } from '../../lib/left-nav-handlers.ts';
 import { parseCurrentRoute } from '../../lib/router.ts';
 import { viewToBottomNavId } from '../../lib/view-nav.ts';
 import LeftNav from './LeftNav.svelte';
@@ -30,7 +30,7 @@ let {
 const fallbackNavProps = () => ({
   activeItem: parseCurrentRoute()?.view ?? 'home',
   currentUser: getSessionUser() ?? undefined,
-  ...createLeftNavHandlers({
+  ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {
       const path =
         view === 'timeline'
