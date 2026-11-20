@@ -1,18 +1,14 @@
 <script lang="ts">
-import { onMount } from 'svelte';
+import { mount, unmount } from 'svelte';
+import PostComposer from './PostComposer.svelte';
 import { getSessionUser } from './session.ts';
 
 let host: HTMLDivElement;
 
-onMount(() => {
-  let dispose = () => {};
-  void (async () => {
-    const { createPostComposer } = await import('../../components/PostComposer.ts');
-    const composer = createPostComposer({ currentUser: getSessionUser() ?? undefined });
-    host.appendChild(composer.getElement());
-    dispose = composer.destroy;
-  })();
-  return () => dispose();
+$effect(() => {
+  if (!host) return;
+  const instance = mount(PostComposer, { target: host, props: { currentUser: getSessionUser() ?? undefined } });
+  return () => unmount(instance);
 });
 </script>
 

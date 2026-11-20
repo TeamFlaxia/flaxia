@@ -13,7 +13,6 @@ this ratchet.
 - `src/lib/svelte/AdminView.svelte`: `createAdminLayout`
 - `src/lib/svelte/AdminView.svelte`: `createAdminUsersTab`
 - `src/lib/svelte/ArcadeView.svelte`: `createArcadePage`
-- `src/lib/svelte/Composer.svelte`: `createPostComposer`
 - `src/lib/svelte/LeftNav.svelte`: `createLeftNav`
 - `src/lib/svelte/MailView.svelte`: `createMailComposePage`
 - `src/lib/svelte/MailView.svelte`: `createMailPage`
