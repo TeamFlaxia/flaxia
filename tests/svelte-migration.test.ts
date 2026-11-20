@@ -141,14 +141,14 @@ test('docs routes cover the index and article slugs', async () => {
   assert.match(article, /page\.params\.slug/);
 });
 
-test('legal pages use the shared legacy page wrapper', async () => {
-  const wrapper = await read('src/lib/svelte/LegacyPage.svelte');
-  assert.match(wrapper, /initI18n/);
-  assert.match(wrapper, /host\.appendChild/);
+test('legal pages render the Svelte component directly', async () => {
+  const component = await read('src/lib/svelte/LegalPage.svelte');
+  assert.match(component, /markdownToHtml/);
+  assert.match(component, /legal-footer-links/);
   for (const route of ['terms', 'privacy', 'child-safety', 'about']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
-    assert.match(source, /createLegalPage/);
-    assert.ok(source.includes(`type: '${route}'`), `${route} must use its legal page type`);
+    assert.match(source, /lib\/svelte\/LegalPage\.svelte/);
+    assert.ok(source.includes(`type="${route}"`), `${route} must use its legal page type`);
   }
 });
 
