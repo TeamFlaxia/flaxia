@@ -236,6 +236,19 @@ test('audio player UI is owned by Svelte', async () => {
   assert.doesNotMatch(bridge, /audio-player-controls/, 'DOM construction must live in the Svelte component');
 });
 
+test('reply composer UI is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/ReplyComposer.svelte');
+  assert.match(component, /reply-composer-textarea/);
+  assert.match(component, /submitReply/);
+  assert.match(component, /mention-dropdown/);
+  const submit = await read('src/lib/composer/reply-submit.ts');
+  assert.match(submit, /replies\/prepare/);
+  assert.match(submit, /replies\/commit/);
+  const bridge = await read('src/components/ReplyComposer.ts');
+  assert.match(bridge, /mount\(ReplyComposerView/);
+  assert.doesNotMatch(bridge, /className = 'reply-composer'/, 'DOM construction must live in Svelte');
+});
+
 test('image preview UI is owned by Svelte', async () => {
   const component = await read('src/lib/svelte/ImagePreview.svelte');
   assert.match(component, /image-preview-img/);
