@@ -134,11 +134,13 @@ test('F8 routes use the shell with correct rails', async () => {
 });
 
 test('docs routes cover the index and article slugs', async () => {
+  const component = await read('src/lib/svelte/DocsPage.svelte');
+  assert.match(component, /fetchDocsManifest/);
+  assert.match(component, /DOMPurify/);
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
-  assert.match(index, /createDocsPage\(\{\}/);
-  assert.match(article, /createDocsPage\(\{ slug:/);
-  assert.match(article, /page\.params\.slug/);
+  assert.match(index, /lib\/svelte\/DocsPage\.svelte/);
+  assert.match(article, /slug=\{page\.params\.slug\}/);
 });
 
 test('legal pages render the Svelte component directly', async () => {

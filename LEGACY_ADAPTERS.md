@@ -27,8 +27,6 @@ this ratchet.
 - `src/routes/@[domain]/[username]/+page.svelte`: `createRemoteProfilePage`
 - `src/routes/bookmarks/+page.svelte`: `createBookmarksPage`
 - `src/routes/bookmarks/+page.svelte`: `createLeftNavHandlers`
-- `src/routes/docs/+page.svelte`: `createDocsPage`
-- `src/routes/docs/[slug]/+page.svelte`: `createDocsPage`
 - `src/routes/download/+page.svelte`: `createDownloadPage`
 - `src/routes/explore/+page.svelte`: `createExplorePage`
 - `src/routes/home/+page.svelte`: `createLeftNavHandlers`

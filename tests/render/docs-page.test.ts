@@ -1,59 +1,32 @@
 import './setup.ts';
 
 import assert from 'node:assert/strict';
-import { afterEach, beforeEach, describe, it } from 'node:test';
-import { createDocsPage } from '../../src/components/DocsPage.ts';
+import { describe, it } from 'node:test';
+import { FOOTER_PAGES, preferredFile, preferredTitle } from '../../src/lib/docs/manifest.ts';
 
-function tick(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
-}
+describe('DocsPage manifest helpers', () => {
+  const doc = {
+    slug: 'guide',
+    title: { ja: 'ガイド', en: 'Guide' },
+    files: { ja: 'guide.ja.md', en: 'guide.en.md' },
+  };
 
-describe('DocsPage', () => {
-  let originalFetch: typeof fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/docs/index.json')) {
-        return new Response(
-          JSON.stringify({
-            docs: [
-              {
-                slug: 'guide',
-                title: { ja: 'Guide', en: 'Guide' },
-                files: { ja: 'guide.md', en: 'guide.md' },
-              },
-            ],
-          }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-      return new Response('# Guide\n\nBody.', {
-        status: 200,
-        headers: { 'Content-Type': 'text/markdown' },
-      });
-    }) as typeof fetch;
+  it('picks the preferred locale with fallbacks', () => {
+    assert.equal(preferredTitle(doc, 'ja'), 'ガイド');
+    assert.equal(preferredTitle(doc, 'de'), 'ガイド');
+    assert.equal(preferredFile(doc, 'en'), 'guide.en.md');
+    assert.equal(preferredFile(doc, 'de'), 'guide.en.md');
   });
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+  it('falls back to the slug when a title is missing', () => {
+    assert.equal(preferredTitle({ slug: 'plain', title: {}, files: {} }, 'ja'), 'plain');
+    assert.equal(preferredFile({ slug: 'plain', title: {}, files: {} }, 'ja'), '');
   });
 
-  it('renders the docs index inside the engine shell', async () => {
-    const page = createDocsPage({});
-    const element = page.getElement();
-    await tick();
-    await tick();
-
-    assert.ok(element.classList.contains('docs-page'));
-    assert.ok(element.querySelector('.legal-content-wrapper'));
-    assert.equal(element.querySelectorAll('.docs-list-item').length, 1);
-    assert.equal(element.querySelector('.docs-list-item')?.getAttribute('data-docs-slug'), 'guide');
-    assert.equal(element.querySelector('.docs-list-title')?.textContent, 'Guide');
-    assert.equal(element.querySelectorAll('.legal-footer-link').length, 5);
-
-    page.destroy();
-    assert.equal(element.childNodes.length, 0);
+  it('lists the five legal-footer destinations', () => {
+    assert.deepEqual(
+      FOOTER_PAGES.map((page) => page.path),
+      ['/about', '/terms', '/privacy', '/docs/whitepaper', '/docs'],
+    );
   });
 });
