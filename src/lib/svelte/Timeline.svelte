@@ -9,7 +9,6 @@ import { type Ad, isAd, type Post, type TimelineItem } from '../../../shared/typ
 import { createFabButton as makeFabButton } from '../fab-button.ts';
 import { t } from '../i18n.ts';
 import { injectAds } from '../inject-ads.ts';
-import { createSkeletonCards as skeletonCards } from '../loading-ui.ts';
 import { openPostModal } from '../post-modal.ts';
 import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { rankCandidates } from '../recommendation/rank.ts';
@@ -60,7 +59,6 @@ let destroyed = false;
 let fabButton: HTMLElement | null = null;
 let disposePostUpdates: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
-let skeletonHost = $state<HTMLDivElement>();
 let observer: IntersectionObserver | null = null;
 let boundModeShortcut: ((e: KeyboardEvent) => void) | null = null;
 
@@ -269,12 +267,6 @@ function onKeydown(e: KeyboardEvent): void {
   }
 }
 
-$effect(() => {
-  if (skeletonHost && skeletonHost.childElementCount === 0) {
-    skeletonHost.replaceChildren(skeletonCards(3));
-  }
-});
-
 onMount(() => {
   void Promise.race([loadAdConfig(), new Promise<void>((resolve) => setTimeout(resolve, 1000))]).then(
     () => void loadInitial(),
@@ -371,7 +363,16 @@ function updateFab(): void {
       <CardHost {item} options={cardOptions} />
     {/each}
     {#if items.length === 0}
-      <div bind:this={skeletonHost} class="timeline-skeletons"></div>
+      <div class="timeline-skeletons" aria-hidden="true">
+        {#each [0, 1, 2] as slot (slot)}
+          <article class="skeleton-card" aria-hidden="true">
+            <div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div>
+            <div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div>
+            <div class="skeleton-media"></div>
+            <div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div>
+          </article>
+        {/each}
+      </div>
     {/if}
   </div>
 
