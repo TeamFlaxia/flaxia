@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -10,19 +10,35 @@ function read(path: string): string {
   return readFileSync(join(ROOT, path), 'utf8');
 }
 
+function sourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) sourceFiles(full, out);
+    else if (full.endsWith('.ts') || full.endsWith('.svelte')) out.push(full);
+  }
+  return out;
+}
+
+const ALL_SOURCE = sourceFiles(join(ROOT, 'src'))
+  .map((file) => readFileSync(file, 'utf8'))
+  .join('\n');
+
 describe('render/guards', () => {
   it('never blanks #app or restores the full-page loader', () => {
-    const main = read('src/main.ts');
-    assert.doesNotMatch(main, /app\.innerHTML\s*=\s*['"]{2}/);
-    assert.doesNotMatch(main, /showPageLoader\s*\(/);
-    assert.doesNotMatch(main, /hidePageLoader\s*\(/);
+    // These used to be checked against legacy main.ts. The whole app is now
+    // Svelte-owned, so scan every source file to keep the regression covered.
+    assert.doesNotMatch(ALL_SOURCE, /app\.innerHTML\s*=\s*['"]{2}/);
+    assert.doesNotMatch(ALL_SOURCE, /showPageLoader\s*\(/);
+    assert.doesNotMatch(ALL_SOURCE, /hidePageLoader\s*\(/);
   });
 
-  it('keeps the parked-view and staging paths in place', () => {
-    const main = read('src/main.ts');
-    assert.match(main, /appRoot\.replaceChildren\(\.\.\.staging\.childNodes\)/);
-    assert.match(main, /function parkCurrentView\(/);
-    assert.match(main, /function restoreParkedView\(/);
+  it('no longer relies on the legacy parked-view staging path', () => {
+    // main.ts owned a parked-view/staging mechanism that hid a cached view in
+    // #app-parking. Every view now has its own Svelte route, so that mechanism
+    // is intentionally gone.
+    assert.doesNotMatch(ALL_SOURCE, /appRoot\.replaceChildren\(\.\.\.staging\.childNodes\)/);
+    assert.doesNotMatch(ALL_SOURCE, /function parkCurrentView\(/);
+    assert.doesNotMatch(ALL_SOURCE, /function restoreParkedView\(/);
   });
 
   it('keeps Flaxia behind the package boundary', () => {
