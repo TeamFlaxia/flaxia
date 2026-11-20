@@ -199,6 +199,15 @@ test('stamp picker UI is owned by Svelte', async () => {
   assert.doesNotMatch(bridge, /stamp-picker-tabs/, 'DOM construction must live in the Svelte component');
 });
 
+test('video player UI is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/VideoPlayer.svelte');
+  assert.match(component, /video-player-controls/);
+  assert.match(component, /video-player-seekbar/);
+  const bridge = await read('src/components/VideoPlayer.ts');
+  assert.match(bridge, /mount\(VideoPlayer/);
+  assert.doesNotMatch(bridge, /video-player-controls/, 'DOM construction must live in the Svelte component');
+});
+
 test('sign-in prompt UI is owned by Svelte', async () => {
   const component = await read('src/lib/svelte/SignInPrompt.svelte');
   assert.match(component, /signin-prompt-dialog/);
