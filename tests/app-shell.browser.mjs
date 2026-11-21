@@ -705,6 +705,55 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
   });
 });
 
+test('the right panel renders trending, games and routes every click', {
+  timeout: 90_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const stubs = {
+      ...SIGNED_IN_STUBS,
+      '/api/tags/trending': {
+        body: {
+          tags: [
+            { tag: 'flaxia', count: 120, percentage: 42 },
+            { tag: 'indiegame', count: 80, percentage: 30 },
+          ],
+        },
+      },
+      '/api/games': {
+        body: {
+          games: [{ id: 'p1', postId: 'g1', title: 'Demo Game', username: 'bob', freshCount: 3, impressions: 42 }],
+        },
+      },
+    };
+    const { page, pageErrors } = await openApp(browser, `${origin}/home`, stubs);
+    await page.waitForSelector('.right-panel', { timeout: 30_000 });
+    await page.waitForSelector('.trending-item', { timeout: 10_000 });
+
+    assert.equal(await page.locator('.trending-item').count(), 2);
+    assert.equal(await page.locator('.right-panel .search-icon').count(), 1);
+    assert.ok((await page.locator('.right-panel .search-kbd').textContent())?.trim());
+    assert.equal(await page.locator('.game-item').count(), 1);
+    assert.match((await page.locator('.trending-count').first().textContent()) ?? '', /%/);
+
+    await page.fill('.right-panel .search-input', 'flaxia');
+    await page.press('.right-panel .search-input', 'Enter');
+    await page.waitForURL('**/search?q=flaxia&type=posts', { timeout: 10_000 });
+
+    await page.goto(`${origin}/home`, { waitUntil: 'load' });
+    await page.waitForSelector('.trending-item', { timeout: 10_000 });
+    await page.locator('.trending-item').first().click();
+    await page.waitForURL('**/explore?tag=flaxia', { timeout: 10_000 });
+
+    await page.goto(`${origin}/home`, { waitUntil: 'load' });
+    await page.waitForSelector('.game-item', { timeout: 10_000 });
+    await page.locator('.game-item').first().click();
+    await page.waitForURL('**/arcade/g1', { timeout: 10_000 });
+
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
 test('the document title follows client-side navigation', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/explore`, SIGNED_IN_STUBS);

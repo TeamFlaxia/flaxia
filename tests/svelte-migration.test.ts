@@ -265,9 +265,9 @@ test('legacy entry points use the unified navigation function', async () => {
   // pass them; `replace` is the supported spelling of `replaceState`.
   assert.doesNotMatch(nav, /^\s*(noScroll|keepFocus):/m);
   assert.match(nav, /replace: options\.replaceState/);
-  for (const file of ['src/components/RightPanel.ts', 'src/components/LeftNav.ts']) {
+  for (const file of ['src/lib/svelte/RightPanel.svelte', 'src/components/LeftNav.ts']) {
     const source = await read(file);
-    assert.match(source, /from '\.\.\/lib\/navigation\.ts'/);
+    assert.match(source, /from '[^']*navigation\.ts'/);
     assert.doesNotMatch(source, /history\.pushState/);
     assert.doesNotMatch(source, /new CustomEvent\('spaNavigate'/);
   }
