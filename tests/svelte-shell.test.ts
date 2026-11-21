@@ -13,18 +13,18 @@ test('Svelte left nav wraps the legacy component', async () => {
   assert.match(source, /nav\??\.destroy/);
 });
 
-test('Svelte right panel wraps the legacy component', async () => {
+test('the right panel is owned by Svelte', async () => {
   const source = await read('src/lib/svelte/RightPanel.svelte');
-  assert.match(source, /createRightPanel/);
-  assert.match(source, /host\.replaceChildren/);
-  assert.match(source, /panel\??\.destroy/);
+  assert.match(source, /class="right-panel"/);
+  assert.match(source, /trending-item/);
+  assert.match(source, /games-list/);
+  assert.match(source, /help-list/);
+  assert.doesNotMatch(source, /createRightPanel/);
 });
 
-test('shell wrappers do not become flex items', async () => {
-  for (const file of ['LeftNav.svelte', 'RightPanel.svelte']) {
-    const source = await read(`src/lib/svelte/${file}`);
-    assert.match(source, /display: contents/, `${file} wrapper must not take flex space`);
-  }
+test('the left nav wrapper does not become a flex item', async () => {
+  const source = await read('src/lib/svelte/LeftNav.svelte');
+  assert.match(source, /display: contents/);
 });
 
 test('left nav rebuilds when auth props arrive', async () => {
