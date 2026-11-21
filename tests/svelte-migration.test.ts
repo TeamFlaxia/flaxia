@@ -211,6 +211,15 @@ test('SvelteKit body renders inside #app so legacy CSS selectors apply', async (
   assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
 });
 
+test('client error hook is safe against patched console methods', async () => {
+  const hook = await read('src/hooks.client.ts');
+  assert.match(hook, /typeof console\.error === 'function'/);
+  assert.match(hook, /__flaxiaLastError/);
+  const headers = await read('public/_headers');
+  assert.match(headers, /script-src-elem 'self' 'unsafe-inline'/);
+  assert.match(headers, /static\.cloudflareinsights\.com/);
+});
+
 test('legacy main entrypoint is gone', async () => {
   const { existsSync } = await import('node:fs');
   assert.equal(existsSync(new URL('../src/main.ts', import.meta.url).pathname), false);
