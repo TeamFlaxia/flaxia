@@ -43,6 +43,6 @@ onMount(() => {
 });
 </script>
 
-<ShellLayout {navProps}>
+<ShellLayout {navProps} showRightPanel={false}>
   <div bind:this={host}></div>
 </ShellLayout>

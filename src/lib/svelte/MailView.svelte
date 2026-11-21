@@ -44,7 +44,7 @@ onMount(() => {
 });
 </script>
 
-<ShellLayout {navProps}>
+<ShellLayout {navProps} showRightPanel={false}>
   {#if view === 'mail'}
     <MailPage {currentUser} />
   {:else if view === 'settings'}

@@ -42,7 +42,7 @@ async function markAllRead(): Promise<void> {
 }
 </script>
 
-<ShellLayout navProps={{ activeItem: 'notifications', unreadCount, currentUser }}>
+<ShellLayout navProps={{ activeItem: 'notifications', unreadCount, currentUser }} showRightPanel={false}>
   {#if ready}
     <NotificationsPage
       {notifications}
