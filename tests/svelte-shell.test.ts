@@ -6,11 +6,13 @@ import { test } from 'node:test';
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Svelte left nav wraps the legacy component', async () => {
+test('the left nav is owned by Svelte', async () => {
   const source = await read('src/lib/svelte/LeftNav.svelte');
-  assert.match(source, /createLeftNav/);
-  assert.match(source, /host\.replaceChildren/);
-  assert.match(source, /nav\??\.destroy/);
+  assert.match(source, /class="left-nav"/);
+  assert.match(source, /nav-item/);
+  assert.match(source, /nav-user-area/);
+  assert.match(source, /nav-legal-links/);
+  assert.doesNotMatch(source, /createLeftNav/);
 });
 
 test('the right panel is owned by Svelte', async () => {
@@ -22,16 +24,11 @@ test('the right panel is owned by Svelte', async () => {
   assert.doesNotMatch(source, /createRightPanel/);
 });
 
-test('the left nav wrapper does not become a flex item', async () => {
+test('left nav follows auth props without rebuilding the DOM', async () => {
   const source = await read('src/lib/svelte/LeftNav.svelte');
-  assert.match(source, /display: contents/);
-});
-
-test('left nav rebuilds when auth props arrive', async () => {
-  const source = await read('src/lib/svelte/LeftNav.svelte');
-  assert.match(source, /\$effect/);
-  assert.match(source, /createLeftNav\(next\)/);
-  assert.match(source, /host\.replaceChildren/);
+  assert.match(source, /\$derived\(props\.currentUser/);
+  assert.match(source, /navItemsFor\(Boolean\(user\)\)/);
+  assert.doesNotMatch(source, /replaceChildren/);
 });
 
 test('left nav installs mobile swipe handling', async () => {

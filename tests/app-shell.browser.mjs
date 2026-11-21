@@ -705,6 +705,58 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
   });
 });
 
+test('the left nav renders guest and signed-in states and routes its menus', {
+  timeout: 120_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const stubs = {
+      ...SIGNED_IN_STUBS,
+      '/api/tags/trending': {
+        body: {
+          tags: [
+            { tag: 'flaxia', count: 120, percentage: 42 },
+            { tag: 'pixelart', count: 55, percentage: 18 },
+          ],
+        },
+      },
+    };
+
+    const signed = await openApp(browser, `${origin}/explore`, stubs);
+    await signed.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
+    await signed.page.waitForSelector('.nav-tag', { state: 'attached', timeout: 10_000 });
+    assert.equal(await signed.page.locator('.left-nav .nav-item').count(), 5, 'signed-in nav items');
+    assert.equal(await signed.page.locator('.nav-tag').count(), 2, 'trending tags');
+    assert.ok(await signed.page.$('.nav-user-area'), 'signed-in account row');
+    assert.equal(await signed.page.$('.nav-auth-buttons'), null);
+    assert.equal(
+      await signed.page.evaluate(() =>
+        document.querySelector('.nav-item[data-nav-id="explore"]')?.getAttribute('aria-current'),
+      ),
+      'page',
+      'the current section is marked active',
+    );
+
+    await signed.page.click('.nav-user-area');
+    assert.equal(await signed.page.locator('.nav-user-popup--open').count(), 1, 'account popup opens');
+    await signed.page.locator('.nav-user-popup-item[data-nav-id="settings"]').click();
+    await signed.page.waitForURL('**/settings', { timeout: 10_000 });
+
+    assert.deepEqual(signed.pageErrors, []);
+    await signed.page.close();
+
+    const guest = await openApp(browser, `${origin}/home`, GUEST_STUBS);
+    await guest.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
+    assert.equal(await guest.page.locator('.left-nav .nav-item').count(), 3, 'guest nav items');
+    assert.ok(await guest.page.$('.nav-auth-buttons'), 'guest auth buttons');
+    assert.ok(await guest.page.$('.nav-promo'), 'guest promo card');
+    assert.equal(await guest.page.$('.nav-user-area'), null);
+    await guest.page.locator('.nav-signin-button').first().click();
+    await guest.page.waitForURL(/\/register|\/login/, { timeout: 10_000 });
+    assert.deepEqual(guest.pageErrors, []);
+    await guest.page.close();
+  });
+});
+
 test('the right panel renders trending, games and routes every click', {
   timeout: 90_000,
 }, async () => {
