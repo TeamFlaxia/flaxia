@@ -23,9 +23,11 @@ test('root route redirects to the home feed', async () => {
 test('bookmarks route uses the standalone shell', async () => {
   const route = await read('src/routes/bookmarks/+page.svelte');
   assert.match(route, /ShellLayout/);
-  assert.match(route, /createBookmarksPage/);
+  assert.match(route, /lib\/svelte\/BookmarksPage\.svelte/);
   assert.match(route, /getSessionUser/);
-  assert.match(route, /leftNavCallbacks/);
+  const component = await read('src/lib/svelte/BookmarksPage.svelte');
+  assert.match(component, /bookmarks-posts/);
+  assert.match(component, /CardHost/);
 });
 
 test('notifications route wires data fetching and shell', async () => {
