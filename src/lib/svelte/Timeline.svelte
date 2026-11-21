@@ -362,6 +362,8 @@ function updateFab(): void {
   {:else}
     <div class="timeline-promo">
       <div class="timeline-promo-title">{t('timeline.promo_title')}</div>
+      <p class="timeline-promo-desc">{t('timeline.promo_desc')}</p>
+      <button class="timeline-promo-arcade-btn" type="button" onclick={() => void navigate('/arcade')}>{t('timeline.promo_arcade_btn')}</button>
     </div>
   {/if}
 
