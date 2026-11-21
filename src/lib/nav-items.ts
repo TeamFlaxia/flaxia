@@ -1,7 +1,6 @@
 // Primary navigation model.
 //
-// Shared by LeftNav's first render and updateLeftNavUser() so a sign-in /
-// sign-out cannot drift from the initial markup. Guest navigation is
+// Shared by the Svelte LeftNav so guest and signed-in navigation cannot drift.
 // deliberately limited to the public sections: Maps and Translate are account
 // features and are not advertised to logged-out visitors.
 import type { IconName } from './icons.js';
