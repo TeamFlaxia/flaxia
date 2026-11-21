@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { deliverToFollowers } from '../../../lib/activitypub/delivery';
-import { buildCreateActivity, buildNoteObject } from '../../../lib/activitypub/note';
+import { buildCreateActivity, buildNoteObject, loadNoteAttachments } from '../../../lib/activitypub/note';
 import {
   type AttachmentInput,
   type AttachmentKind,
@@ -733,14 +733,14 @@ composer.post('/posts/commit', requireAuth, async (c) => {
 
     // ActivityPub delivery for public posts
     try {
-      // Get user info for ActivityPub
       const user = (await c.env.DB.prepare('SELECT id, username, display_name FROM users WHERE id = ?')
         .bind(userId)
         .first()) as { id: string; username: string; display_name: string } | null;
 
       if (user) {
-        // Get post details including mentions
-        const post = (await c.env.DB.prepare('SELECT id, text, created_at, status, mentions FROM posts WHERE id = ?')
+        const post = (await c.env.DB.prepare(
+          'SELECT id, text, created_at, status, mentions, gif_key, payload_key, swf_key FROM posts WHERE id = ?',
+        )
           .bind(postId)
           .first()) as {
           id: string;
@@ -748,12 +748,12 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           created_at: string;
           status: string;
           mentions: string | null;
+          gif_key: string | null;
+          payload_key: string | null;
+          swf_key: string | null;
         } | null;
-
         if (post && post.status === 'published') {
-          // Build the audience of the Note: mentioned accounts are addressed
-          // directly, everybody else reaches the post through the followers
-          // collection of the author.
+          // Mentioned accounts are addressed directly; everyone else is via followers.
           let mentions: Array<{ username: string; url: string }> = [];
           try {
             if (post.mentions) {
@@ -771,6 +771,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
               created_at: post.created_at,
               visibility: 'public',
               mentions,
+              attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
             },
             user,
             c.env.BASE_URL,
@@ -778,8 +779,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           );
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
-          // One delivery per remote inbox: an instance with a shared inbox
-          // expects a single activity, not one per follower.
+          // One delivery per remote inbox (a shared inbox expects one activity).
           await deliverToFollowers(c.env, { userId, username, activity });
         }
       }
