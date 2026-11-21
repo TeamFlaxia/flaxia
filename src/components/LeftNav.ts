@@ -10,6 +10,7 @@ import { setupLeftNavResize } from '../lib/left-nav-resize.js';
 import { isModalOpen } from '../lib/modal-state';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
 import { navItemsFor } from '../lib/nav-items.js';
+import { navigate as spaNavigate } from '../lib/navigation.ts';
 
 function createAppDownloadPromo(): HTMLAnchorElement | null {
   if (isNativeApp() || !recommendedAppPlatform(detectDevicePlatform())) return null;
@@ -28,8 +29,7 @@ function createAppDownloadPromo(): HTMLAnchorElement | null {
 
   promo.addEventListener('click', (e) => {
     e.preventDefault();
-    window.history.pushState({}, '', '/download');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    void spaNavigate('/download');
   });
 
   return promo;
@@ -430,8 +430,7 @@ export class LeftNav {
     docsLink.textContent = t('legal.footer_docs');
     docsLink.addEventListener('click', (e) => {
       e.preventDefault();
-      window.history.pushState({}, '', '/docs');
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      void spaNavigate('/docs');
     });
 
     legalLinks.appendChild(aboutLink);

@@ -14,10 +14,10 @@ import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { navigate as spaNavigate } from '../lib/navigation.ts';
 import { rankCandidates } from '../lib/recommendation/rank.js';
 import { each, legacy, type Mounted, mount, type Renderable, type Signal, signal } from '../lib/render/index.ts';
 import { getReplyStyle } from '../lib/settings.js';
-import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree, type PostNode } from '../lib/thread.ts';
 import { showToast } from '../lib/toast.js';
 import {
@@ -1429,12 +1429,10 @@ export class ArcadePage {
       showSignInPrompt(
         'fresh',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/register');
         },
       );
       return;
@@ -1479,12 +1477,10 @@ export class ArcadePage {
       showSignInPrompt(
         'bookmark',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/register');
         },
       );
       return;
@@ -1525,12 +1521,10 @@ export class ArcadePage {
       showSignInPrompt(
         'report',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/register');
         },
       );
       return;
@@ -1544,12 +1538,10 @@ export class ArcadePage {
       showSignInPrompt(
         'upload',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/register');
         },
       );
       return;
@@ -1561,8 +1553,7 @@ export class ArcadePage {
   }
 
   private navigateToGame(postId: string): void {
-    pushSpaHistory(`/arcade/${postId}`, { postId });
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    void spaNavigate(`/arcade/${postId}`, { state: { postId } });
   }
 
   private showReportModal(game: Game): void {

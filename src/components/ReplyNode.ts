@@ -1,4 +1,5 @@
 import { Post } from '../../shared/types/post.ts';
+import { navigate as spaNavigate } from '../lib/navigation.ts';
 import { PostNode } from '../lib/thread.js';
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
@@ -138,12 +139,10 @@ export class ReplyNode {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void spaNavigate('/register');
         },
       );
       return;
