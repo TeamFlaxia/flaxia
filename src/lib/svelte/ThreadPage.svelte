@@ -87,6 +87,7 @@ function mountEntries(): void {
           currentUser,
           index: entry.index,
           disableNavigation: true,
+          onReplyCreated: (reply) => addReply(reply),
         }),
       );
     }
@@ -127,7 +128,12 @@ async function loadThread(): Promise<void> {
     indexMap = new Map(threadReplies.map((p, i) => [p.id, i + 1]));
 
     if (rootHost) {
-      rootCard = mountThreadPostCard(rootHost, { post: root, sandboxOrigin, currentUser });
+      rootCard = mountThreadPostCard(rootHost, {
+        post: root,
+        sandboxOrigin,
+        currentUser,
+        disableReplyComposer: true,
+      });
       rootCard.update({ reply_count: threadReplies.length });
     }
     updateThreadMeta(root);
@@ -170,8 +176,8 @@ onDestroy(() => {
 <ShellLayout navProps={{ activeItem: 'home', currentUser }}>
   <div class="thread-page">
     <div class="thread-top-section">
-      <div class="thread-header">
-        <button type="button" onclick={() => (onBack ? onBack() : void navigate('/home'))}>{t('common.back')}</button>
+      <div class="thread-header thread-header--page">
+        <button class="thread-back-button" type="button" onclick={() => (onBack ? onBack() : void navigate('/home'))}>{t('common.back')}</button>
         <h1>{t('thread.title') || 'Thread'}</h1>
       </div>
     </div>

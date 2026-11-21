@@ -693,8 +693,9 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       } else {
         assert.equal(layout.bottomNavDisplay, 'none', `${label}: bottom nav should be hidden`);
         assert.ok(layout.leftNav, `${label}: left nav missing`);
-        // The legacy layout keeps the full 240px rail until the drawers kick in.
-        assert.ok(Math.abs(layout.leftNav.width - 240) < 1, `${label}: nav width ${layout.leftNav.width}`);
+        // 769–1024px is the icon-only rail: labels are hidden, so the
+        // sidebar must shrink with them instead of keeping the 240px width.
+        assert.ok(Math.abs(layout.leftNav.width - 72) < 1, `${label}: nav width ${layout.leftNav.width}`);
         assert.ok(layout.leftNav.left >= 0, `${label}: left nav should be on-screen`);
       }
 

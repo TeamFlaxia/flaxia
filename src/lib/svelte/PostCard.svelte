@@ -55,6 +55,8 @@ interface Props {
   pinned?: boolean;
   onDelete?: (postId: string) => void;
   onTogglePin?: (postId: string) => void;
+  /** Notified after the inline reply composer submits successfully. */
+  onReplyCreated?: (reply: Post) => void;
   /** Reply views hide the leading `>>N` reference from the body. */
   stripLeadingPostRef?: boolean;
 }
@@ -88,6 +90,7 @@ let saving = $state(false);
 let menuOpen = $state(false);
 let versionId: string | null = null;
 let stage: StageHandle | null = null;
+let stageMode = $state<PostCardMode>(props.initialMode ?? PostCardMode.PREVIEW);
 let replyComposer: { getElement: () => HTMLElement; focus: () => void; destroy: () => void } | null = null;
 let impressionSent = false;
 
@@ -310,10 +313,11 @@ function onPostClick(e: MouseEvent): void {
   void navigate(`/thread/${props.post.id}`, { state: { postId: props.post.id } });
 }
 
-function handleReplyCreated(): void {
+function handleReplyCreated(reply: Post): void {
   replyCount += 1;
   replyOpen = false;
   refreshActions();
+  props.onReplyCreated?.(reply);
 }
 
 function toggleMenu(): void {
@@ -399,14 +403,20 @@ async function saveEdit(): Promise<void> {
 function playVersion(id: string | null): void {
   versionId = id;
   if (!stageHost) return;
+  stageMode = PostCardMode.EXECUTING;
   stage?.destroy();
   stage = mountStage(stageHost, {
     post: props.post,
-    mode: PostCardMode.EXECUTING,
+    mode: stageMode,
     sandboxOrigin: props.sandboxOrigin,
     versionId: id ?? undefined,
-    onModeChange: () => {},
+    onModeChange: handleStageModeChange,
   });
+}
+
+function handleStageModeChange(mode: PostCardMode): void {
+  stageMode = mode;
+  stage?.update(props.post, mode, versionId ?? undefined);
 }
 
 export function updatePost(next: Partial<Post>): void {
@@ -440,9 +450,9 @@ onMount(() => {
   if (hasMedia)
     stage = mountStage(stageHost, {
       post: props.post,
-      mode: props.initialMode ?? PostCardMode.PREVIEW,
+      mode: stageMode,
       sandboxOrigin: props.sandboxOrigin,
-      onModeChange: () => {},
+      onModeChange: handleStageModeChange,
     });
   if (!props.disableReply && !props.disableReplyComposer) {
     replyComposer = mountReply(replyHost, {

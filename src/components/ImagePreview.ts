@@ -28,7 +28,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return target;
   }
 
-  if (!props.gifKey) {
+  if (!props.gifKey && !props.src) {
     const fallback = document.createElement('div');
     fallback.className = 'image-preview-error';
     fallback.textContent = t('image_preview.no_preview');
@@ -39,9 +39,8 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
 
   const imageUrl =
     props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
-  const baseImageUrl = nativeApiHref(
-    props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`,
-  );
+  const baseImageUrl =
+    props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
 
   const instance = mount(ImagePreview, {
     target,

@@ -282,6 +282,46 @@ test('docs manifest is written after the adapter finishes', async () => {
   assert.match(docs, /\/docs\/index\.json/);
 });
 
+test('feed game cards start playing when the preview is clicked', async () => {
+  const card = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(card, /onModeChange: handleStageModeChange/);
+  assert.match(card, /stage\?\.update\(props\.post, mode/);
+  assert.doesNotMatch(card, /onModeChange: \(\) => \{\}/);
+});
+
+test('the mobile nav drawer closes on every client navigation', async () => {
+  const layout = await read('src/routes/+layout.svelte');
+  assert.match(layout, /beforeNavigate\(\(\) => closeLeftNav\(\)\)/);
+});
+
+test('icon-only nav rails narrow the sidebar too', async () => {
+  const overrides = await read('src/styles/legacy/overrides.css');
+  assert.match(
+    overrides,
+    /@media \(min-width: 769px\) and \(max-width: 1024px\)[\s\S]*#app \.left-nav \{\s*width: 72px/,
+  );
+  assert.match(overrides, /#app \.left-nav\.left-nav--icons \{\s*width: 72px/);
+});
+
+test('thread page keeps the styled back button and flat reply composers', async () => {
+  const thread = await read('src/lib/svelte/ThreadPage.svelte');
+  assert.match(thread, /class="thread-back-button"/);
+  assert.match(thread, /onReplyCreated: \(reply\) => addReply\(reply\)/);
+  const adapters = await read('src/lib/thread/adapters.ts');
+  assert.match(adapters, /disableReplyComposer: options\.disableReplyComposer \?\? false/);
+  const styles = await read('src/styles/redesign/timeline.css');
+  assert.match(styles, /\.thread-back-button \{/);
+});
+
+test('remote media URLs are rendered directly and archives stay links', async () => {
+  const carousel = await read('src/components/MediaCarousel.ts');
+  assert.match(carousel, /isAbsoluteMediaUrl/);
+  assert.match(carousel, /src: attachmentUrl\(att\)/);
+  const remote = await read('src/lib/svelte/RemoteProfilePage.svelte');
+  assert.match(remote, /remote-post-attachments/);
+  assert.match(remote, /attachmentUrl\(att\)/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);

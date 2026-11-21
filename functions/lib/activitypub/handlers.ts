@@ -2,6 +2,7 @@
 
 import { buildAcceptActivity } from './activities.ts';
 import { actorUrl, localProfileUsername, noteUrl } from './actor.ts';
+import { storeRemoteAttachments } from './attachments.ts';
 import { deliverToInbox } from './delivery.ts';
 import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
 import { actorSignOptions } from './keys.ts';
@@ -227,11 +228,9 @@ async function handleCreate(
     return;
   }
 
-  // Only actors the target user follows may have their Notes published.
-  // `ap_followers` is the remote actor following the local user; the notes we
-  // want are the ones from `ap_following`, where the local user follows the
-  // remote actor. A follow that is still `sent` can already receive posts
-  // from an instance that auto-accepts; a rejected follow cannot.
+  // Only actors the target user follows may publish here (`ap_following`).
+  // A `sent` follow can already receive posts from an auto-accepting instance;
+  // a rejected follow cannot.
   const followRel = await env.DB.prepare(
     "SELECT id FROM ap_following WHERE local_user_id = ? AND target_actor_url = ? AND status != 'rejected'",
   )
@@ -242,8 +241,7 @@ async function handleCreate(
     return;
   }
 
-  // The object id has to live on the actor's origin. Otherwise a remote
-  // actor could claim a local note id and confuse Delete/Like resolution.
+  // The object id must live on the actor's origin (prevents id spoofing).
   const objectId = typeof object.id === 'string' ? object.id : null;
   if (objectId) {
     try {
@@ -257,8 +255,7 @@ async function handleCreate(
     }
   }
 
-  // A remote actor can send the same Note with different activity ids.
-  // The Note itself is the identity of the post, so keep it unique.
+  // The Note is the post identity even if resent under another activity id.
   const existingNote = objectId
     ? await env.DB.prepare('SELECT id FROM posts WHERE ap_object_id = ? LIMIT 1').bind(objectId).first()
     : null;
@@ -327,6 +324,8 @@ async function handleCreate(
   `)
     .bind(postId, remoteUsername, text, JSON.stringify(hashtags), parentId, rootId, depth, actorId, objectId)
     .run();
+
+  await storeRemoteAttachments(env.DB, postId, object); // media stays remote; archives are links
 
   await notifyMentions(env, mentionedUsernames, remoteUsername, postId, actorId);
 
