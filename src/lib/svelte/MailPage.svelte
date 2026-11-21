@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onDestroy, onMount } from 'svelte';
+import { onDestroy, onMount, tick } from 'svelte';
 import { primaryAddressForUsername } from '../../../shared/mail-address.ts';
 import { t } from '../i18n.ts';
 import {
@@ -193,7 +193,7 @@ onDestroy(() => {
         <button class="mail-compose-button" type="button" onclick={() => goToMailCompose()}>
           {@html iconHtml('compose', 16)} {t('mail.compose') || 'Compose'}
         </button>
-        <button type="button" aria-label={t('mail.settings') || 'Mail settings'} onclick={() => goToMailSettings()}>
+        <button type="button" class="mail-icon-button" aria-label={t('mail.settings') || 'Mail settings'} onclick={() => goToMailSettings()}>
           {@html iconHtml('settings', 18)}
         </button>
       </div>
