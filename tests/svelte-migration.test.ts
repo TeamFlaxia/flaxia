@@ -83,9 +83,11 @@ test('auth-gated routes read currentUser from getMe().user', async () => {
   }
 });
 
-test('settings route mounts the legacy settings page', async () => {
+test('settings route renders the Svelte settings page', async () => {
   const route = await read('src/routes/settings/+page.svelte');
-  assert.match(route, /createSettingsPage/);
+  assert.match(route, /lib\/svelte\/SettingsPage\.svelte/);
+  const component = await read('src/lib/svelte/SettingsPage.svelte');
+  assert.match(component, /createSettingsPage/);
 });
 
 test('mail routes share the shell-backed mail view', async () => {
