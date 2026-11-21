@@ -25,6 +25,7 @@ import {
   openVersionHistory,
   type StageHandle,
 } from '../post/card-adapters.ts';
+import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { useSandboxBridge } from '../sandbox-bridge.ts';
 import { getShowNsfw } from '../settings.ts';
 import { showToast } from '../toast.ts';
@@ -150,6 +151,11 @@ function requireAuth(action: 'reply' | 'post' | 'fresh'): boolean {
 
 async function toggleFresh(): Promise<void> {
   if (!requireAuth('fresh')) return;
+  const beforeFreshed = freshed;
+  const beforeCount = freshCount;
+  freshed = !freshed;
+  freshCount = Math.max(0, freshCount + (freshed ? 1 : -1));
+  refreshActions();
   try {
     const res = await fetch(`/api/posts/${props.post.id}/fresh`, { method: 'POST', credentials: 'include' });
     if (!res.ok) return;
@@ -159,6 +165,9 @@ async function toggleFresh(): Promise<void> {
     markRecommendationProfileDirty();
     refreshActions();
   } catch (e) {
+    freshed = beforeFreshed;
+    freshCount = beforeCount;
+    refreshActions();
     console.error('fresh failed', e);
   }
 }
@@ -194,6 +203,19 @@ async function toggleBookmark(): Promise<void> {
 
 async function toggleReaction(emoji: string): Promise<void> {
   if (!requireAuth('reaction' as 'fresh')) return;
+  const previous = reactions;
+  const idx = previous.findIndex((r) => r.emoji === emoji);
+  const optimistic = previous.map((r) => ({ ...r }));
+  if (idx >= 0) {
+    const r = optimistic[idx];
+    r.count += r.reacted ? -1 : 1;
+    r.reacted = !r.reacted;
+    if (r.count <= 0) optimistic.splice(idx, 1);
+  } else {
+    optimistic.push({ emoji, count: 1, reacted: true });
+  }
+  reactions = optimistic;
+  refreshActions();
   try {
     const res = await fetch(`/api/posts/${props.post.id}/reactions`, {
       method: 'POST',
@@ -206,6 +228,8 @@ async function toggleReaction(emoji: string): Promise<void> {
     if (data.reactions) reactions = data.reactions;
     refreshActions();
   } catch (e) {
+    reactions = previous;
+    refreshActions();
     console.error('reaction failed', e);
   }
 }
@@ -377,6 +401,12 @@ onMount(() => {
   }
   refreshActions();
   mountMenuButton(menuHost, toggleMenu);
+
+  const cards = new Map<string, { updatePost: (u: Partial<Post>) => void }>();
+  cards.set(props.post.id, { updatePost });
+  const onPostUpdated = postUpdateHandler(cards as never);
+  window.addEventListener('postUpdated', onPostUpdated);
+  onDestroy(() => window.removeEventListener('postUpdated', onPostUpdated));
 
   if (!props.disableNavigation && 'IntersectionObserver' in window) {
     const observer = new IntersectionObserver(
