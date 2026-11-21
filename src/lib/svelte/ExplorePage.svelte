@@ -8,7 +8,6 @@ import { t } from '../i18n.ts';
 import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import { openPostModal } from '../post-modal.ts';
-import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
 import { appendUniqueBy, uniqueBy } from '../unique.ts';
@@ -80,7 +79,6 @@ let generation = 0;
 let destroyed = false;
 let suggestController: AbortController | null = null;
 let suggestTimer: ReturnType<typeof setTimeout> | null = null;
-let disposePostUpdates: (() => void) | null = null;
 
 const maxTagCount = $derived(Math.max(...trending.map((t) => t.count), 1));
 const cardOptions = $derived<CardOptions>({
@@ -267,9 +265,6 @@ function onSubmit(): void {
 
 onMount(() => {
   history = getHistory();
-  const handler = postUpdateHandler(new Map());
-  window.addEventListener('postUpdated', handler);
-  disposePostUpdates = () => window.removeEventListener('postUpdated', handler);
   if (fabHost && currentUser) {
     fab = makeFabButton(() => {
       openPostModal({
@@ -297,7 +292,6 @@ onMount(() => {
 onDestroy(() => {
   destroyed = true;
   generation++;
-  disposePostUpdates?.();
   suggestController?.abort();
   if (suggestTimer) clearTimeout(suggestTimer);
   fab?.remove();

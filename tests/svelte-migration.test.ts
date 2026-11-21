@@ -322,6 +322,42 @@ test('remote media URLs are rendered directly and archives stay links', async ()
   assert.match(remote, /attachmentUrl\(att\)/);
 });
 
+test('post counters stay in sync across every mounted card', async () => {
+  const card = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(card, /new CustomEvent\('postUpdated'/);
+  assert.match(card, /window\.addEventListener\('postUpdated'/);
+  assert.match(card, /broadcast\(\{ reply_count: replyCount \}\)/);
+  for (const file of [
+    'src/lib/svelte/Timeline.svelte',
+    'src/lib/svelte/ExplorePage.svelte',
+    'src/lib/svelte/BookmarksPage.svelte',
+  ]) {
+    const source = await read(file);
+    assert.doesNotMatch(source, /createPostUpdatedHandler/);
+  }
+});
+
+test('game updates reload the stage and logout clears the session snapshot', async () => {
+  const card = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(card, /openGameUpdate\(props\.post, props\.sandboxOrigin, \(\) => playVersion\(null\)\)/);
+  const session = await read('src/lib/svelte/session.ts');
+  assert.match(session, /export function clearSessionUser/);
+  const cache = await read('src/lib/auth-cache.ts');
+  assert.match(cache, /clearSessionUser\(\)/);
+});
+
+test('guests are redirected away from /settings instead of seeing an empty shell', async () => {
+  const route = await read('src/routes/settings/+page.svelte');
+  assert.match(route, /resolveAuthRedirect\('\/settings'/);
+  assert.match(route, /navigate\(redirect\.path, \{ replaceState: true \}\)/);
+});
+
+test('the PostHeader bridge exposes an unmount handle', async () => {
+  const bridge = await read('src/components/PostHeader.ts');
+  assert.match(bridge, /unmount\(instance/);
+  assert.match(bridge, /destroy/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);

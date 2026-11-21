@@ -26,7 +26,6 @@ import {
   type StageHandle,
 } from '../post/card-adapters.ts';
 import { openPostModal } from '../post-modal.ts';
-import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { getShowNsfw } from '../settings.ts';
 import { showToast } from '../toast.ts';
 import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
@@ -153,6 +152,24 @@ function requireAuth(action: 'reply' | 'post' | 'fresh'): boolean {
   return false;
 }
 
+function broadcast(update: Partial<Post>): void {
+  window.dispatchEvent(
+    new CustomEvent('postUpdated', {
+      detail: {
+        postId: props.post.id,
+        isFreshed: update.is_freshed,
+        freshCount: update.fresh_count,
+        isReloaded: update.is_reloaded,
+        reloadCount: update.reload_count,
+        isBookmarked: update.is_bookmarked,
+        bookmarkCount: update.bookmark_count,
+        replyCount: update.reply_count,
+        reactions: update.reactions,
+      },
+    }),
+  );
+}
+
 async function toggleFresh(): Promise<void> {
   if (!requireAuth('fresh')) return;
   const beforeFreshed = freshed;
@@ -169,6 +186,7 @@ async function toggleFresh(): Promise<void> {
     freshed = data.is_freshed;
     markRecommendationProfileDirty();
     refreshActions();
+    broadcast({ is_freshed: freshed, fresh_count: freshCount });
   } catch (e) {
     freshed = beforeFreshed;
     freshCount = beforeCount;
@@ -187,6 +205,7 @@ async function toggleReload(): Promise<void> {
     reloaded = data.is_reloaded;
     markRecommendationProfileDirty();
     refreshActions();
+    broadcast({ is_reloaded: reloaded, reload_count: reloadCount });
   } catch (e) {
     console.error('reload failed', e);
   }
@@ -201,6 +220,7 @@ async function toggleBookmark(): Promise<void> {
     bookmarkCount = data.bookmark_count;
     bookmarked = data.is_bookmarked;
     refreshActions();
+    broadcast({ is_bookmarked: bookmarked, bookmark_count: bookmarkCount });
   } catch (e) {
     console.error('bookmark failed', e);
   }
@@ -232,6 +252,7 @@ async function toggleReaction(emoji: string): Promise<void> {
     const data = (await res.json()) as { reactions?: ReactionSummary[] };
     if (data.reactions) reactions = data.reactions;
     refreshActions();
+    broadcast({ reactions });
   } catch (e) {
     reactions = previous;
     refreshActions();
@@ -317,6 +338,7 @@ function handleReplyCreated(reply: Post): void {
   replyCount += 1;
   replyOpen = false;
   refreshActions();
+  broadcast({ reply_count: replyCount });
   props.onReplyCreated?.(reply);
 }
 
@@ -341,7 +363,7 @@ function toggleMenu(): void {
       onTogglePin: () => props.onTogglePin?.(props.post.id),
       onCounterNotice: () => openCounterNotice(props.post),
       onEdit: startEdit,
-      onUpdate: () => openGameUpdate(props.post, props.sandboxOrigin, () => {}),
+      onUpdate: () => openGameUpdate(props.post, props.sandboxOrigin, () => playVersion(null)),
       onDelete: deletePost,
       onBlock: () => void blockUser(),
       onReport: () => openReport(props.post),
@@ -467,9 +489,22 @@ onMount(() => {
   refreshActions();
   mountMenuButton(menuHost, toggleMenu);
 
-  const cards = new Map<string, { updatePost: (u: Partial<Post>) => void }>();
-  cards.set(props.post.id, { updatePost });
-  const onPostUpdated = postUpdateHandler(cards as never);
+  // Every mounted card listens for the same event, so a card in the feed and
+  // the same post in a thread/bookmark list stay in sync without a card map.
+  const onPostUpdated = ((e: Event) => {
+    const detail = (e as CustomEvent<Record<string, unknown>>).detail;
+    if (!detail || detail.postId !== props.post.id) return;
+    updatePost({
+      is_freshed: detail.isFreshed as boolean | undefined,
+      fresh_count: detail.freshCount as number | undefined,
+      is_reloaded: detail.isReloaded as boolean | undefined,
+      reload_count: detail.reloadCount as number | undefined,
+      is_bookmarked: detail.isBookmarked as boolean | undefined,
+      bookmark_count: detail.bookmarkCount as number | undefined,
+      reply_count: detail.replyCount as number | undefined,
+      reactions: detail.reactions as ReactionSummary[] | undefined,
+    });
+  }) as EventListener;
   window.addEventListener('postUpdated', onPostUpdated);
   onDestroy(() => window.removeEventListener('postUpdated', onPostUpdated));
 

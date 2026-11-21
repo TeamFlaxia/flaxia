@@ -14,6 +14,11 @@ export function getSessionUser(): SessionUser | null {
   return current;
 }
 
+/** Drop the snapshot on logout/deletion so the header cannot stay signed in. */
+export function clearSessionUser(): void {
+  current = null;
+}
+
 export async function loadSessionUser(): Promise<SessionUser | null> {
   const { getMe } = await import('../auth-cache.ts');
   const me = await getMe();

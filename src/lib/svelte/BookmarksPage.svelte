@@ -9,7 +9,6 @@ import { navigate } from '../navigation.ts';
 import { mountOfflineDownloads } from '../post/offline-downloads.ts';
 import { isZipGame } from '../post/zip-game.ts';
 import { openPostModal } from '../post-modal.ts';
-import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
 import { appendUniqueBy } from '../unique.ts';
@@ -35,7 +34,6 @@ let downloads: { destroy: () => void } | null = null;
 let fab: HTMLElement | null = null;
 let generation = 0;
 let destroyed = false;
-let disposePostUpdates: (() => void) | null = null;
 
 const gamePosts = $derived(
   posts.filter((p) => isZipGame(p.payload_key) || (!!p.swf_key && p.swf_key.startsWith('swf/'))),
@@ -83,9 +81,6 @@ function retry(): void {
 
 onMount(() => {
   if (isNativeApp() && downloadsHost) downloads = mountOfflineDownloads(downloadsHost);
-  const handler = postUpdateHandler(new Map());
-  window.addEventListener('postUpdated', handler);
-  disposePostUpdates = () => window.removeEventListener('postUpdated', handler);
   if (fabHost && currentUser) {
     fab = makeFabButton(() => {
       openPostModal({ currentUser, onPostCreated: () => {} });
@@ -107,7 +102,6 @@ onMount(() => {
 onDestroy(() => {
   destroyed = true;
   generation++;
-  disposePostUpdates?.();
   observer?.disconnect();
   downloads?.destroy();
   fab?.remove();
