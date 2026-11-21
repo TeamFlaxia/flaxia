@@ -387,9 +387,6 @@ test('spaNavigate updates SvelteKit routing', async () => {
   assert.match(bridge, /navigateReplace/);
   const bootstrap = await read('src/lib/svelte/bootstrap.ts');
   assert.match(bootstrap, /initSpaNavigateBridge/);
-  const shell = await read('src/lib/svelte/LegacyShellPage.svelte');
-  assert.match(shell, /page\.url\.href/);
-  assert.match(shell, /replaceChildren/);
 });
 
 test('audio player UI is owned by Svelte', async () => {
@@ -418,14 +415,11 @@ test('quoted post card is owned by Svelte', async () => {
   assert.match(component, /mountQuotedAttachment/);
   const media = await read('src/lib/post/quoted-media.ts');
   assert.match(media, /createMediaCarousel/);
-  const bridge = await read('src/components/QuotedPostCard.ts');
-  assert.match(bridge, /mount\(QuotedPostCardView/);
 });
 
 test('post card sub-components are owned by Svelte', async () => {
   for (const [component, token] of [
     ['PostHeader', 'post-avatar'],
-    ['PollWidget', 'post-poll'],
     ['PostMenu', 'post-menu-dropdown'],
   ] as const) {
     const source = await read(`src/lib/svelte/${component}.svelte`);

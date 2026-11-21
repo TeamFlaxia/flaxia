@@ -107,7 +107,5 @@
   "functions/sitemap.xml.ts": ["D1Database", "ExecutionContext", "R2Bucket", "c.env"],
   "functions/thread/[id].ts": ["D1Database"],
   "functions/users/[username].ts": ["D1Database", "KVNamespace", "c.env", "cloudflare-package"],
-  "src/lib/db.ts": ["D1Database"],
-  "src/lib/game-loader-routes.ts": ["c.env"],
-  "src/lib/r2.ts": ["R2Bucket"]
+  "src/lib/game-loader-routes.ts": ["c.env"]
 }
