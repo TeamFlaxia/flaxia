@@ -2,6 +2,7 @@
 import { getLocale, t } from '../i18n.ts';
 import { markdownToHtml } from '../legal/markdown.ts';
 import { ALL_PAGES, fetchLegalMarkdown, LEGAL_PAGES, type LegalPageType } from '../legal/pages.ts';
+import { navigate } from '../navigation.ts';
 
 let { type }: { type: LegalPageType } = $props();
 
@@ -11,8 +12,7 @@ let bodyHtml = $state('');
 let error = $state(false);
 
 function go(path: string): void {
-  window.history.pushState({}, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  void navigate(path);
 }
 
 $effect(() => {

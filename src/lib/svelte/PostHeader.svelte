@@ -5,6 +5,7 @@ import type { PostHeaderProps } from '../../../shared/types/post.ts';
 import { attachPlusBadge } from '../avatar.ts';
 import { t } from '../i18n.ts';
 import { nativeApiHref } from '../native-api.ts';
+import { navigate } from '../navigation.ts';
 import { setOfflineImage } from '../offline-image.ts';
 import { mountTitleBadge } from '../post/header-badge.ts';
 
@@ -29,18 +30,17 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleDateString();
 }
 
-function navigate(): void {
+function goToProfile(): void {
   if (props.profile_url) {
     window.open(props.profile_url, '_blank', 'noopener,noreferrer');
     return;
   }
-  window.history.pushState({}, '', `/profile/${props.username}`);
-  window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: props.username } }));
+  void navigate(`/profile/${props.username}`);
 }
 
 function onProfileClick(e: MouseEvent): void {
   e.stopPropagation();
-  navigate();
+  goToProfile();
 }
 
 onMount(() => {

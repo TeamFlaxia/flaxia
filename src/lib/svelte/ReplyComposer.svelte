@@ -11,6 +11,7 @@ import { formatCount } from '../format.ts';
 import { t } from '../i18n.ts';
 import { attachIcons } from '../icons.ts';
 import { nativeApiHref } from '../native-api.ts';
+import { navigate } from '../navigation.ts';
 import { showToast } from '../toast.ts';
 import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
 
@@ -315,12 +316,10 @@ async function submit(): Promise<void> {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          void navigate('/register');
         },
       );
     }
@@ -366,8 +365,7 @@ export function insertText(value: string): void {
         onclick={(e) => {
           e.stopPropagation();
           if (!currentUser) return;
-          window.history.pushState({}, '', `/profile/${currentUser.username}`);
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: currentUser.username } }));
+          void navigate(`/profile/${currentUser.username}`);
         }}
         role="button"
         tabindex="0"
