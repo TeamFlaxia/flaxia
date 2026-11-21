@@ -93,6 +93,7 @@ const canPost = $derived(canSubmit(text, quotedPost, submitting));
 const progress = $derived(char.ratio.toFixed(3));
 
 onMount(() => {
+  if (root) attachIcons(root);
   void initializeDrafts();
   restoreAutosave();
   vaultUnsubscribe = subscribeVault(() => void handleVaultChange());
@@ -281,6 +282,14 @@ function addPollOption(): void {
 function removePollOption(index: number): void {
   if (pollOptions.length <= 2) return;
   pollOptions = pollOptions.filter((_, i) => i !== index);
+}
+
+function toggleAttachMenu(): void {
+  attachMenuOpen = !attachMenuOpen;
+  if (attachMenuOpen)
+    queueMicrotask(() => {
+      if (root) attachIcons(root);
+    });
 }
 
 function onAttachClick(slot: string): void {
@@ -706,16 +715,16 @@ export function deleteAllDraftsPublic(): void {
       <div class="composer-actions">
         <input bind:this={fileInput} type="file" class="composer-file-input" onchange={(e) => void onFilesPicked(Array.from(e.currentTarget.files ?? []))} />
         <div class="composer-attach-group">
-          <button class="composer-file-button composer-attach-menu-toggle" type="button" title={t('composer.attach_button')} aria-expanded={attachMenuOpen} onclick={() => (attachMenuOpen = !attachMenuOpen)}>
+          <button class="composer-file-button composer-attach-menu-toggle" type="button" title={t('composer.attach_button')} aria-expanded={attachMenuOpen} onclick={toggleAttachMenu}>
             <span class="composer-attach-glyph" aria-hidden="true">＋</span>
           </button>
           {#if attachMenuOpen}
             <div class="composer-attach-menu" style="display:block;">
-              <button class="composer-file-button composer-file-button--image" type="button" onclick={() => onAttachClick('image')}>{t('composer.attach_image_video')}</button>
-              <button class="composer-file-button composer-file-button--audio" type="button" onclick={() => onAttachClick('audio')}>{t('composer.attach_audio')}</button>
-              <button class="composer-file-button composer-file-button--game" type="button" onclick={() => onAttachClick('game')}>{t('composer.attach_game')}</button>
-              <button class="composer-file-button composer-poll-button" type="button" onclick={togglePoll}>{t('poll.toggle_button')}</button>
-              <button class="composer-file-button composer-file-button--document" type="button" onclick={() => onAttachClick('document')}>{t('composer.attach_document')}</button>
+              <button class="composer-file-button composer-file-button--image" type="button" onclick={() => onAttachClick('image')}><span class="action-icon" data-icon="image-video"></span>{t('composer.attach_image_video')}</button>
+              <button class="composer-file-button composer-file-button--audio" type="button" onclick={() => onAttachClick('audio')}><span class="action-icon" data-icon="audio"></span>{t('composer.attach_audio')}</button>
+              <button class="composer-file-button composer-file-button--game" type="button" onclick={() => onAttachClick('game')}><span class="action-icon" data-icon="game"></span>{t('composer.attach_game')}</button>
+              <button class="composer-file-button composer-poll-button" type="button" onclick={togglePoll}><span class="action-icon" data-icon="poll"></span>{t('poll.toggle_button')}</button>
+              <button class="composer-file-button composer-file-button--document" type="button" onclick={() => onAttachClick('document')}><span class="action-icon" data-icon="document"></span>{t('composer.attach_document')}</button>
             </div>
           {/if}
         </div>
