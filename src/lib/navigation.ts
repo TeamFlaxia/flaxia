@@ -10,15 +10,17 @@ import { goto } from '$app/navigation';
 export interface NavigateOptions {
   replaceState?: boolean;
   state?: Record<string, unknown>;
-  noScroll?: boolean;
+  /** Reset scroll and focus after the navigation (SvelteKit default: true). */
+  reset?: boolean;
 }
 
 export function navigate(url: string, options: NavigateOptions = {}): Promise<void> {
+  // SvelteKit 3 removed `noScroll`/`keepFocus`; passing them throws in dev.
+  // `reset` defaults to true, which matches the previous scroll-to-top behavior.
   return goto(url, {
-    replaceState: options.replaceState ?? false,
+    replace: options.replaceState ?? false,
     state: options.state ?? {},
-    noScroll: options.noScroll ?? false,
-    keepFocus: false,
+    reset: options.reset ?? true,
   });
 }
 

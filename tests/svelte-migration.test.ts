@@ -257,6 +257,10 @@ test('legacy spaNavigate uses the unified navigation function', async () => {
   const nav = await read('src/lib/navigation.ts');
   assert.match(nav, /\$app\/navigation/);
   assert.match(nav, /goto\(/);
+  // SvelteKit 3 throws on the removed options in dev, so navigation must not
+  // pass them; `replace` is the supported spelling of `replaceState`.
+  assert.doesNotMatch(nav, /^\s*(noScroll|keepFocus):/m);
+  assert.match(nav, /replace: options\.replaceState/);
   const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
   assert.match(bridge, /navigateReplace/);
 });
