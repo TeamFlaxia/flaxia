@@ -1,6 +1,7 @@
 <script lang="ts">
 import { type DocEntry, FOOTER_PAGES, fetchDocsManifest, preferredFile, preferredTitle } from '../docs/manifest.ts';
 import { getLocale, t } from '../i18n.ts';
+import { navigate } from '../navigation.ts';
 
 let { slug }: { slug?: string } = $props();
 
@@ -11,8 +12,7 @@ let bodyHtml = $state('');
 let error = $state('');
 
 function go(path: string): void {
-  window.history.pushState({}, '', path);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  void navigate(path);
 }
 
 $effect(() => {

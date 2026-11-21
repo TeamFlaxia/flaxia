@@ -9,6 +9,7 @@ import { type Ad, isAd, type Post, type TimelineItem } from '../../../shared/typ
 import { createFabButton as makeFabButton } from '../fab-button.ts';
 import { t } from '../i18n.ts';
 import { injectAds } from '../inject-ads.ts';
+import { navigate } from '../navigation.ts';
 import { openPostModal } from '../post-modal.ts';
 import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { rankCandidates } from '../recommendation/rank.ts';
@@ -58,6 +59,7 @@ let generation = 0;
 let destroyed = false;
 let fabButton: HTMLElement | null = null;
 let disposePostUpdates: (() => void) | null = null;
+let disposeReplyToggle: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
 let boundModeShortcut: ((e: KeyboardEvent) => void) | null = null;
@@ -256,8 +258,7 @@ function handleReplyToggle(postId: string): void {
 function submitHashtag(): void {
   const tag = hashtag.trim().replace(/^#/, '');
   if (!tag) return;
-  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
-  window.dispatchEvent(new PopStateEvent('popstate'));
+  void navigate(`/explore?tag=${encodeURIComponent(tag)}`);
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -285,11 +286,18 @@ onMount(() => {
   window.addEventListener('postUpdated', handler);
   disposePostUpdates = () => window.removeEventListener('postUpdated', handler);
 
+  // PostCard dispatches replyToggle from its own DOM; forward it to the card
+  // instance so the inline reply composer opens without a reload.
+  const onReplyToggle = ((e: Event) => {
+    handleReplyToggle((e as CustomEvent<{ postId: string }>).detail.postId);
+  }) as EventListener;
+  root.addEventListener('replyToggle', onReplyToggle);
+  disposeReplyToggle = () => root.removeEventListener('replyToggle', onReplyToggle);
+
   if (fabHost) {
     fabButton = makeFabButton(() => {
       if (!currentUser) {
-        window.history.pushState({}, '', '/login');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        void navigate('/login');
         return;
       }
       openPostModal({ currentUser, onPostCreated: handleNewPost });
@@ -320,6 +328,7 @@ onDestroy(() => {
   generation++;
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
   disposePostUpdates?.();
+  disposeReplyToggle?.();
   observer?.disconnect();
   fabButton?.remove();
 });
@@ -341,7 +350,7 @@ function updateFab(): void {
 <div bind:this={root} class="timeline">
   <div class="timeline-header">
     <div class="feed-toggle">
-      <button class="feed-toggle-btn" class:active={mode === 'foryou'} type="button" onclick={() => switchMode('foryou')}>{t('timeline.foryou')}</button>
+      <button class="feed-toggle-btn" class:active={mode === 'foryou'} type="button" onclick={() => switchMode('foryou')}>{t('timeline.for_you')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'following'} type="button" onclick={() => switchMode('following')}>{t('timeline.following')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'global'} type="button" onclick={() => switchMode('global')}>{t('timeline.global')}</button>
       <button class="feed-toggle-btn feed-reload-btn" type="button" onclick={() => { items = []; seenIds.clear(); cursor = undefined; void loadInitial(); }}>{t('timeline.reload')}</button>
@@ -352,13 +361,13 @@ function updateFab(): void {
     <Composer />
   {:else}
     <div class="timeline-promo">
-      <div class="timeline-promo-title">{t('timeline.login_promo_title') ?? t('nav.login')}</div>
+      <div class="timeline-promo-title">{t('timeline.promo_title')}</div>
     </div>
   {/if}
 
   <div class="hashtag-input" style="display: none;">
     <input bind:this={hashtagInput} class="hashtag-input-field" bind:value={hashtag} placeholder={t('timeline.hashtag_placeholder')} onkeydown={(e) => { if (e.key === 'Enter') submitHashtag(); }} />
-    <button class="hashtag-search-btn" type="button" onclick={submitHashtag}>{t('timeline.hashtag_search')}</button>
+    <button class="hashtag-search-btn" type="button" onclick={submitHashtag}>{t('timeline.search')}</button>
   </div>
 
   {#if errorMessage}

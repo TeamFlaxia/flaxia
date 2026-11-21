@@ -211,6 +211,14 @@ test('SvelteKit body renders inside #app so legacy CSS selectors apply', async (
   assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
 });
 
+test('legacy spaNavigate uses the unified navigation function', async () => {
+  const nav = await read('src/lib/navigation.ts');
+  assert.match(nav, /\$app\/navigation/);
+  assert.match(nav, /goto\(/);
+  const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
+  assert.match(bridge, /navigateReplace/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);
@@ -237,7 +245,7 @@ test('stamp picker UI is owned by Svelte', async () => {
 test('spaNavigate updates SvelteKit routing', async () => {
   const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
   assert.match(bridge, /'spaNavigate'/);
-  assert.match(bridge, /PopStateEvent/);
+  assert.match(bridge, /navigateReplace/);
   const bootstrap = await read('src/lib/svelte/bootstrap.ts');
   assert.match(bootstrap, /initSpaNavigateBridge/);
   const shell = await read('src/lib/svelte/LegacyShellPage.svelte');

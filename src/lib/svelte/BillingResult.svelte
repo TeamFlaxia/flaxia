@@ -1,4 +1,5 @@
 <script lang="ts">
+import { navigate } from '../navigation.ts';
 import '../../styles/index.css';
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte 5 prop used in markup
@@ -6,7 +7,7 @@ let { success }: { success: boolean } = $props();
 
 // biome-ignore lint/correctness/noUnusedVariables: used as the onclick handler
 function backHome() {
-  window.history.pushState({}, '', '/');
+  void navigate('/');
   window.location.reload();
 }
 </script>

@@ -1,6 +1,7 @@
 <script lang="ts">
 import { showSignInPrompt } from '../../components/SignInPrompt.ts';
 import { t } from '../i18n.ts';
+import { navigate } from '../navigation.ts';
 import { isZipGame } from '../post/zip-game.ts';
 
 export interface PostMenuActions {
@@ -38,12 +39,10 @@ function requireAuth(action: 'block' | 'report', callback: () => void): boolean 
     showSignInPrompt(
       action,
       () => {
-        window.history.pushState({}, '', '/login');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        void navigate('/login');
       },
       () => {
-        window.history.pushState({}, '', '/register');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        void navigate('/register');
       },
     );
     return false;
