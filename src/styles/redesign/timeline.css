@@ -388,23 +388,19 @@
 
 @media (hover: hover) {
   .action-button:hover {
-    background: var(--bg-hover);
     color: var(--text-secondary);
   }
 
   .action-button--reply:hover {
     color: var(--link);
-    background: rgba(14, 165, 233, 0.1);
   }
 
   .action-button--reload:hover {
     color: var(--accent);
-    background: var(--accent-soft);
   }
 
   .action-button--fresh:hover {
     color: var(--accent);
-    background: var(--accent-soft);
   }
 
   .action-button--bookmark:hover {
@@ -448,10 +444,10 @@
   fill: currentColor;
 }
 
-/* Reload: vibrant brand emerald */
+/* Reload: brand emerald on the glyph/text only (no surrounding pill). */
 .action-button--reload.action-button--active {
   color: var(--accent-text);
-  background: var(--accent-soft);
+  background: transparent;
 }
 
 .action-button--reload.action-button--active .action-icon svg {

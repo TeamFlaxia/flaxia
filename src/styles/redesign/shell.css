@@ -1145,7 +1145,10 @@
     width: 22px;
     height: 22px;
     border: 1px solid var(--border);
-    background: var(--bg-secondary);
+    background-color: var(--bg-secondary);
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
     color: var(--text-primary);
     font-size: 10px;
   }
@@ -1320,7 +1323,7 @@
   .main-container {
     max-width: 800px;
     justify-content: center;
-    padding-right: 72px;
+    padding-right: 0;
   }
 
   .left-nav {

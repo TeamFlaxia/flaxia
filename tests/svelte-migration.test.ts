@@ -366,6 +366,26 @@ test('the PostHeader bridge exposes an unmount handle', async () => {
   assert.match(bridge, /destroy/);
 });
 
+test('avatars and action states stay visible without coloured halos', async () => {
+  const composer = await read('src/styles/redesign/composer.css');
+  assert.match(composer, /\.composer-avatar-img \{[^}]*width: 100%/);
+  assert.match(composer, /\.composer-avatar-img \{[^}]*background-size: cover/);
+  const shell = await read('src/styles/redesign/shell.css');
+  assert.match(shell, /\.bottom-nav \.bottom-nav-avatar \{[^}]*background-size: cover/);
+  const timeline = await read('src/styles/redesign/timeline.css');
+  assert.match(timeline, /\.action-button--reload\.action-button--active \{[^}]*background: transparent/);
+  assert.doesNotMatch(timeline, /\.action-button--fresh:hover \{[^}]*background:/);
+});
+
+test('Crowd can fetch its data: WASM while the centre column grows without a rail', async () => {
+  const headers = await read('public/_headers');
+  assert.match(headers, /connect-src [^;]*data:/);
+  const ssr = await read('functions/lib/ssr-security-headers.ts');
+  assert.match(ssr, /connect-src [^;]*data:/);
+  const overrides = await read('src/styles/legacy/overrides.css');
+  assert.match(overrides, /#app \.main-container:not\(:has\(\.right-panel\)\) > \.main-content[\s\S]*max-width: 920px/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);

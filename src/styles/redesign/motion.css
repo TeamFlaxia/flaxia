@@ -417,7 +417,6 @@ html.is-theme-switching *::after {
 /* Hover on night can't be a darkening; it reads as a lift. */
 @media (hover: hover) {
   :root[data-theme="dark"] .nav-item:hover,
-  :root[data-theme="dark"] .timeline .post-list > .post-card .action-button:hover,
   :root[data-theme="dark"] .right-panel .trending-item:hover {
     background: rgba(250, 250, 250, 0.06);
   }

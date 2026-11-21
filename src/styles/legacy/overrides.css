@@ -30,6 +30,20 @@
   border-right: 1px solid var(--border);
 }
 
+/* The centre column is capped by the ID-specific rule above. When there is no
+   right rail (or it is hidden at <=1024px), let the centre use the free width. */
+#app .main-container:not(:has(.right-panel)) > .main-content,
+#app .main-container:not(:has(.right-panel)) > .timeline {
+  max-width: 920px;
+}
+
+@media (max-width: 1024px) {
+  /* Same specificity as the 600px cap above; later in the file wins. */
+  #app .main-container > :not(.left-nav):not(.right-panel) {
+    max-width: none;
+  }
+}
+
 #app .thread-main-content {
   max-width: 600px;
   width: 100%;
