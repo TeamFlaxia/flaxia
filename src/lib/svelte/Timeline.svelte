@@ -50,6 +50,9 @@ let ads = $state<Ad[]>([]);
 let everyN = $state(8);
 let cursor: string | undefined;
 let loading = $state(false);
+// First paint must reserve feed height; `loading` is false until the ad race
+// resolves, so the empty state would otherwise flash at height 0 (CLS).
+let loadedOnce = $state(false);
 let hasMore = $state(true);
 let errorMessage = $state('');
 let hashtag = $state('');
@@ -173,7 +176,10 @@ async function loadInitial(): Promise<void> {
   } catch {
     if (!destroyed && gen === generation) errorMessage = t('timeline.load_failed');
   } finally {
-    if (!destroyed && gen === generation) loading = false;
+    if (!destroyed && gen === generation) {
+      loading = false;
+      loadedOnce = true;
+    }
   }
 }
 
@@ -241,6 +247,7 @@ function resetAndLoad(): void {
   // An in-flight request must not repopulate the feed after a mode switch.
   generation++;
   loading = false;
+  loadedOnce = false;
   errorMessage = '';
   items = [];
   seenIds.clear();
@@ -388,7 +395,7 @@ function updateFab(): void {
     {#each items as item (item.id)}
       <CardHost {item} options={cardOptions} />
     {/each}
-    {#if items.length === 0 && loading}
+    {#if items.length === 0 && !loadedOnce}
       <div class="timeline-skeletons" aria-hidden="true">
         {#each [0, 1, 2] as slot (slot)}
           <article class="skeleton-card" aria-hidden="true">
