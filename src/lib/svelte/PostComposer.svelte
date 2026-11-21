@@ -3,7 +3,6 @@ import { onDestroy, onMount } from 'svelte';
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../../../shared/entitlements.ts';
 import { stripPostColors } from '../../../shared/post-colors.ts';
 import type { Post, QuotedPost } from '../../../shared/types/post.ts';
-import { openMediaEditor } from '../../components/MediaEditorModal.ts';
 import { openStampPicker } from '../../components/StampPicker.ts';
 import {
   buildPollData,
@@ -414,16 +413,6 @@ function renderMediaList(): void {
   mediaHandles = [];
   if (!mediaListHost) return;
   mediaListHost.replaceChildren();
-}
-
-async function editMedia(index: number): Promise<void> {
-  const file = selectedMedia[index];
-  if (!file) return;
-  const edited = await openMediaEditor(file);
-  if (edited) {
-    selectedMedia = selectedMedia.map((f, i) => (i === index ? edited : f));
-    renderMediaList();
-  }
 }
 
 function removeMedia(index: number): void {
