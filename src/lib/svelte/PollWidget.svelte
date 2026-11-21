@@ -25,16 +25,16 @@ const totalVotes = $derived(state.options.reduce((sum, option) => sum + Number(o
 const hasVoted = $derived(Boolean(state.userVote));
 const expired = $derived(isPollExpired(state));
 const showResults = $derived(shouldShowPollResults(state, hasVoted));
-const canChangeVote = $derived(hasVoted && !expired());
+const canChangeVote = $derived(hasVoted && !expired);
 const maxVotes = $derived(state.options.reduce((max, option) => Math.max(max, Number(option.votes_count || 0)), 0));
 const footerText = $derived.by(() => {
-  const total = totalVotes();
+  const total = totalVotes;
   const voteText =
     total === 1
       ? t('poll.votes', { count: formatCount(total) })
       : t('poll.votes_plural', { count: formatCount(total) });
   const votedText = hasVoted ? ` · ${t('poll.voted')}` : '';
-  const changeHint = canChangeVote() ? ` · ${t('poll.click_to_change')}` : '';
+  const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : '';
   let timeText = '';
   if (state.endsAt && !expired) timeText = ` · ${t('poll.remaining', { time: formatRemainingTime(state.endsAt) })}`;
   return `${voteText}${votedText}${changeHint}${timeText}`;
