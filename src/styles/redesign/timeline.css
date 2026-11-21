@@ -1309,6 +1309,104 @@
   color: var(--danger-text);
 }
 
+/* Svelte-owned thread page: keep the header pinned while replies scroll. */
+.thread-page .thread-top-section {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-primary);
+}
+
+/* Feed states rendered by the Svelte timeline. */
+.timeline-error {
+  margin: 12px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--danger-text);
+  font-size: 13px;
+}
+
+.timeline-skeletons {
+  display: block;
+}
+
+.timeline-empty {
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.timeline-empty-title {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.timeline-empty-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.profile-not-found {
+  padding: 64px 24px;
+  color: var(--text-muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.load-more-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.load-more-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.thread-replies {
+  padding-bottom: 24px;
+}
+
+.thread-replies-header {
+  margin: 0 0 12px;
+  padding-top: 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.thread-replies-empty {
+  padding: 32px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+  text-align: center;
+}
+
 .thread-content {
   display: block;
 }

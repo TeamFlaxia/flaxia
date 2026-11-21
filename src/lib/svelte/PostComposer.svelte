@@ -13,6 +13,7 @@ import {
   POST_CHAR_LIMIT,
   validateSubmission,
 } from '../composer/logic.ts';
+import { mountMediaList } from '../composer/media-list.ts';
 import { submitPost } from '../composer/submit.ts';
 import type { AttachPreviewHandle } from '../file-preview.ts';
 import { checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../file-preview.ts';
@@ -419,9 +420,15 @@ function renderMediaList(): void {
   mediaHandles.forEach((h) => {
     h.destroy();
   });
-  mediaHandles = [];
-  if (!mediaListHost) return;
-  mediaListHost.replaceChildren();
+  if (!mediaListHost) {
+    mediaHandles = [];
+    return;
+  }
+  mediaHandles = mountMediaList(mediaListHost, {
+    files: selectedMedia,
+    removeLabel: t('composer.remove_media'),
+    onRemove: (index) => removeMedia(index),
+  });
 }
 
 function removeMedia(index: number): void {
@@ -741,8 +748,8 @@ export function deleteAllDraftsPublic(): void {
         {#if draftsOpen}
           <div class="composer-drafts-dropdown" style="display:block;">
             <div class="drafts-dropdown-header">
-              <span>{t('composer.drafts_title')}</span>
-              <button type="button" onclick={() => void deleteAllDrafts()}>{t('composer.delete_all')}</button>
+              <span>{t('composer.list_drafts')}</span>
+              <button type="button" onclick={() => void deleteAllDrafts()}>{t('composer.draft_delete_all')}</button>
             </div>
             {#if savedDrafts.length === 0}
               <div class="drafts-empty">{t('composer.no_drafts')}</div>

@@ -4,7 +4,6 @@
 // come from the bootstrap via deps so this module stays decoupled from
 // the app shell.
 import type { RouteView } from './router.js';
-import { pushSpaHistory } from './spa-history.ts';
 
 export interface LeftNavDeps {
   navigate: (view: RouteView, postId?: string, username?: string) => void;
@@ -20,50 +19,24 @@ export interface LeftNavHandlers {
 export function leftNavCallbacks(deps: LeftNavDeps): LeftNavHandlers {
   return {
     onNavigate: (item: string): void => {
+      // The SvelteKit router owns the URL; the deps callback performs goto().
       if (item === 'home') {
-        window.history.pushState({}, '', '/home');
         deps.navigate('timeline');
-      } else if (item === 'explore') {
-        window.history.pushState({}, '', '/explore');
-        deps.navigate('explore');
-      } else if (item === 'arcade') {
-        pushSpaHistory('/arcade');
-        deps.navigate('arcade');
-      } else if (item === 'maps') {
-        pushSpaHistory('/maps');
-        deps.navigate('maps');
-      } else if (item === 'translate') {
-        window.history.pushState({}, '', '/translate');
-        deps.navigate('translate');
-      } else if (item === 'notifications') {
-        window.history.pushState({}, '', '/notifications');
-        deps.navigate('notifications');
-      } else if (item === 'mail') {
-        window.history.pushState({}, '', '/mail');
-        deps.navigate('mail');
-      } else if (item === 'bookmarks') {
-        window.history.pushState({}, '', '/bookmarks');
-        deps.navigate('bookmarks');
-      } else if (item === 'settings') {
-        window.history.pushState({}, '', '/settings');
-        deps.navigate('settings');
       } else if (item === 'profile') {
         const username = deps.getCurrentUsername();
         if (!username) {
-          pushSpaHistory('/arcade');
           deps.navigate('arcade');
           return;
         }
-        window.history.pushState({}, '', `/profile/${username}`);
         deps.navigate('profile', undefined, username);
+      } else {
+        deps.navigate(item as never);
       }
     },
     onSignIn: (): void => {
-      window.history.pushState({}, '', '/login');
       deps.navigate('login');
     },
     onSignUp: (): void => {
-      window.history.pushState({}, '', '/register');
       deps.navigate('register');
     },
   };

@@ -5,7 +5,9 @@ import AdminView from '../../../lib/svelte/AdminView.svelte';
 
 const tabs = ['analytics', 'alerts', 'hidden', 'users', 'ads', 'counter'];
 // biome-ignore lint/correctness/noUnusedVariables: Svelte prop used in markup
-const selected = tabs.includes(page.params.tab) ? (page.params.tab as 'alerts') : 'alerts';
+const selected = $derived(tabs.includes(page.params.tab) ? (page.params.tab as 'alerts') : 'alerts');
 </script>
 
-<AdminView tab={selected} />
+{#key selected}
+  <AdminView tab={selected} />
+{/key}

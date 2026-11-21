@@ -5,4 +5,6 @@ import { page } from '$app/state';
 import ArcadeView from '../../../lib/svelte/ArcadeView.svelte';
 </script>
 
-<ArcadeView gameId={page.params.id} />
+{#key page.params.id}
+  <ArcadeView gameId={page.params.id} />
+{/key}

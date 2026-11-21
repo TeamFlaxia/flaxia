@@ -265,6 +265,23 @@ test('legacy spaNavigate uses the unified navigation function', async () => {
   assert.match(bridge, /navigateReplace/);
 });
 
+test('nav handlers leave the URL to the SPA router', async () => {
+  for (const file of ['src/lib/left-nav-handlers.ts', 'src/lib/bottom-nav-setup.ts']) {
+    const source = await read(file);
+    assert.doesNotMatch(source, /history\.(pushState|replaceState)/);
+    assert.doesNotMatch(source, /pushSpaHistory/);
+  }
+  const shell = await read('src/lib/svelte/ShellLayout.svelte');
+  assert.doesNotMatch(shell, /window\.location\.assign/);
+});
+
+test('docs manifest is written after the adapter finishes', async () => {
+  const postbuild = await read('scripts/postbuild.mjs');
+  assert.match(postbuild, /writeDocsManifest/);
+  const docs = await read('src/lib/docs/manifest.ts');
+  assert.match(docs, /\/docs\/index\.json/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);

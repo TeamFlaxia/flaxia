@@ -158,15 +158,18 @@ onMount(() => {
       loading = false;
       return;
     }
-    if (!unlockHost) return;
     await tryDeviceUnlock();
     locked = !(await import('../vault/session.ts').then((m) => m.isVaultUnlocked()));
     if (locked) {
       loading = false;
-      unlockInstance = mountVaultUnlock(unlockHost, () => {
-        locked = false;
-        void loadThreads();
-      });
+      // The unlock host only exists after Svelte renders the locked branch.
+      await tick();
+      if (unlockHost) {
+        unlockInstance = mountVaultUnlock(unlockHost, () => {
+          locked = false;
+          void loadThreads();
+        });
+      }
       return;
     }
     await loadThreads();
@@ -215,7 +218,15 @@ onDestroy(() => {
         {/each}
       </nav>
       <div class="mail-search-row">
-        <input type="text" class="mail-search-input" placeholder={t('mail.search_placeholder') || 'Search mail'} bind:value={search} oninput={() => void loadThreads()} />
+        <label class="mail-search">
+          {@html iconHtml('search', 15)}
+          <input
+            type="search"
+            placeholder={t('mail.search_placeholder') || 'Search mail'}
+            aria-label={t('mail.search_placeholder') || 'Search mail'}
+            bind:value={search}
+          />
+        </label>
       </div>
     {/if}
   </div>

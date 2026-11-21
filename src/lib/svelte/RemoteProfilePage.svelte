@@ -122,7 +122,7 @@ async function toggleFollow(): Promise<void> {
             disabled={followBusy}
             onclick={toggleFollow}
           >
-            {!currentUser || !following ? t('profile.following') : t('profile.unfollowing')}
+            {following ? t('profile.unfollow') : t('profile.follow')}
           </button>
         {/if}
       </div>
@@ -130,7 +130,9 @@ async function toggleFollow(): Promise<void> {
   </div>
 
   <div class="timeline-container">
-    {#if posts.length === 0}
+    {#if notFound}
+      <div class="timeline-empty">{t('remote_profile.not_found')}</div>
+    {:else if posts.length === 0}
       <div class="timeline-empty">{t('remote_profile.empty')}</div>
     {:else}
       {#each posts as post (post.id)}

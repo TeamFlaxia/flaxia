@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import type { Notification } from '../../components/NotificationsPage.ts';
+import { navigate } from '../../lib/navigation.ts';
 import { fetchNotifications, invalidateNotificationsCache } from '../../lib/notifications-api.ts';
 import NotificationsPage from '../../lib/svelte/NotificationsPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
@@ -16,7 +17,7 @@ onMount(() => {
   void (async () => {
     const user = getSessionUser();
     if (!user) {
-      window.location.replace('/explore');
+      void navigate('/explore', { replaceState: true });
       return;
     }
     currentUser = user as unknown as Record<string, unknown>;
@@ -47,7 +48,7 @@ async function markAllRead(): Promise<void> {
       {notifications}
       {unreadCount}
       onMarkAllRead={markAllRead}
-      onNavigateToPost={(postId) => window.location.assign(`/thread/${postId}`)}
+      onNavigateToPost={(postId) => void navigate(`/thread/${postId}`)}
     />
   {:else}
     <div class="notifications-empty fx-display">{''}</div>

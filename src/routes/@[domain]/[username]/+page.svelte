@@ -7,9 +7,11 @@ import { getSessionUser } from '../../../lib/svelte/session.ts';
 </script>
 
 <ShellLayout navProps={{ activeItem: 'profile', currentUser: getSessionUser() ?? undefined }}>
-  <RemoteProfilePage
-    domain={page.params.domain}
-    username={page.params.username}
-    currentUser={getSessionUser() ?? null}
-  />
+{#key `${page.params.domain}/${page.params.username}`}
+    <RemoteProfilePage
+      domain={page.params.domain}
+      username={page.params.username}
+      currentUser={getSessionUser() ?? null}
+    />
+{/key}
 </ShellLayout>

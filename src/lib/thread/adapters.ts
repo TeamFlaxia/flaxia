@@ -31,6 +31,8 @@ export function mountThreadPostCard(
     currentUser?: Record<string, unknown> | null;
     index?: number;
     onDelete?: (id: string) => void;
+    /** Flat reply lists must not navigate away on card click. */
+    disableNavigation?: boolean;
   },
 ): { element: HTMLElement; update: (p: Partial<Post>) => void; destroy: () => void } {
   const card = createPostCard({
@@ -38,6 +40,7 @@ export function mountThreadPostCard(
     sandboxOrigin: options.sandboxOrigin,
     currentUser: options.currentUser as never,
     disableReplyComposer: true,
+    disableNavigation: options.disableNavigation ?? false,
     postIndex: options.index,
     enablePostRefs: true,
     onDelete: options.onDelete ?? (() => {}),

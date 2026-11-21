@@ -7,9 +7,11 @@ import { getSessionUser } from '../../lib/svelte/session.ts';
 </script>
 
 <ShellLayout navProps={{ activeItem: 'explore', currentUser: getSessionUser() ?? null }}>
-  <ExplorePage
-    tag={page.url.searchParams.get('tag') || undefined}
-    sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}
-    currentUser={getSessionUser() ?? null}
-  />
+{#key page.url.searchParams.get('tag') ?? ''}
+    <ExplorePage
+      tag={page.url.searchParams.get('tag') || undefined}
+      sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}
+      currentUser={getSessionUser() ?? null}
+    />
+{/key}
 </ShellLayout>

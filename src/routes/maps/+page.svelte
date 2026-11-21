@@ -1,9 +1,11 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
+import { navigate } from '../../lib/navigation.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
 import { getSessionUser } from '../../lib/svelte/session.ts';
+import { viewToPath } from '../../lib/view-nav.ts';
 
 let host: HTMLDivElement;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
@@ -21,12 +23,12 @@ onMount(() => {
     const { createMapsPage } = await import('../../components/MapsPage.ts');
     const map = createMapsPage();
     host.appendChild(map.getElement());
-    dispose = map.destroy;
+    dispose = () => map.destroy();
     navProps = {
       activeItem: 'maps',
       currentUser: user,
       ...leftNavCallbacks({
-        navigate: (view, postId, username) => window.location.assign(view === 'timeline' ? '/home' : `/${view}`),
+        navigate: (view, postId, username) => void navigate(viewToPath(view, postId, username)),
         getCurrentUsername: () => user?.username ?? null,
       }),
     };
