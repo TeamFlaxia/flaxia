@@ -250,6 +250,12 @@ feed.get('/posts', async (c) => {
       })(),
     ]);
 
+    // Chronological feeds page by `created_at` (the cursor WHERE clause uses
+    // `p.created_at < ?`). Without this the client lost the cursor and stopped
+    // after the first page on Following/Global.
+    const nextCursor =
+      posts.length >= limit ? ((posts[posts.length - 1] as { created_at?: string }).created_at ?? null) : null;
+
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
@@ -257,10 +263,10 @@ feed.get('/posts', async (c) => {
       `)
         .bind(hashtag)
         .first<{ count: number }>();
-      return c.json({ posts, count: countResult?.count || 0 });
+      return c.json({ posts, count: countResult?.count || 0, next_cursor: nextCursor });
     }
 
-    return c.json({ posts });
+    return c.json({ posts, next_cursor: nextCursor });
   } catch (error: unknown) {
     console.error('Posts fetch error:', error);
     return c.json({ error: 'Internal server error' }, 500);

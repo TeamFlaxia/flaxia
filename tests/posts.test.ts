@@ -48,6 +48,57 @@ describe('chronological timeline updates', () => {
   });
 });
 
+describe('chronological feed pagination', () => {
+  beforeEach(resetDb);
+
+  async function publish(cookie: string, text: string): Promise<string> {
+    const postId = crypto.randomUUID();
+    const response = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId, text, hashtags: [] }),
+    });
+    assert.equal(response.status, 200);
+    // Distinct created_at values keep the timestamp cursor unambiguous.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return postId;
+  }
+
+  for (const path of ['/api/posts', '/api/posts?following=true']) {
+    it(`returns next_cursor and advances for ${path}`, async () => {
+      const { cookie } = await seedUserAndLogin(`feed-page-${path.includes('following') ? 'following' : 'global'}`);
+      for (let index = 0; index < 5; index += 1) await publish(cookie, `pagination ${index}`);
+
+      const read = async (cursor?: string) => {
+        const params = new URLSearchParams({ limit: '2' });
+        if (cursor) params.set('cursor', cursor);
+        const url = `${BASE_URL}${path}${path.includes('?') ? '&' : '?'}${params.toString()}`;
+        const response = await fetch(url, { headers: { Cookie: cookie } });
+        assert.equal(response.status, 200);
+        return (await response.json()) as { posts: Array<{ id: string }>; next_cursor?: string | null };
+      };
+
+      const first = await read();
+      assert.equal(first.posts.length, 2);
+      assert.ok(first.next_cursor, 'the first page must advertise a cursor');
+
+      const second = await read(first.next_cursor);
+      assert.equal(second.posts.length, 2);
+      const firstIds = new Set(first.posts.map((post) => post.id));
+      assert.ok(
+        second.posts.every((post) => !firstIds.has(post.id)),
+        'the second page must not repeat posts',
+      );
+      assert.ok(second.next_cursor, 'the second page must advertise a cursor');
+
+      const third = await read(second.next_cursor);
+      assert.ok(third.posts.length > 0, 'the third page still has the remaining post');
+      const seen = new Set([...first.posts, ...second.posts].map((post) => post.id));
+      assert.ok(third.posts.every((post) => !seen.has(post.id)));
+    });
+  }
+});
+
 describe('GET /api/posts/recommended', () => {
   beforeEach(resetDb);
 
