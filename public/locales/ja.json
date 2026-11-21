@@ -1240,5 +1240,8 @@
   "profile.not_found": "ユーザーが見つかりませんでした。",
   "auth.sign_in_failed": "サインインを完了できませんでした。",
   "auth.try_again": "もう一度試す",
-  "auth.back_home": "ホームに戻る"
+  "auth.back_home": "ホームに戻る",
+  "page_title.search": "検索",
+  "page_title.admin": "管理",
+  "page_title.billing": "お支払い"
 }

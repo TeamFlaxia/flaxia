@@ -53,11 +53,11 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       fit: props.fit,
       isThumbnail: props.isThumbnail,
       simple: !!props.src,
-      onOpenOverlay: props.src
-        ? () => {}
-        : () => {
-            createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
-          },
+      // Even when `src` is a direct URL (remote media / attachments), the
+      // preview must open the fullscreen viewer on click.
+      onOpenOverlay: () => {
+        createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
+      },
     },
   });
 

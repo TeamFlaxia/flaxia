@@ -705,6 +705,27 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
   });
 });
 
+test('the document title follows client-side navigation', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/explore`, SIGNED_IN_STUBS);
+    await page.waitForSelector('.main-container', { timeout: 30_000 });
+    const exploreTitle = await page.title();
+    assert.match(exploreTitle, /^Flaxia - /, 'section pages get a Flaxia-prefixed title');
+    assert.notEqual(exploreTitle, 'Flaxia');
+
+    await page
+      .locator('.left-nav button')
+      .filter({ hasText: /ホーム|Home/ })
+      .first()
+      .click();
+    await page.waitForURL('**/home', { timeout: 10_000 });
+    await page.waitForTimeout(300);
+    assert.equal(await page.title(), 'Flaxia', 'home keeps the brand-only title');
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
 test('the post modal keeps the composer open while a confirm dialog is on top', {
   timeout: 90_000,
 }, async () => {
