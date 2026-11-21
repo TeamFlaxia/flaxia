@@ -20,6 +20,16 @@ test('root route redirects to the home feed', async () => {
   assert.match(layout, /initShellBootstrap/);
 });
 
+test('profile routes render the Svelte component directly', async () => {
+  for (const route of ['profile/[username]', 'users/[username]']) {
+    const source = await read(`src/routes/${route}/+page.svelte`);
+    assert.match(source, /lib\/svelte\/ProfilePage\.svelte/);
+  }
+  const component = await read('src/lib/svelte/ProfilePage.svelte');
+  assert.match(component, /profile-topbar/);
+  assert.match(component, /profile-tabs/);
+});
+
 test('search route renders the Svelte component directly', async () => {
   const route = await read('src/routes/search/+page.svelte');
   assert.match(route, /lib\/svelte\/SearchPage\.svelte/);
@@ -114,11 +124,7 @@ test('home feed route renders the Svelte timeline', async () => {
 });
 
 test('remaining legacy views now have Svelte routes', async () => {
-  const cases = [
-    ['explore', 'createExplorePage'],
-    ['profile/[username]', 'createProfilePage'],
-    ['users/[username]', 'createProfilePage'],
-  ] as const;
+  const cases = [['explore', 'createExplorePage']] as const;
   for (const [route, component] of cases) {
     const source = await read(`src/routes/${route}/+page.svelte`);
     assert.match(source, /LegacyShellPage/);
