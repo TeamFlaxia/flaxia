@@ -45,7 +45,13 @@ export default defineConfig({
       '/api/crowd': {
         target: `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist`,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/crowd/, ''),
+        // Vite appends `?import` to the dynamic import in dev; unpkg 404s on
+        // that query, so forward only the asset path.
+        rewrite: (path) =>
+          path
+            .split('?')[0]
+            .replace(/^\/api\/crowd\//, '')
+            .replace(/^v[^/]+\//, ''),
       },
       '/api': {
         target: process.env.VITE_API_TARGET || 'http://localhost:8787',

@@ -401,6 +401,12 @@ test('image previews always open the fullscreen viewer', async () => {
   assert.match(adapter, /onOpenOverlay: \(\) => \{\s*createImageOverlay/);
 });
 
+test('the dev crowd proxy serves the pinned bundle path', async () => {
+  const config = await read('vite.config.ts');
+  assert.match(config, /split\('\?'\)/);
+  assert.match(config, /replace\(\/\^v\[\^\/\]\+\\\/\/, ''\)/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);
