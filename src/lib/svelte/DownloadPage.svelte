@@ -46,7 +46,6 @@ onMount(() => {
 </script>
 
 <svelte:head>
-  <title>Flaxia - {t('app_download.title')}</title>
   <meta name="description" content={t('app_download.subtitle')} />
   <meta property="og:url" content="{typeof window !== 'undefined' ? window.location.origin : ''}/download" />
 </svelte:head>

@@ -1240,5 +1240,8 @@
   "profile.not_found": "This user could not be found.",
   "auth.sign_in_failed": "Sign-in could not be completed.",
   "auth.try_again": "Try again",
-  "auth.back_home": "Back to home"
+  "auth.back_home": "Back to home",
+  "page_title.search": "Search",
+  "page_title.admin": "Admin",
+  "page_title.billing": "Billing"
 }

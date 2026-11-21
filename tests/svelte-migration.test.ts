@@ -386,6 +386,21 @@ test('Crowd can fetch its data: WASM while the centre column grows without a rai
   assert.match(overrides, /#app \.main-container:not\(:has\(\.right-panel\)\) > \.main-content[\s\S]*max-width: 920px/);
 });
 
+test('the document title follows the route', async () => {
+  const layout = await read('src/routes/+layout.svelte');
+  assert.match(layout, /pageTitle\(page\.url\.pathname\)/);
+  assert.match(layout, /<svelte:head>[\s\S]*<title>\{documentTitle\}<\/title>/);
+  const titles = await read('src/lib/page-title.ts');
+  assert.match(titles, /thread\.title/);
+  assert.match(titles, /nav\.settings/);
+});
+
+test('image previews always open the fullscreen viewer', async () => {
+  const adapter = await read('src/components/ImagePreview.ts');
+  assert.doesNotMatch(adapter, /props\.src\s*\?\s*\(\)\s*=>\s*\{\}/);
+  assert.match(adapter, /onOpenOverlay: \(\) => \{\s*createImageOverlay/);
+});
+
 test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);
