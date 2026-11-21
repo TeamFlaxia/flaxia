@@ -12,7 +12,6 @@ import { createOfflineStore } from '../offline-store.js';
 import { initPerformanceMonitoring } from '../performance.js';
 import { startRenderDiagnostics } from '../render-diagnostics.js';
 import { initTheme } from '../theme.js';
-import { initSpaNavigateBridge } from './spa-navigate-bridge.ts';
 
 let started = false;
 
@@ -22,7 +21,6 @@ export function initShellBootstrap(): void {
 
   initPerformanceMonitoring();
   startRenderDiagnostics();
-  initSpaNavigateBridge();
 
   const nativeClient = isNativeApp();
   const nativeFetch = createNativeFetch(window.fetch.bind(window));

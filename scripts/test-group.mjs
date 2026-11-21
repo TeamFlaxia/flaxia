@@ -194,7 +194,6 @@ const groups = {
     'push-vapid',
     'render-preset',
     'router',
-    'spa-history',
     'ssr-security-headers',
     'status-transition',
     'url-guard',

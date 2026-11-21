@@ -220,12 +220,7 @@ export class RightPanel {
   }
 
   private performSearch(query: string): void {
-    window.history.pushState({}, '', `/search?q=${encodeURIComponent(query)}&type=posts`);
-    window.dispatchEvent(
-      new CustomEvent('spaNavigate', {
-        detail: { view: 'search', searchQuery: query, searchType: 'posts' },
-      }),
-    );
+    void spaNavigate(`/search?q=${encodeURIComponent(query)}&type=posts`);
   }
 
   private async loadTrendingTags(): Promise<void> {
@@ -300,8 +295,7 @@ export class RightPanel {
 
       item.addEventListener('click', (e) => {
         e.preventDefault();
-        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
+        void spaNavigate(`/explore?tag=${encodeURIComponent(tag)}`);
       });
 
       trendingList.appendChild(item);
@@ -386,8 +380,7 @@ export class RightPanel {
 
     row.addEventListener('click', (event) => {
       event.preventDefault();
-      window.history.pushState({}, '', `/arcade/${game.postId}`);
-      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
+      void spaNavigate(`/arcade/${game.postId}`);
     });
 
     return row;

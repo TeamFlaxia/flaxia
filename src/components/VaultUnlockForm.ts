@@ -3,7 +3,7 @@
 // VaultSection; this component only unlocks VK with the password (or the
 // device key), and points the user at Settings for setup or QR pairing.
 import { t } from '../lib/i18n.js';
-import { pushSpaHistory } from '../lib/spa-history.js';
+import { navigate } from '../lib/navigation.js';
 import { fetchVaultKeys } from '../lib/vault/client.js';
 import { isVaultUnlocked, tryDeviceUnlock, unlockVault } from '../lib/vault/session.js';
 
@@ -64,8 +64,7 @@ function button(text: string, css = BUTTON_CSS): HTMLButtonElement {
 }
 
 function openSettings(): void {
-  pushSpaHistory('/settings');
-  window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'settings' } }));
+  void navigate('/settings');
 }
 
 export function createVaultUnlockForm(options: VaultUnlockFormOptions): VaultUnlockForm {
