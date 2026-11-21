@@ -148,6 +148,13 @@ test('home feed owns the composer through a Svelte mount point', async () => {
   assert.match(timeline, /CardHost/);
 });
 
+test('arcade route mounts the engine through an adapter', async () => {
+  const view = await read('src/lib/svelte/ArcadeView.svelte');
+  assert.match(view, /mountArcadePage/);
+  const adapter = await read('src/lib/arcade/page.ts');
+  assert.match(adapter, /createArcadePage/);
+});
+
 test('admin routes render the standalone admin layout', async () => {
   for (const route of ['admin', 'admin/[tab]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
@@ -161,7 +168,7 @@ test('admin routes render the standalone admin layout', async () => {
 
 test('F8 routes use the shell with correct rails', async () => {
   const arcade = await read('src/lib/svelte/ArcadeView.svelte');
-  assert.match(arcade, /createArcadePage/);
+  assert.match(arcade, /mountArcadePage/);
   assert.match(arcade, /initialGameId/);
   for (const route of ['arcade', 'arcade/[id]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
