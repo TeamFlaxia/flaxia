@@ -1640,3 +1640,9 @@
 .timeline-promo-arcade-btn:hover {
   background: var(--primary-hover);
 }
+
+/* Reserve the first fold so the feed cannot grow from 0 height while route
+   chunks and the first API page load (CLS). Short feeds just get whitespace. */
+.timeline .post-list {
+  min-height: 100vh;
+}
