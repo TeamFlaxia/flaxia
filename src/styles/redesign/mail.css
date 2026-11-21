@@ -66,6 +66,41 @@
   flex: 0 0 auto;
 }
 
+/* Primary compose CTA in the mailbox header (the icon-only settings button
+   reuses .mail-icon-button). */
+.mail-compose-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    transform 100ms var(--ease-out),
+    background-color var(--duration-fast) var(--ease-standard);
+}
+
+.mail-compose-button:hover {
+  background: var(--accent-hover);
+}
+
+.mail-compose-button:active {
+  transform: scale(0.965);
+}
+
+.mail-compose-button svg {
+  flex: 0 0 auto;
+}
+
 .mail-folder-tabs {
   display: flex;
   align-items: center;

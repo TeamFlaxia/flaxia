@@ -725,6 +725,36 @@ test('the Svelte mail pages render settings, compose and the locked reader', {
       '/api/mail/unread': { body: 1 },
     };
 
+    const mailboxStubs = {
+      ...stubs,
+      '/api/mail/addresses': { body: { addresses: [{ address: 'mikan@flaxia.app', state: 'active' }] } },
+      '/api/vault/keys': {
+        body: {
+          enabled: true,
+          salt: 's',
+          recovery_salt: 'r',
+          kdf_params: {},
+          wrapped_vk: 'w',
+          recovery_blob: 'b',
+          vk_version: 1,
+          devices: [],
+        },
+      },
+    };
+    const mailbox = await openApp(browser, `${origin}/mail`, mailboxStubs);
+    await mailbox.page.waitForSelector('.mail-compose-button', { timeout: 30_000 });
+    await mailbox.page.waitForSelector('input[type="password"]', { timeout: 10_000 });
+    assert.ok(await mailbox.page.$('.mail-topbar-actions .mail-icon-button'), 'the settings button is styled');
+    assert.equal(
+      await mailbox.page.evaluate(
+        () => getComputedStyle(document.querySelector('.mail-compose-button')).backgroundColor,
+      ),
+      'rgb(34, 197, 94)',
+      'the compose button uses the accent button style',
+    );
+    assert.deepEqual(mailbox.pageErrors, []);
+    await mailbox.page.close();
+
     const settings = await openApp(browser, `${origin}/mail/settings`, stubs);
     await settings.page.waitForSelector('.mail-settings-card', { timeout: 30_000 });
     assert.equal(await settings.page.locator('.mail-settings-card').count(), 3);
