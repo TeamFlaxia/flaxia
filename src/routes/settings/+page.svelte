@@ -20,7 +20,7 @@ onMount(() => {
 });
 </script>
 
-<ShellLayout navProps={{ activeItem: 'settings', currentUser: user }}>
+<ShellLayout navProps={{ activeItem: 'settings', currentUser: user }} showRightPanel={false}>
   {#if user}
     <SettingsPage currentUser={user} />
   {/if}
