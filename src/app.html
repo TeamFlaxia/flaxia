@@ -297,17 +297,24 @@
   </div>
   
   <script>
-    // Hide initial loader when app is ready
-    window.addEventListener('DOMContentLoaded', () => {
-      setTimeout(() => {
-        const loader = document.getElementById('initial-loader');
+    // Hide the initial loader only once the Svelte app has mounted, so a slow
+    // client never sees (or records a layout shift for) a blank page.
+    (function () {
+      var done = false;
+      function hide() {
+        if (done) return;
+        done = true;
+        var loader = document.getElementById('initial-loader');
         if (loader) {
           loader.style.opacity = '0';
           loader.style.transition = 'opacity 0.3s ease';
-          setTimeout(() => loader.remove(), 300);
+          setTimeout(function () { loader.remove(); }, 300);
         }
-      }, 100);
-    });
+      }
+      window.addEventListener('flaxia:app-ready', hide);
+      // Safety net: never leave the loader up forever if the app fails to boot.
+      setTimeout(hide, 3000);
+    })();
   </script>
 </body>
 </html>

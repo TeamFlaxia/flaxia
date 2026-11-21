@@ -20,6 +20,14 @@ test('root route redirects to the home feed', async () => {
   assert.match(layout, /initShellBootstrap/);
 });
 
+test('explore route renders the Svelte component directly', async () => {
+  const route = await read('src/routes/explore/+page.svelte');
+  assert.match(route, /lib\/svelte\/ExplorePage\.svelte/);
+  const component = await read('src/lib/svelte/ExplorePage.svelte');
+  assert.match(component, /explore-filter-bar/);
+  assert.match(component, /CardHost/);
+});
+
 test('profile routes render the Svelte component directly', async () => {
   for (const route of ['profile/[username]', 'users/[username]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
@@ -121,15 +129,6 @@ test('home feed route renders the Svelte timeline', async () => {
   const timeline = await read('src/lib/svelte/Timeline.svelte');
   assert.match(timeline, /openLeftNav/);
   assert.match(timeline, /post-list/);
-});
-
-test('remaining legacy views now have Svelte routes', async () => {
-  const cases = [['explore', 'createExplorePage']] as const;
-  for (const [route, component] of cases) {
-    const source = await read(`src/routes/${route}/+page.svelte`);
-    assert.match(source, /LegacyShellPage/);
-    assert.ok(source.includes(component), `${route} must mount ${component}`);
-  }
 });
 
 test('home feed owns the composer through a Svelte mount point', async () => {
