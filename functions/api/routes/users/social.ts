@@ -4,6 +4,7 @@ import { buildFollowActivity, buildUndoActivity } from '../../../lib/activitypub
 import { deliverToInbox } from '../../../lib/activitypub/delivery';
 import { fetchFederationDocument, isPrivatePeerAllowed, resolveRemoteActor } from '../../../lib/activitypub/fetch';
 import { actorPrivateKey, ensureActorKey } from '../../../lib/activitypub/keys';
+import { enrichPostsWithAttachments } from '../../../lib/attachments.ts';
 import { getMeWithSession, getSessionToken } from '../../../lib/auth';
 import { clampLimit } from '../../../lib/pagination';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
@@ -373,6 +374,8 @@ social.get('/remote/actors/:domain/:username', async (c) => {
       reply_count: number;
       ap_object_id: string | null;
     }>();
+
+  await enrichPostsWithAttachments(posts.results ?? [], c.env.DB);
 
   return c.json({
     actor: {

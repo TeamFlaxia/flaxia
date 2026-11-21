@@ -21,7 +21,13 @@ export interface MediaCarouselProps {
  * that a kind added to MediaAttachmentKind without a URL here fails the build
  * instead of silently 404ing behind an image request.
  */
+/** Remote ActivityPub media keeps its absolute URL and is loaded directly. */
+export function isAbsoluteMediaUrl(key: string): boolean {
+  return /^https?:\/\//i.test(key);
+}
+
 export function attachmentUrl(att: PostAttachment): string {
+  if (isAbsoluteMediaUrl(att.r2_key)) return att.r2_key;
   switch (att.kind) {
     case 'audio':
       return nativeApiHref(`/api/audio/${att.r2_key}`);
@@ -45,7 +51,9 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
   const track = document.createElement('div');
   track.className = 'media-carousel-track';
 
-  const imageKeys = props.attachments.filter((a) => a.kind === 'image').map((a) => a.r2_key);
+  const imageKeys = props.attachments
+    .filter((a) => a.kind === 'image' && !isAbsoluteMediaUrl(a.r2_key))
+    .map((a) => a.r2_key);
   let imageIndex = 0;
 
   for (const att of props.attachments) {
@@ -60,31 +68,44 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
     }
 
     if (att.kind === 'image') {
-      const galleryIndex = imageIndex++;
+      const remote = isAbsoluteMediaUrl(att.r2_key);
+      const galleryIndex = remote ? undefined : imageIndex++;
       slide.appendChild(
         createImagePreview({
           gifKey: att.r2_key,
+          src: attachmentUrl(att),
           postId: props.postId,
-          gallery: imageKeys,
+          gallery: remote ? undefined : imageKeys,
           galleryIndex,
           ratio: '16:9',
         }),
       );
     } else if (att.kind === 'video') {
-      slide.appendChild(createVideoPlayer({ gifKey: att.r2_key, postId: props.postId, cues: props.cues }));
+      slide.appendChild(
+        createVideoPlayer({ gifKey: att.r2_key, src: attachmentUrl(att), postId: props.postId, cues: props.cues }),
+      );
     } else if (att.kind === 'document') {
-      if (att.r2_key.toLowerCase().endsWith('.pdf')) {
+      const remote = isAbsoluteMediaUrl(att.r2_key);
+      if (!remote && att.r2_key.toLowerCase().endsWith('.pdf')) {
         slide.appendChild(createDocumentViewer({ r2Key: att.r2_key }));
       } else {
         const link = document.createElement('a');
         link.className = 'file-preview-doc-chip';
         link.href = attachmentUrl(att);
-        link.textContent = `▤ ${att.r2_key.split('/').pop() || 'file'} · ${t('composer.download_file')}`;
-        link.setAttribute('download', '');
+        const filename = att.r2_key.split('/').pop()?.split('?')[0] || 'file';
+        link.textContent = `▤ ${filename} · ${t(remote ? 'composer.preview_open_document' : 'composer.download_file')}`;
+        if (remote) {
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+        } else {
+          link.setAttribute('download', '');
+        }
         slide.appendChild(link);
       }
     } else {
-      slide.appendChild(createAudioPlayer({ gifKey: att.r2_key, postId: props.postId, cues: props.cues }));
+      slide.appendChild(
+        createAudioPlayer({ gifKey: att.r2_key, src: attachmentUrl(att), postId: props.postId, cues: props.cues }),
+      );
     }
 
     track.appendChild(slide);

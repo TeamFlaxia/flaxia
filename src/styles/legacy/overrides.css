@@ -482,3 +482,26 @@ body {
 #app .bottom-nav .bottom-nav-item--active .bottom-nav-icon {
   color: var(--accent);
 }
+
+/* Tablet icon rail: `#app .left-nav` sets the width with an ID selector, so a
+   plain `.left-nav { width: 72px }` media rule in shell.css never wins. */
+@media (min-width: 769px) and (max-width: 1024px) {
+  #app .left-nav {
+    width: 72px;
+    padding: 10px 8px;
+    align-items: center;
+  }
+}
+
+/* The dragged compact rail is icon-only: keep its width in sync even if the
+   CSS variable was overridden by a page. */
+#app .left-nav.left-nav--icons {
+  width: 72px;
+}
+
+/* Mobile drawer keeps the legacy 280px width (same ID-specificity trap). */
+@media (max-width: 768px) {
+  #app .left-nav {
+    width: 280px;
+  }
+}

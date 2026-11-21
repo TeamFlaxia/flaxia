@@ -1,4 +1,6 @@
 <script lang="ts">
+import type { PostAttachment } from '../../../shared/types/post.ts';
+import { attachmentUrl, isAbsoluteMediaUrl } from '../../components/MediaCarousel.ts';
 import { t } from '../i18n.ts';
 import { navigate } from '../navigation.ts';
 
@@ -12,6 +14,7 @@ interface RemotePost {
   id: string;
   text: string;
   created_at: string;
+  attachments?: PostAttachment[];
 }
 
 let { domain, username, currentUser }: Props = $props();
@@ -140,6 +143,30 @@ async function toggleFollow(): Promise<void> {
         <div class="post-card">
           <div class="post-author">{handle}</div>
           <div class="post-text">{post.text}</div>
+          {#if post.attachments?.length}
+            <div class="remote-post-attachments">
+              {#each post.attachments as att (att.position)}
+                {#if att.kind === 'image'}
+                  <img src={attachmentUrl(att)} alt="" loading="lazy" decoding="async" />
+                {:else if att.kind === 'video'}
+                  <video src={attachmentUrl(att)} controls playsinline preload="metadata"></video>
+                {:else if att.kind === 'audio'}
+                  <audio src={attachmentUrl(att)} controls preload="metadata"></audio>
+                {:else}
+                  <a
+                    class="remote-post-attachment-link"
+                    href={attachmentUrl(att)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    ↗ {isAbsoluteMediaUrl(att.r2_key)
+                      ? att.r2_key.split('/').pop()?.split('?')[0] || 'link'
+                      : att.r2_key.split('/').pop() || 'file'}
+                  </a>
+                {/if}
+              {/each}
+            </div>
+          {/if}
           <div class="post-meta">{new Date(post.created_at).toLocaleString()}</div>
         </div>
       {/each}

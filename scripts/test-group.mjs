@@ -155,6 +155,7 @@ const groups = {
     'activitypub-dlq-provision',
     'activitypub-inbox',
     'activitypub-inbox-handlers',
+    'activitypub-attachments',
     'activitypub-inbox-integrity',
     'activitypub-note',
     'activitypub-signature',

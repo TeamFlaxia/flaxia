@@ -144,6 +144,8 @@ export interface PostCardProps {
   showPinOption?: boolean;
   pinned?: boolean;
   onTogglePin?: (postId: string) => void;
+  /** Notified after the inline reply composer submits successfully. */
+  onReplyCreated?: (reply: Post) => void;
 }
 
 export interface PostHeaderProps {

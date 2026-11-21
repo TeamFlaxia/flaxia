@@ -1646,3 +1646,70 @@
 .timeline .post-list {
   min-height: 100vh;
 }
+
+.remote-post-attachments {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.remote-post-attachments img,
+.remote-post-attachments video {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.remote-post-attachments audio {
+  width: 100%;
+}
+
+.remote-post-attachment-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent-text);
+  font-size: 13px;
+}
+
+/* Thread page header (Svelte): back link first, then the title. The shared
+   `.thread-header` is a close-button layout, hence the modifier. */
+.thread-header--page {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.thread-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .thread-back-button:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.thread-back-button:active {
+  background: var(--bg-active);
+}

@@ -3,7 +3,7 @@ import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../.
 import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
 import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
 import { ensureActorKey } from '../../lib/activitypub/keys';
-import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
+import { buildCreateActivity, buildNoteObject, loadNoteAttachments } from '../../lib/activitypub/note';
 import { webfingerResponse } from '../../lib/activitypub/webfinger';
 import type { Bindings, Variables } from '../types';
 
@@ -388,26 +388,41 @@ app.get('/api/actors/:username/outbox', async (c) => {
   const current = pageNumber(page);
   const offset = (current - 1) * COLLECTION_PAGE_SIZE;
   const posts = await c.env.DB.prepare(
-    `SELECT id, text, created_at FROM posts
+    `SELECT id, text, created_at, gif_key, payload_key, swf_key FROM posts
      WHERE user_id = ? AND status = 'published' AND hidden = 0
      ORDER BY created_at DESC LIMIT ? OFFSET ?`,
   )
     .bind(user.id, COLLECTION_PAGE_SIZE, offset)
-    .all<{ id: string; text: string; created_at: string }>();
+    .all<{
+      id: string;
+      text: string;
+      created_at: string;
+      gif_key: string | null;
+      payload_key: string | null;
+      swf_key: string | null;
+    }>();
 
-  const activities = (posts.results ?? []).map((post) => {
-    const note = buildNoteObject(
-      { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
-      { id: user.id, username: user.username, display_name: user.display_name },
-      c.env.BASE_URL,
-      { followersUrl: collections.followers },
-    );
-    return buildCreateActivity(
-      note,
-      { id: user.id, username: user.username, display_name: user.display_name },
-      c.env.BASE_URL,
-    );
-  });
+  const activities = await Promise.all(
+    (posts.results ?? []).map(async (post) => {
+      const note = buildNoteObject(
+        {
+          id: post.id,
+          text: post.text,
+          created_at: post.created_at,
+          visibility: 'public',
+          attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
+        },
+        { id: user.id, username: user.username, display_name: user.display_name },
+        c.env.BASE_URL,
+        { followersUrl: collections.followers },
+      );
+      return buildCreateActivity(
+        note,
+        { id: user.id, username: user.username, display_name: user.display_name },
+        c.env.BASE_URL,
+      );
+    }),
+  );
 
   const document: Record<string, unknown> = {
     '@context': AS2_CONTEXT,
@@ -429,12 +444,21 @@ app.get('/api/notes/:noteId', async (c) => {
   if (!noteId) return c.json({ error: 'Note ID required' }, 400);
 
   const post = await c.env.DB.prepare(
-    `SELECT p.id, p.text, p.created_at, p.user_id, p.username FROM posts p
+    `SELECT p.id, p.text, p.created_at, p.user_id, p.username, p.gif_key, p.payload_key, p.swf_key FROM posts p
      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)`,
   )
     .bind(noteId)
-    .first<{ id: string; text: string; created_at: string; user_id: string; username: string }>();
+    .first<{
+      id: string;
+      text: string;
+      created_at: string;
+      user_id: string;
+      username: string;
+      gif_key: string | null;
+      payload_key: string | null;
+      swf_key: string | null;
+    }>();
   if (!post) return c.json({ error: 'Note not found' }, 404);
 
   const user = await c.env.DB.prepare(
@@ -446,7 +470,13 @@ app.get('/api/notes/:noteId', async (c) => {
 
   const collections = actorCollectionUrls(c.env.BASE_URL, user.username);
   const note = buildNoteObject(
-    { id: post.id, text: post.text, created_at: post.created_at, visibility: 'public' },
+    {
+      id: post.id,
+      text: post.text,
+      created_at: post.created_at,
+      visibility: 'public',
+      attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
+    },
     { id: user.id, username: user.username, display_name: user.display_name },
     c.env.BASE_URL,
     { followersUrl: collections.followers },

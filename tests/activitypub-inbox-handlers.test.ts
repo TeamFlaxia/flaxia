@@ -118,6 +118,12 @@ describe('ActivityPub inbox handlers', () => {
               { type: 'Mention', name: '@bob', href: 'https://flaxia.app/users/bob' },
               { type: 'Hashtag', name: '#flaxia', href: 'https://flaxia.app/tags/flaxia' },
             ],
+            attachment: [
+              { type: 'Document', mediaType: 'image/png', url: `${REMOTE}/media/a.png` },
+              { type: 'Document', mediaType: 'video/mp4', url: `${REMOTE}/media/b.mp4` },
+              { type: 'Document', mediaType: 'audio/mpeg', url: `${REMOTE}/media/c.mp3` },
+              { type: 'Document', mediaType: 'application/zip', url: `${REMOTE}/media/game.zip` },
+            ],
           },
         },
       });
@@ -139,6 +145,26 @@ describe('ActivityPub inbox handlers', () => {
       assert.equal(post.ap_object_id, `${REMOTE}/notes/1`);
       assert.equal(post.user_id, '', 'a remote note is not owned by the local recipient');
       assert.equal(post.username, 'alice@remote.example');
+
+      const attachments = await db
+        .prepare(
+          `SELECT r2_key, kind, position FROM post_attachments
+           WHERE post_id = (SELECT id FROM posts WHERE actor_id = ?)
+           ORDER BY position ASC`,
+        )
+        .bind(REMOTE_ACTOR)
+        .all<{ r2_key: string; kind: string; position: number }>();
+      const attachmentRows = (attachments.results ?? []).map((row) => ({
+        r2_key: row.r2_key,
+        kind: row.kind,
+        position: row.position,
+      }));
+      assert.deepEqual(attachmentRows, [
+        { r2_key: `${REMOTE}/media/a.png`, kind: 'image', position: 1 },
+        { r2_key: `${REMOTE}/media/b.mp4`, kind: 'video', position: 2 },
+        { r2_key: `${REMOTE}/media/c.mp3`, kind: 'audio', position: 3 },
+        { r2_key: `${REMOTE}/media/game.zip`, kind: 'document', position: 4 },
+      ]);
 
       const notification = await db
         .prepare("SELECT type FROM notifications WHERE user_id = 'local-2' AND type = 'mention'")
