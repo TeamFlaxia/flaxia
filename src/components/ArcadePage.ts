@@ -682,7 +682,7 @@ export class ArcadePage {
 
         if (this.games.length > 0) {
           if (this.initialGameId) {
-            const gameIndex = this.games.findIndex((game) => game.id === this.initialGameId);
+            const gameIndex = this.games.findIndex((game) => game.postId === this.initialGameId);
             if (gameIndex !== -1) {
               this.currentIndex = gameIndex;
             } else {
