@@ -130,7 +130,6 @@ export class ArcadePage {
   private boundHandleMouseUp: (e: MouseEvent) => void;
   private boundHandleMouseLeave: (e: MouseEvent) => void;
   private boundHandleFullscreenChange: () => void;
-  private boundHandleSpaNavigate: (e: Event) => void;
   private boundHandleKeyDown: (e: KeyboardEvent) => void;
 
   constructor(props: ArcadePageProps) {
@@ -150,7 +149,6 @@ export class ArcadePage {
     this.boundHandleMouseUp = this.handleMouseUp.bind(this);
     this.boundHandleMouseLeave = this.handleMouseUp.bind(this);
     this.boundHandleFullscreenChange = this.handleFullscreenChange.bind(this);
-    this.boundHandleSpaNavigate = this.handleSpaNavigate.bind(this);
     this.boundFlushEvents = () => this.flushEvents();
     this.boundHandleKeyDown = (e: KeyboardEvent) => {
       if (this.tutorialEl) return;
@@ -167,7 +165,6 @@ export class ArcadePage {
     this.setupEventListeners();
     this.setupLeftNavSwipeDetection();
     this.setupPostUpdatedListener();
-    window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
 
     this.loadGames();
 
@@ -1389,10 +1386,6 @@ export class ArcadePage {
 
     // Re-fetch all comments from API to ensure display matches reload state
     void this.loadComments(game.postId, this.commentListEl, headerTitle, undefined, newReply.id);
-  }
-
-  private handleSpaNavigate(): void {
-    this.closeCommentPanel();
   }
 
   private closeCommentPanel(): void {
@@ -3077,7 +3070,6 @@ export class ArcadePage {
     document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
     document.removeEventListener('keydown', this.boundHandleKeyDown);
-    window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate);
     window.removeEventListener('beforeunload', this.boundFlushEvents);
     if (this.boundPostUpdatedHandler) {
       window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
@@ -3095,7 +3087,6 @@ export class ArcadePage {
     document.addEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
     document.addEventListener('keydown', this.boundHandleKeyDown);
-    window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
     window.addEventListener('beforeunload', this.boundFlushEvents);
     if (this.boundPostUpdatedHandler) {
       window.addEventListener('postUpdated', this.boundPostUpdatedHandler);

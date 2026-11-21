@@ -253,7 +253,7 @@ test('SvelteKit body renders inside #app so legacy CSS selectors apply', async (
   assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
 });
 
-test('legacy spaNavigate uses the unified navigation function', async () => {
+test('legacy entry points use the unified navigation function', async () => {
   const nav = await read('src/lib/navigation.ts');
   assert.match(nav, /\$app\/navigation/);
   assert.match(nav, /goto\(/);
@@ -261,8 +261,12 @@ test('legacy spaNavigate uses the unified navigation function', async () => {
   // pass them; `replace` is the supported spelling of `replaceState`.
   assert.doesNotMatch(nav, /^\s*(noScroll|keepFocus):/m);
   assert.match(nav, /replace: options\.replaceState/);
-  const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
-  assert.match(bridge, /navigateReplace/);
+  for (const file of ['src/components/RightPanel.ts', 'src/components/LeftNav.ts']) {
+    const source = await read(file);
+    assert.match(source, /from '\.\.\/lib\/navigation\.ts'/);
+    assert.doesNotMatch(source, /history\.pushState/);
+    assert.doesNotMatch(source, /new CustomEvent\('spaNavigate'/);
+  }
 });
 
 test('nav handlers leave the URL to the SPA router', async () => {
@@ -379,14 +383,6 @@ test('stamp picker UI is owned by Svelte', async () => {
   const bridge = await read('src/components/StampPicker.ts');
   assert.match(bridge, /mount\(StampPicker/);
   assert.doesNotMatch(bridge, /stamp-picker-tabs/, 'DOM construction must live in the Svelte component');
-});
-
-test('spaNavigate updates SvelteKit routing', async () => {
-  const bridge = await read('src/lib/svelte/spa-navigate-bridge.ts');
-  assert.match(bridge, /'spaNavigate'/);
-  assert.match(bridge, /navigateReplace/);
-  const bootstrap = await read('src/lib/svelte/bootstrap.ts');
-  assert.match(bootstrap, /initSpaNavigateBridge/);
 });
 
 test('audio player UI is owned by Svelte', async () => {

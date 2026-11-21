@@ -242,8 +242,7 @@ export class LeftNav {
         row.href = `/explore?tag=${encodeURIComponent(tag)}`;
         row.addEventListener('click', (e) => {
           e.preventDefault();
-          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
+          void spaNavigate(`/explore?tag=${encodeURIComponent(tag)}`);
         });
 
         const hash = document.createElement('span');
