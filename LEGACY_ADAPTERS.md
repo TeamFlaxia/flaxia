@@ -19,7 +19,6 @@ this ratchet.
 - `src/lib/svelte/MailView.svelte`: `createMailSettingsPage`
 - `src/lib/svelte/MailView.svelte`: `createMailThreadPage`
 - `src/lib/svelte/RightPanel.svelte`: `createRightPanel`
-- `src/routes/explore/+page.svelte`: `createExplorePage`
 - `src/routes/maps/+page.svelte`: `createMapsPage`
 - `src/routes/settings/+page.svelte`: `createSettingsPage`
 - `src/routes/thread/[id]/+page.svelte`: `createThreadPage`

@@ -13,7 +13,10 @@ let { children } = $props();
 onMount(() => {
   // The static first-fold placeholder is replaced by the mounted app in the
   // same frame, so slow clients do not produce a layout shift.
-  queueMicrotask(() => document.getElementById('initial-feed-skeleton')?.remove());
+  queueMicrotask(() => {
+    document.getElementById('initial-feed-skeleton')?.remove();
+    window.dispatchEvent(new Event('flaxia:app-ready'));
+  });
   const sync = () => getBottomNav()?.setActiveItem(viewToBottomNavId(parseCurrentRoute()?.view ?? ''));
   window.addEventListener('popstate', sync);
   sync();
