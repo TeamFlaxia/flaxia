@@ -39,3 +39,12 @@ export function viewToBottomNavId(view: string): string {
       return '';
   }
 }
+
+/** Map a router view to the in-app URL used by SPA navigation. */
+export function viewToPath(view: string, postId?: string, username?: string): string {
+  if (view === 'timeline') return '/home';
+  if (view === 'profile') return username ? `/profile/${username}` : '/home';
+  if (view === 'thread' && postId) return `/thread/${postId}`;
+  if (view === 'arcade' && postId) return `/arcade/${postId}`;
+  return `/${view}`;
+}

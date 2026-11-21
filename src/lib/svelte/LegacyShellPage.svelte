@@ -2,6 +2,8 @@
 import { untrack } from 'svelte';
 import { page } from '$app/state';
 import { leftNavCallbacks } from '../../lib/left-nav-handlers.ts';
+import { navigate } from '../../lib/navigation.ts';
+import { viewToPath } from '../../lib/view-nav.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
@@ -17,13 +19,7 @@ const navProps = {
   currentUser: user ?? undefined,
   ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {
-      const path =
-        view === 'timeline'
-          ? '/home'
-          : view === 'profile'
-            ? `/profile/${username ?? ''}`
-            : `/${view}${postId ? `/${postId}` : ''}`;
-      window.location.assign(path);
+      void navigate(viewToPath(view, postId, username));
     },
     getCurrentUsername: () => user?.username ?? null,
   }),
@@ -47,7 +43,7 @@ $effect(() => {
       return;
     }
     host.replaceChildren(handle.getElement());
-    dispose = handle.destroy;
+    dispose = () => handle.destroy();
   });
   return () => {
     cancelled = true;

@@ -59,7 +59,6 @@ let banner: HTMLDivElement;
 let avatar: HTMLDivElement;
 let displayName: HTMLDivElement;
 let usernameEl: HTMLDivElement;
-let bio: HTMLDivElement;
 let joinedEl: HTMLDivElement;
 let titleHost: HTMLSpanElement;
 let pinnedHost: HTMLDivElement;
@@ -71,6 +70,7 @@ let kebabMenu: HTMLDivElement;
 
 let data = $state<ProfileData | null>(null);
 let loading = $state(true);
+let notFound = $state(false);
 let frozen = $state(false);
 let following = $state(false);
 let blocked = $state(false);
@@ -80,6 +80,7 @@ let menuOpen = $state(false);
 let pinnedPost = $state<Post | null>(null);
 let blockedCount = $state(0);
 let bioHtml = $state('');
+let bioText = $state('');
 let listHandles: Partial<Record<Tab, UserPostListHandle>> = {};
 let pinnedHandle: { destroy: () => void } | null = null;
 let generation = 0;
@@ -158,7 +159,10 @@ async function loadUser(): Promise<void> {
   loading = true;
   try {
     const response = await fetch(`/api/users/${username}`, { credentials: 'include' });
-    if (!response.ok) return;
+    if (!response.ok) {
+      notFound = true;
+      return;
+    }
     const result = (await response.json()) as { user?: ProfileData };
     if (!result.user || gen !== generation) return;
     data = result.user;
@@ -182,9 +186,12 @@ async function loadUser(): Promise<void> {
           linkifyUrls(holder);
           linkifyHashtags(holder);
           bioHtml = holder.innerHTML;
+          bioText = '';
         })
         .catch(() => {
-          bioHtml = result.user?.bio ?? '';
+          // Never inject the raw bio: markdown/sanitizer chunks can fail to load.
+          bioHtml = '';
+          bioText = result.user?.bio ?? '';
         });
     }
     queueMicrotask(() => {
@@ -351,7 +358,9 @@ onDestroy(() => {
     {/if}
   </div>
 
-  {#if frozen}
+  {#if notFound}
+    <p class="profile-not-found">{t('profile.not_found')}</p>
+  {:else if frozen}
     <div class="profile-banner"></div>
     <div class="profile-header"><div class="profile-avatar-section"><div bind:this={avatar} class="profile-avatar fx-display">{username.charAt(0).toUpperCase()}</div><div class="profile-info"><div bind:this={displayName} class="profile-display-name fx-display">{data?.display_name || username}</div></div></div></div>
     <p class="profile-frozen-notice">{t('profile.frozen_notice', { reason: data?.frozen_reason || '' })}</p>
@@ -366,7 +375,7 @@ onDestroy(() => {
         <div class="profile-info">
           <div bind:this={displayName} class="profile-display-name fx-display">{data?.display_name ?? t('profile.loading')}</div>
           <div class="profile-username">@{username}<span bind:this={titleHost} class="post-title-badge-host"></span></div>
-          <div class="profile-bio">{@html bioHtml}</div>
+          <div class="profile-bio">{#if bioHtml}{@html bioHtml}{:else}{bioText}{/if}</div>
           <div bind:this={joinedEl} class="profile-joined-date">{data?.created_at ? t('profile.joined', { date: new Date(data.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) }) : t('profile.joined', { date: t('common.loading') })}</div>
           {#if own}
             <div class="profile-own-actions" style="display:flex;">

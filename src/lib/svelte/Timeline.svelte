@@ -9,6 +9,7 @@ import { type Ad, isAd, type Post, type TimelineItem } from '../../../shared/typ
 import { createFabButton as makeFabButton } from '../fab-button.ts';
 import { t } from '../i18n.ts';
 import { injectAds } from '../inject-ads.ts';
+import { isModalOpen } from '../modal-state.ts';
 import { navigate } from '../navigation.ts';
 import { openPostModal } from '../post-modal.ts';
 import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
@@ -59,7 +60,7 @@ let generation = 0;
 let destroyed = false;
 let fabButton: HTMLElement | null = null;
 let disposePostUpdates: (() => void) | null = null;
-let disposeReplyToggle: (() => void) | null = null;
+let disposePostCreated: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
 let boundModeShortcut: ((e: KeyboardEvent) => void) | null = null;
@@ -184,13 +185,14 @@ async function loadMore(): Promise<void> {
     if (mode === 'foryou' && currentUser && forYouProfile) {
       page = takePage(getTimelinePageSize());
       while (page.length === 0 && cursor) {
+        const previousCursor = cursor;
         const batch = await fetchForYouBatch(cursor);
         if (destroyed || gen !== generation) return;
         if (!batch) break;
         forYouQueue = batch.queue;
         cursor = batch.nextCursor;
         page = takePage(getTimelinePageSize());
-        if (batch.queue.length === 0 && (!batch.nextCursor || batch.nextCursor === cursor)) {
+        if (batch.queue.length === 0 && (!batch.nextCursor || batch.nextCursor === previousCursor)) {
           cursor = undefined;
           break;
         }
@@ -234,9 +236,11 @@ async function loadAdConfig(): Promise<void> {
   }
 }
 
-function switchMode(next: Mode): void {
-  if (mode === next) return;
-  mode = next;
+function resetAndLoad(): void {
+  // An in-flight request must not repopulate the feed after a mode switch.
+  generation++;
+  loading = false;
+  errorMessage = '';
   items = [];
   seenIds.clear();
   forYouQueue = [];
@@ -246,13 +250,16 @@ function switchMode(next: Mode): void {
   void loadInitial();
 }
 
-function handleNewPost(post: Post): void {
-  items = [post, ...items];
+function switchMode(next: Mode): void {
+  if (mode === next) return;
+  mode = next;
+  resetAndLoad();
 }
 
-function handleReplyToggle(postId: string): void {
-  const el = postList?.querySelector(`[data-item-id="${postId}"] .post-card`);
-  el?.dispatchEvent(new CustomEvent('replyToggle', { detail: { postId }, bubbles: true }));
+function handleNewPost(post: Post): void {
+  // The recommendation API excludes your own posts, so For You must not prepend.
+  if (mode === 'foryou') return;
+  items = [post, ...items];
 }
 
 function submitHashtag(): void {
@@ -262,13 +269,16 @@ function submitHashtag(): void {
 }
 
 function onKeydown(e: KeyboardEvent): void {
-  if (!e.altKey) return;
+  if (!e.altKey || e.defaultPrevented) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+  if (isModalOpen()) return;
   if (e.key === '1') {
     e.preventDefault();
-    switchMode('foryou');
+    switchMode('following');
   } else if (e.key === '2') {
     e.preventDefault();
-    switchMode('following');
+    switchMode('foryou');
   } else if (e.key === '3') {
     e.preventDefault();
     switchMode('global');
@@ -285,14 +295,9 @@ onMount(() => {
   const handler = postUpdateHandler(new Map());
   window.addEventListener('postUpdated', handler);
   disposePostUpdates = () => window.removeEventListener('postUpdated', handler);
-
-  // PostCard dispatches replyToggle from its own DOM; forward it to the card
-  // instance so the inline reply composer opens without a reload.
-  const onReplyToggle = ((e: Event) => {
-    handleReplyToggle((e as CustomEvent<{ postId: string }>).detail.postId);
-  }) as EventListener;
-  root.addEventListener('replyToggle', onReplyToggle);
-  disposeReplyToggle = () => root.removeEventListener('replyToggle', onReplyToggle);
+  const onPostCreated = ((e: Event) => handleNewPost((e as CustomEvent<Post>).detail)) as EventListener;
+  window.addEventListener('postCreated', onPostCreated);
+  disposePostCreated = () => window.removeEventListener('postCreated', onPostCreated);
 
   if (fabHost) {
     fabButton = makeFabButton(() => {
@@ -328,7 +333,7 @@ onDestroy(() => {
   generation++;
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
   disposePostUpdates?.();
-  disposeReplyToggle?.();
+  disposePostCreated?.();
   observer?.disconnect();
   fabButton?.remove();
 });
@@ -353,7 +358,7 @@ function updateFab(): void {
       <button class="feed-toggle-btn" class:active={mode === 'foryou'} type="button" onclick={() => switchMode('foryou')}>{t('timeline.for_you')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'following'} type="button" onclick={() => switchMode('following')}>{t('timeline.following')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'global'} type="button" onclick={() => switchMode('global')}>{t('timeline.global')}</button>
-      <button class="feed-toggle-btn feed-reload-btn" type="button" onclick={() => { items = []; seenIds.clear(); cursor = undefined; void loadInitial(); }}>{t('timeline.reload')}</button>
+      <button class="feed-toggle-btn feed-reload-btn" type="button" onclick={resetAndLoad}>{t('timeline.reload')}</button>
     </div>
   </div>
 
@@ -380,7 +385,7 @@ function updateFab(): void {
     {#each items as item (item.id)}
       <CardHost {item} options={cardOptions} />
     {/each}
-    {#if items.length === 0}
+    {#if items.length === 0 && loading}
       <div class="timeline-skeletons" aria-hidden="true">
         {#each [0, 1, 2] as slot (slot)}
           <article class="skeleton-card" aria-hidden="true">
@@ -390,6 +395,11 @@ function updateFab(): void {
             <div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div>
           </article>
         {/each}
+      </div>
+    {:else if items.length === 0}
+      <div class="timeline-empty">
+        <p class="timeline-empty-title">{t('timeline.empty_title')}</p>
+        <p class="timeline-empty-desc">{t('timeline.empty_desc')}</p>
       </div>
     {/if}
   </div>

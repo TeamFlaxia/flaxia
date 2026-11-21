@@ -25,6 +25,7 @@ import {
   openVersionHistory,
   type StageHandle,
 } from '../post/card-adapters.ts';
+import { openPostModal } from '../post-modal.ts';
 import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { useSandboxBridge } from '../sandbox-bridge.ts';
 import { getShowNsfw } from '../settings.ts';
@@ -55,6 +56,8 @@ interface Props {
   pinned?: boolean;
   onDelete?: (postId: string) => void;
   onTogglePin?: (postId: string) => void;
+  /** Reply views hide the leading `>>N` reference from the body. */
+  stripLeadingPostRef?: boolean;
 }
 let props: Props = $props();
 
@@ -106,7 +109,9 @@ const hashtags = (props.post.hashtags || '')
   .map((s) => s.trim())
   .filter(Boolean);
 const isNsfw = hashtags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
-const displayText = props.post.text ?? '';
+const displayText = props.stripLeadingPostRef
+  ? (props.post.text ?? '').replace(/^\s*>>\d+\s*/g, '').trimStart()
+  : (props.post.text ?? '');
 const plainText = canUsePostColors({ badge_type: props.post.badge_type })
   ? stripPostColors(displayText)
   : stripMediaCues(displayText);
@@ -158,7 +163,8 @@ async function toggleFresh(): Promise<void> {
   refreshActions();
   try {
     const res = await fetch(`/api/posts/${props.post.id}/fresh`, { method: 'POST', credentials: 'include' });
-    if (!res.ok) return;
+    // The counts were already moved optimistically; revert through catch().
+    if (!res.ok) throw new Error(`fresh failed: ${res.status}`);
     const data = (await res.json()) as { fresh_count: number; is_freshed: boolean };
     freshCount = data.fresh_count;
     freshed = data.is_freshed;
@@ -223,7 +229,7 @@ async function toggleReaction(emoji: string): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ emoji }),
     });
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`reaction failed: ${res.status}`);
     const data = (await res.json()) as { reactions?: ReactionSummary[] };
     if (data.reactions) reactions = data.reactions;
     refreshActions();
@@ -238,13 +244,61 @@ function toggleReply(): void {
   if (props.disableReply) return;
   if (!requireAuth('reply')) return;
   replyOpen = !replyOpen;
+  // Thread/timeline shells open their own composer on this bubbling event.
+  root?.dispatchEvent(new CustomEvent('replyToggle', { detail: { postId: props.post.id }, bubbles: true }));
   if (replyOpen) queueMicrotask(() => replyComposer?.focus());
 }
 
 function handleQuote(): void {
   if (!requireAuth('post')) return;
-  // Quote is handled by the post modal; keep the legacy navigation contract.
-  void navigate(`/home`);
+  const p = props.post;
+  openPostModal({
+    currentUser: props.currentUser ?? null,
+    onPostCreated: (post) => void navigate(`/thread/${post.id}`),
+    quotedPost: {
+      id: p.id,
+      user_id: p.user_id,
+      username: p.username,
+      display_name: p.display_name,
+      avatar_key: p.avatar_key,
+      avatar_url: p.avatar_url,
+      actor_id: p.actor_id,
+      is_remote: p.is_remote,
+      badge_type: p.badge_type,
+      name_color: p.name_color,
+      text: p.text,
+      hashtags: p.hashtags,
+      gif_key: p.gif_key,
+      payload_key: p.payload_key,
+      swf_key: p.swf_key,
+      thumbnail_key: p.thumbnail_key,
+      created_at: p.created_at,
+    },
+  });
+}
+
+async function blockUser(): Promise<void> {
+  const username = props.post.username;
+  try {
+    const response = await fetch(`/api/users/${username}/block`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(data.error || 'Failed to block user');
+    }
+    showToast(t('post.blocked', { username }));
+    if (root) {
+      root.style.transition = 'opacity 0.3s, transform 0.3s';
+      root.style.opacity = '0';
+      root.style.transform = 'translateX(-100%)';
+    }
+    props.onDelete?.(props.post.id);
+  } catch (error) {
+    console.error('Block user error:', error);
+    showToast(t('post.block_failed'), true);
+  }
 }
 
 function onPostClick(e: MouseEvent): void {
@@ -271,6 +325,7 @@ function toggleMenu(): void {
   if (menuOpen) {
     menuHost.replaceChildren();
     menuOpen = false;
+    mountMenuButton(menuHost, toggleMenu);
     return;
   }
   const isOwn = props.currentUser?.username === props.post.username;
@@ -288,11 +343,15 @@ function toggleMenu(): void {
       onEdit: startEdit,
       onUpdate: () => openGameUpdate(props.post, props.sandboxOrigin, () => {}),
       onDelete: deletePost,
-      onBlock: () => {},
+      onBlock: () => void blockUser(),
       onReport: () => openReport(props.post),
     },
   };
-  mountMenu(menuHost, options as never, () => (menuOpen = false));
+  mountMenu(menuHost, options as never, () => {
+    menuOpen = false;
+    // mountMenu clears the host on close, so restore the trigger button.
+    mountMenuButton(menuHost, toggleMenu);
+  });
   menuOpen = true;
 }
 
@@ -475,9 +534,11 @@ onDestroy(() => {
         <button type="button" disabled={saving} onclick={() => void saveEdit()}>{t('post.edit_save')}</button>
       </div>
     </div>
-  {:else}
-    <div class="post-text-wrap"><div bind:this={textHost} class="post-text">{plainText}</div></div>
   {/if}
+  <!-- Kept mounted while editing so Cancel does not drop the rendered text. -->
+  <div class="post-text-wrap" hidden={editing}>
+    <div bind:this={textHost} class="post-text">{plainText}</div>
+  </div>
 
   {#if props.post.poll}
     <div bind:this={pollHost}><PollWidget {...props.post.poll} /></div>

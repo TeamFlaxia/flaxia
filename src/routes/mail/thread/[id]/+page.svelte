@@ -5,4 +5,6 @@ import { page } from '$app/state';
 import MailView from '../../../../lib/svelte/MailView.svelte';
 </script>
 
-<MailView view="thread" threadId={page.params.id} />
+{#key page.params.id}
+  <MailView view="thread" threadId={page.params.id} />
+{/key}

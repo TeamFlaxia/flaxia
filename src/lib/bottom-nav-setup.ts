@@ -6,7 +6,6 @@
 import type { BottomNav, BottomNavProps } from '../components/BottomNav.js';
 import { lazyCreateBottomNav } from './lazy-nav.js';
 import type { RouteView } from './router.js';
-import { pushSpaHistory } from './spa-history.ts';
 
 export interface BottomNavDeps {
   navigate: (view: RouteView, postId?: string, username?: string) => void;
@@ -20,26 +19,16 @@ let bottomNav: BottomNav | null = null;
 /** Shared navigation handler for the mobile bottom bar. */
 function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
   if (item === 'home') {
-    window.history.pushState({}, '', '/home');
     deps.navigate('timeline');
-  } else if (item === 'explore') {
-    window.history.pushState({}, '', '/explore');
-    deps.navigate('explore');
-  } else if (item === 'arcade') {
-    pushSpaHistory('/arcade');
-    deps.navigate('arcade');
-  } else if (item === 'notifications') {
-    window.history.pushState({}, '', '/notifications');
-    deps.navigate('notifications');
   } else if (item === 'account') {
     const currentUser = deps.getCurrentUser();
     if (!currentUser) {
-      window.history.pushState({}, '', '/login');
       deps.navigate('login');
       return;
     }
-    window.history.pushState({}, '', `/profile/${currentUser.username}`);
     deps.navigate('profile', undefined, currentUser.username);
+  } else {
+    deps.navigate(item as never);
   }
 }
 
@@ -51,11 +40,9 @@ export async function ensureBottomNav(deps: BottomNavDeps): Promise<BottomNav> {
       currentUser: deps.getCurrentUser() || undefined,
       onNavigate: (item: string) => handleBottomNavNavigate(deps, item),
       onSignIn: () => {
-        window.history.pushState({}, '', '/login');
         deps.navigate('login');
       },
       onSignUp: () => {
-        window.history.pushState({}, '', '/register');
         deps.navigate('register');
       },
     });

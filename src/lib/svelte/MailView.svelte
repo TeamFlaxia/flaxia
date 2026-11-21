@@ -1,5 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { navigate } from '../navigation.ts';
+import { viewToPath } from '../view-nav.ts';
 import MailPage from './MailPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
@@ -12,12 +14,6 @@ let host: HTMLDivElement;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
 let navProps: Record<string, unknown> = {};
 
-const pathFor = (target: string, postId?: string, username?: string): string => {
-  if (target === 'timeline') return '/home';
-  if (target === 'profile') return `/profile/${username ?? ''}`;
-  return `/${target}`;
-};
-
 onMount(() => {
   let dispose = () => {};
   void (async () => {
@@ -26,7 +22,7 @@ onMount(() => {
     await initI18n();
     const user = getSessionUser() as { id: string; username: string } | undefined;
     if (!user) {
-      window.location.replace('/explore');
+      void navigate('/explore', { replaceState: true });
       return;
     }
     const currentUser = { id: user.id, username: user.username };
@@ -48,13 +44,13 @@ onMount(() => {
     }
     if (page) {
       host.appendChild(page.getElement());
-      dispose = page.destroy;
+      dispose = () => page.destroy();
     }
     navProps = {
       activeItem: 'mail',
       currentUser,
       ...leftNavCallbacks({
-        navigate: (target, postId, username) => window.location.assign(pathFor(target, postId, username)),
+        navigate: (target, postId, username) => void navigate(viewToPath(target, postId, username)),
         getCurrentUsername: () => currentUser.username,
       }),
     };

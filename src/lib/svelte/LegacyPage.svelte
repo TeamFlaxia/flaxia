@@ -14,7 +14,7 @@ onMount(() => {
     await initI18n();
     const page = await load();
     host.appendChild(page.getElement());
-    dispose = page.destroy;
+    dispose = () => page.destroy();
   })();
   return () => dispose();
 });

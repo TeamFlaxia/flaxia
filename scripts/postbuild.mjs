@@ -8,6 +8,12 @@ if (!existsSync(index)) throw new Error('dist/index.html missing — did vite bu
 
 if (existsSync('export-popup.html')) copyFileSync('export-popup.html', join(dist, 'export-popup.html'));
 
+// adapter-static may clear dist/ after the Vite plugin's closeBundle, so the
+// docs manifest is written again here (the dev middleware uses the same code).
+import { writeDocsManifest } from './docs-manifest.mjs';
+
+writeDocsManifest(join(dist, 'docs'));
+
 const html = readFileSync(index, 'utf-8');
 const headEnd = html.indexOf('</head>');
 if (headEnd === -1) throw new Error('dist/index.html has no </head>');

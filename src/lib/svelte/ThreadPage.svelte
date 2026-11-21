@@ -39,6 +39,7 @@ let loading = $state(true);
 let errorMessage = $state('');
 let composerOpen = $state(false);
 let indexMap = new Map<string, number>();
+let replyToggleHandler: ((event: Event) => void) | null = null;
 
 function renderEntries(): void {
   const style = getReplyStyle();
@@ -85,6 +86,7 @@ function mountEntries(): void {
           sandboxOrigin,
           currentUser,
           index: entry.index,
+          disableNavigation: true,
         }),
       );
     }
@@ -137,14 +139,14 @@ async function loadThread(): Promise<void> {
         onReplyCreated: handleRootReply,
         onCancel: () => (composerOpen = false),
       });
-      if (composerHost) composerHost.style.display = 'none';
-      rootHost.addEventListener('replyToggle', ((e: Event) => {
-        if ((e as CustomEvent).detail?.postId === root.id) toggleComposer();
-      }) as EventListener);
+      replyToggleHandler = (event: Event) => {
+        if ((event as CustomEvent).detail?.postId === root.id) toggleComposer();
+      };
+      rootHost.addEventListener('replyToggle', replyToggleHandler);
     }
     replies = threadReplies;
     renderEntries();
-  } catch (error) {
+  } catch {
     errorMessage = t('thread.load_failed');
   } finally {
     loading = false;
@@ -153,6 +155,7 @@ async function loadThread(): Promise<void> {
 
 onMount(() => void loadThread());
 onDestroy(() => {
+  if (replyToggleHandler) rootHost.removeEventListener('replyToggle', replyToggleHandler);
   rootCard?.destroy();
   rootComposer?.destroy();
   nodeHandles.forEach((h) => {

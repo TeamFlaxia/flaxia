@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onDestroy } from 'svelte';
+import { onDestroy, onMount } from 'svelte';
 import type { Post } from '../../../shared/types/post.ts';
 import { showSignInPrompt } from '../../components/SignInPrompt.ts';
 import { attachPlusBadge } from '../avatar.ts';
@@ -64,6 +64,10 @@ let mentionToken = 0;
 let previewHandle: AttachPreviewHandle | null = null;
 
 const char = $derived(charMeter(text.length));
+
+onMount(() => {
+  attachIcons(root);
+});
 
 onDestroy(() => {
   if (mentionTimer) clearTimeout(mentionTimer);
