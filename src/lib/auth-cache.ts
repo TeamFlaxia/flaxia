@@ -1,3 +1,5 @@
+import { clearSessionUser } from './svelte/session.ts';
+
 let cachedMe: Record<string, unknown> | null = null;
 let cachePromise: Promise<Record<string, unknown> | null> | null = null;
 let cacheTimestamp: number = 0;
@@ -46,6 +48,7 @@ export function clearMeCache() {
   cachedMe = null;
   cachePromise = null;
   cacheTimestamp = 0;
+  clearSessionUser();
 }
 
 export function updateMeCache(data: Record<string, unknown>) {

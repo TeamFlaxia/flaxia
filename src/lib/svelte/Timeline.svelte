@@ -12,7 +12,6 @@ import { injectAds } from '../inject-ads.ts';
 import { isModalOpen } from '../modal-state.ts';
 import { navigate } from '../navigation.ts';
 import { openPostModal } from '../post-modal.ts';
-import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
 import { rankCandidates } from '../recommendation/rank.ts';
 import {
   DATA_SAVER_AD_SPACING_MULTIPLIER,
@@ -62,7 +61,6 @@ let seenIds = new Set<string>();
 let generation = 0;
 let destroyed = false;
 let fabButton: HTMLElement | null = null;
-let disposePostUpdates: (() => void) | null = null;
 let disposePostCreated: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
@@ -300,9 +298,6 @@ onMount(() => {
 
   boundModeShortcut = onKeydown;
   window.addEventListener('keydown', boundModeShortcut);
-  const handler = postUpdateHandler(new Map());
-  window.addEventListener('postUpdated', handler);
-  disposePostUpdates = () => window.removeEventListener('postUpdated', handler);
   const onPostCreated = ((e: Event) => handleNewPost((e as CustomEvent<Post>).detail)) as EventListener;
   window.addEventListener('postCreated', onPostCreated);
   disposePostCreated = () => window.removeEventListener('postCreated', onPostCreated);
@@ -340,7 +335,6 @@ onDestroy(() => {
   destroyed = true;
   generation++;
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
-  disposePostUpdates?.();
   disposePostCreated?.();
   observer?.disconnect();
   fabObserver?.disconnect();
