@@ -1,19 +1,16 @@
 <script lang="ts">
 import { page } from '$app/state';
+import SearchPage from '../../lib/svelte/SearchPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
-import LegacyShellPage from '../../lib/svelte/LegacyShellPage.svelte';
+import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
 import { getSessionUser } from '../../lib/svelte/session.ts';
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
-const load = async () => {
-  const { createSearchPage } = await import('../../components/SearchPage.ts');
-  return createSearchPage({
-    query: page.url.searchParams.get('q') || '',
-    type: (page.url.searchParams.get('type') as 'posts' | 'users' | 'arcade' | 'web') || 'posts',
-    currentUser: getSessionUser() ?? undefined,
-    sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',
-  });
-};
 </script>
 
-<LegacyShellPage {load} activeItem="search" />
+<ShellLayout navProps={{ activeItem: 'search', currentUser: getSessionUser() ?? null }}>
+  <SearchPage
+    query={page.url.searchParams.get('q') || ''}
+    type={(page.url.searchParams.get('type') as 'posts' | 'users' | 'arcade' | 'web') || 'posts'}
+    currentUser={(getSessionUser() ?? null) as Record<string, unknown> | null}
+    sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}
+  />
+</ShellLayout>
