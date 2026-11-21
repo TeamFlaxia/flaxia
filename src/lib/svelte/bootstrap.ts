@@ -1,5 +1,8 @@
 /** Global side effects that used to live at the top of legacy main.ts. */
+
+import { showCrowdConsentModal } from '../../components/CrowdConsentModal.ts';
 import { initContentProtection } from '../content-protection.js';
+import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from '../crowd-node.js';
 import { API_ORIGIN, isNativeApp } from '../native-api.js';
 import { createNativeFetch } from '../native-fetch.js';
 import { initOfflineGames } from '../native-offline-games.js';
@@ -54,4 +57,25 @@ export function initShellBootstrap(): void {
 
   initContentProtection();
   initTheme();
+
+  // The legacy main.ts initialised the Crowd node globally. Restore that here:
+  // without it the node only starts when the user happens to open Settings,
+  // and the consent prompt never appears on a fresh visit.
+  if (canRunFlaxiaNode()) {
+    void initCrowdNode((controls) => {
+      showCrowdConsentModal({
+        onAccept: () => {
+          controls.accept();
+          notifyCrowdConsentChanged();
+        },
+        onReject: () => {
+          controls.reject();
+          notifyCrowdConsentChanged();
+        },
+      });
+    }).catch((error) => {
+      // A missing/unreachable node bundle must never break app init.
+      console.error('Failed to initialize Crowd node:', error);
+    });
+  }
 }
