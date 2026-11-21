@@ -1,12 +1,9 @@
 <script lang="ts">
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
-import LegacyShellPage from '../../lib/svelte/LegacyShellPage.svelte';
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
-const load = async () => {
-  const { createTranslatePage } = await import('../../components/TranslatePage.ts');
-  return createTranslatePage();
-};
+import ShellLayout from '../../lib/svelte/ShellLayout.svelte';
+import TranslatePage from '../../lib/svelte/TranslatePage.svelte';
 </script>
 
-<LegacyShellPage {load} activeItem="translate" />
+<ShellLayout navProps={{ activeItem: 'translate' }}>
+  <TranslatePage />
+</ShellLayout>

@@ -20,6 +20,22 @@ test('root route redirects to the home feed', async () => {
   assert.match(layout, /initShellBootstrap/);
 });
 
+test('search route renders the Svelte component directly', async () => {
+  const route = await read('src/routes/search/+page.svelte');
+  assert.match(route, /lib\/svelte\/SearchPage\.svelte/);
+  const component = await read('src/lib/svelte/SearchPage.svelte');
+  assert.match(component, /search-page-content/);
+  assert.match(component, /search-filter-bar/);
+});
+
+test('translate route renders the Svelte component directly', async () => {
+  const route = await read('src/routes/translate/+page.svelte');
+  assert.match(route, /lib\/svelte\/TranslatePage\.svelte/);
+  const component = await read('src/lib/svelte/TranslatePage.svelte');
+  assert.match(component, /translate-panes/);
+  assert.match(component, /translate-mode-button/);
+});
+
 test('bookmarks route uses the standalone shell', async () => {
   const route = await read('src/routes/bookmarks/+page.svelte');
   assert.match(route, /ShellLayout/);
@@ -100,8 +116,6 @@ test('home feed route renders the Svelte timeline', async () => {
 test('remaining legacy views now have Svelte routes', async () => {
   const cases = [
     ['explore', 'createExplorePage'],
-    ['search', 'createSearchPage'],
-    ['translate', 'createTranslatePage'],
     ['profile/[username]', 'createProfilePage'],
     ['users/[username]', 'createProfilePage'],
   ] as const;

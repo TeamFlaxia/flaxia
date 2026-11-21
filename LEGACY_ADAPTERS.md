@@ -22,8 +22,6 @@ this ratchet.
 - `src/routes/explore/+page.svelte`: `createExplorePage`
 - `src/routes/maps/+page.svelte`: `createMapsPage`
 - `src/routes/profile/[username]/+page.svelte`: `createProfilePage`
-- `src/routes/search/+page.svelte`: `createSearchPage`
 - `src/routes/settings/+page.svelte`: `createSettingsPage`
 - `src/routes/thread/[id]/+page.svelte`: `createThreadPage`
-- `src/routes/translate/+page.svelte`: `createTranslatePage`
 - `src/routes/users/[username]/+page.svelte`: `createProfilePage`
