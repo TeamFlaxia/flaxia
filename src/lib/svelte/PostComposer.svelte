@@ -173,6 +173,7 @@ async function initializeDrafts(): Promise<void> {
     draftStorageMode = 'vault';
     vaultNotice = '';
     await loadDrafts();
+    onDraftSaved?.();
     return;
   }
   draftStorageMode = 'local';
@@ -182,6 +183,7 @@ async function initializeDrafts(): Promise<void> {
   } catch {
     savedDrafts = [];
   }
+  onDraftSaved?.();
 }
 
 async function handleVaultChange(): Promise<void> {
