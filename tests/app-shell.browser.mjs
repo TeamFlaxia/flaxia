@@ -705,6 +705,54 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
   });
 });
 
+test('the Svelte mail pages render settings, compose and the locked reader', {
+  timeout: 120_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const stubs = {
+      ...SIGNED_IN_STUBS,
+      '/api/mail/addresses': {
+        body: { addresses: [{ address: 'mikan@users.flaxia.invalid', state: 'inactive' }] },
+      },
+      '/api/mail/quota': {
+        body: {
+          storage_bytes: 1048576,
+          storage_quota_bytes: 10485760,
+          external_sends: 2,
+          daily_external_limit: 20,
+        },
+      },
+      '/api/mail/unread': { body: 1 },
+    };
+
+    const settings = await openApp(browser, `${origin}/mail/settings`, stubs);
+    await settings.page.waitForSelector('.mail-settings-card', { timeout: 30_000 });
+    assert.equal(await settings.page.locator('.mail-settings-card').count(), 3);
+    assert.equal(await settings.page.locator('.mail-security-list li').count(), 3);
+    assert.equal(await settings.page.locator('.mail-quota-bar').count(), 1);
+    assert.ok(await settings.page.$('.mail-settings-vault'), 'the vault status is shown for an inactive mailbox');
+    assert.deepEqual(settings.pageErrors, []);
+    await settings.page.close();
+
+    const compose = await openApp(browser, `${origin}/mail/compose`, stubs);
+    await compose.page.waitForSelector('.mail-compose-card', { timeout: 30_000 });
+    assert.equal(await compose.page.locator('.mail-compose-warning').isHidden(), true, 'no warning without recipients');
+    await compose.page.fill('input[name="to"]', 'bob@example.com');
+    await compose.page.waitForTimeout(200);
+    assert.equal(await compose.page.locator('.mail-compose-warning').isHidden(), false, 'external recipients warn');
+    assert.match((await compose.page.locator('.mail-compose-security .mail-chip').textContent()) ?? '', /TLS/i);
+    assert.deepEqual(compose.pageErrors, []);
+    await compose.page.close();
+
+    const thread = await openApp(browser, `${origin}/mail/thread/t1`, stubs);
+    await thread.page.waitForSelector('.mail-thread-page', { timeout: 30_000 });
+    await thread.page.waitForSelector('.mail-empty', { timeout: 10_000 });
+    assert.ok(await thread.page.$('.mail-thread-page .mail-empty'));
+    assert.deepEqual(thread.pageErrors, []);
+    await thread.page.close();
+  });
+});
+
 test('the left nav renders guest and signed-in states and routes its menus', {
   timeout: 120_000,
 }, async () => {
