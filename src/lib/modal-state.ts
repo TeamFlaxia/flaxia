@@ -5,6 +5,11 @@ export function isModalOpen(): boolean {
   return modalCount > 0;
 }
 
+/** How many modals are registered. A stacked dialog owns Escape first. */
+export function getModalCount(): number {
+  return modalCount;
+}
+
 function lockScroll(): void {
   document.body.style.overflow = 'hidden';
   document.body.style.position = 'fixed';

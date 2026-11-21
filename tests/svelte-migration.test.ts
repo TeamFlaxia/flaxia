@@ -135,9 +135,13 @@ test('home feed owns the composer through a Svelte mount point', async () => {
   assert.match(implementation, /composer-textarea/);
   assert.match(implementation, /submitPost/);
   assert.match(implementation, /composer-poll-section/);
-  const bridge = await read('src/components/PostComposer.ts');
-  assert.match(bridge, /mount\(Composer/);
-  assert.doesNotMatch(bridge, /className = 'post-composer'/, 'DOM construction must live in Svelte');
+  const modal = await read('src/lib/svelte/PostModal.svelte');
+  assert.match(modal, /post-modal-overlay/);
+  assert.match(modal, /ComposerDraftsPanel/);
+  assert.match(modal, /getModalCount\(\) > 1/);
+  const adapter = await read('src/lib/post-modal.ts');
+  assert.match(adapter, /mount\(PostModalView/);
+  assert.doesNotMatch(adapter, /document\.createElement\('div'\)[\s\S]*createElement/, 'the modal DOM lives in Svelte');
   const timeline = await read('src/lib/svelte/Timeline.svelte');
   assert.match(timeline, /<Composer \/>/);
   assert.match(timeline, /CardHost/);

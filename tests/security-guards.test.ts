@@ -237,7 +237,7 @@ describe('security guards', () => {
     const activityPubCrypto = readFileSync(join(ROOT, 'functions/lib/activitypub/crypto.ts'), 'utf8');
     assert.doesNotMatch(activityPubCrypto, /console\.(?:log|info|warn|error)\([^\n]*(?:private key|pemContents)/i);
 
-    for (const file of ['src/components/PostComposer.ts', 'src/components/ReplyComposer.ts']) {
+    for (const file of ['src/lib/svelte/PostComposer.svelte', 'src/lib/svelte/ReplyComposer.svelte']) {
       const source = readFileSync(join(ROOT, file), 'utf8');
       assert.doesNotMatch(
         source,

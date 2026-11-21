@@ -1200,3 +1200,108 @@
 .shortcut-sheet-close:hover {
   background: var(--bg-hover);
 }
+
+/* Composer modal drafts panel (Svelte-owned). */
+.post-modal-drafts {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.post-modal-drafts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 4px;
+}
+
+.post-modal-drafts-title {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.post-modal-drafts-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.post-modal-drafts-actions button {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.post-modal-drafts-actions button:hover {
+  background: var(--bg-hover);
+}
+
+.post-modal-drafts-delete-all {
+  color: var(--danger-text) !important;
+}
+
+.post-modal-drafts-empty {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.post-modal-draft-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.post-modal-draft-item:hover {
+  background: var(--bg-hover);
+}
+
+.post-modal-draft-text {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.post-modal-draft-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.post-modal-draft-del {
+  display: inline-flex;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.post-modal-draft-del:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}

@@ -705,6 +705,110 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
   });
 });
 
+test('the post modal keeps the composer open while a confirm dialog is on top', {
+  timeout: 90_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
+    await page.waitForSelector('.post-card', { timeout: 30_000 });
+
+    await page.click('.post-card .action-button--reload');
+    await page.waitForSelector('.post-action-dropdown-item');
+    // reload / quote / share (labels are localized)
+    await page.locator('.post-action-dropdown-item').nth(1).click();
+    await page.waitForSelector('.post-modal-overlay', { timeout: 10_000 });
+    assert.ok(await page.$('.post-modal-dialog .post-composer'), 'composer must mount inside the modal');
+    assert.ok(await page.$('.post-modal-drafts'), 'the drafts panel must render');
+
+    // save draft / delete all
+    await page.locator('.post-modal-drafts button').nth(1).click();
+    await page.waitForSelector('.fx-confirm-overlay', { timeout: 10_000 });
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    assert.equal(await page.$('.fx-confirm-overlay'), null, 'Escape must close the confirm dialog');
+    assert.ok(await page.$('.post-modal-overlay'), 'Escape must not close the composer behind the confirm');
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    assert.equal(await page.$('.post-modal-overlay'), null, 'Escape closes the composer once it is the top layer');
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
+test('post modal drafts save, reload and delete through the Svelte panel', {
+  timeout: 90_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
+    await page.waitForSelector('.post-card', { timeout: 30_000 });
+    await page.click('.post-card .action-button--reload');
+    await page.waitForSelector('.post-action-dropdown-item');
+    await page.locator('.post-action-dropdown-item').nth(1).click();
+    await page.waitForSelector('.post-modal-overlay', { timeout: 10_000 });
+
+    assert.ok(
+      await page.$('.post-modal-dialog .composer-quoted-post'),
+      'quoting opens the composer with the quoted post attached',
+    );
+
+    await page.fill('.post-modal-dialog .composer-textarea', 'draft body');
+    await page.locator('.post-modal-drafts-save').click();
+    await page.waitForSelector('.post-modal-draft-item', { timeout: 10_000 });
+    assert.equal(await page.locator('.post-modal-draft-item').count(), 1);
+    assert.match(
+      await page.locator('.post-modal-drafts-title').textContent(),
+      /\(1\)/,
+      'the drafts title shows the count',
+    );
+
+    // Close and reopen: the saved draft comes back from storage.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    await page.click('.post-card .action-button--reload');
+    await page.waitForSelector('.post-action-dropdown-item');
+    await page.locator('.post-action-dropdown-item').nth(1).click();
+    await page.waitForSelector('.post-modal-draft-item', { timeout: 10_000 });
+    assert.equal(await page.locator('.post-modal-draft-item').count(), 1);
+
+    await page.locator('.post-modal-draft-text').click();
+    assert.equal(await page.inputValue('.post-modal-dialog .composer-textarea'), 'draft body');
+
+    await page.locator('.post-modal-draft-del').click();
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.post-modal-draft-item').count(), 0);
+    assert.ok(await page.$('.post-modal-drafts-empty'), 'the empty state returns');
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
+test('closing the post modal restores focus and body scrolling', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS, { width: 390, height: 844 });
+    await page.waitForSelector('.timeline-fab', { timeout: 30_000 });
+    // The FAB is hidden while the lead composer is in view; reveal it for the
+    // opener/focus check.
+    await page.evaluate(() => document.querySelector('.timeline-fab')?.classList.add('visible'));
+    await page.click('.timeline-fab');
+    await page.waitForSelector('.post-modal-overlay', { timeout: 10_000 });
+    assert.equal(await page.evaluate(() => document.body.style.position), 'fixed', 'an open modal locks scroll');
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    assert.equal(await page.$('.post-modal-overlay'), null);
+    assert.equal(await page.evaluate(() => document.body.style.position), '', 'closing restores body scrolling');
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.classList.contains('timeline-fab') ?? false),
+      true,
+      'focus returns to the opener',
+    );
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
 test('a signed-in reply composer mounts, counts characters and suggests mentions', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
