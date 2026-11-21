@@ -104,15 +104,10 @@ test('mail routes share the shell-backed mail view', async () => {
   }
 });
 
-test('thread route owns its three-column page', async () => {
+test('thread route renders the Svelte page directly', async () => {
   const route = await read('src/routes/thread/[id]/+page.svelte');
-  assert.match(route, /createThreadPage/);
-  assert.match(route, /page\.params\.id/);
-  assert.match(route, /sandboxOrigin/);
-  assert.match(route, /onBack/);
-  assert.doesNotMatch(route, /ShellLayout/, 'ThreadPage already renders its own shell');
+  assert.match(route, /lib\/svelte\/ThreadPage\.svelte/);
 });
-
 test('timeline feed is owned by Svelte', async () => {
   const component = await read('src/lib/svelte/Timeline.svelte');
   assert.match(component, /CardHost/);
@@ -146,6 +141,15 @@ test('home feed owns the composer through a Svelte mount point', async () => {
   const timeline = await read('src/lib/svelte/Timeline.svelte');
   assert.match(timeline, /<Composer \/>/);
   assert.match(timeline, /CardHost/);
+});
+
+test('thread route renders the Svelte component directly', async () => {
+  const route = await read('src/routes/thread/[id]/+page.svelte');
+  assert.match(route, /lib\/svelte\/ThreadPage\.svelte/);
+  const component = await read('src/lib/svelte/ThreadPage.svelte');
+  assert.match(component, /thread-root-post-container/);
+  const adapters = await read('src/lib/thread/adapters.ts');
+  assert.match(adapters, /createReplyNode/);
 });
 
 test('mailbox list is owned by Svelte', async () => {
