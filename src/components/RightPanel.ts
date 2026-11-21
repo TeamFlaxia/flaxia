@@ -2,6 +2,7 @@ import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { navigate as spaNavigate } from '../lib/navigation.ts';
 import { commandShortcutLabel } from '../lib/shortcut-label.js';
 import { openShortcutSheet } from '../lib/shortcut-sheet.js';
 
@@ -201,13 +202,7 @@ export class RightPanel {
   }
 
   private navigate(href: string): void {
-    if (href === '/explore') {
-      window.history.pushState({}, '', href);
-      window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
-      return;
-    }
-    window.history.pushState({}, '', href);
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    void spaNavigate(href);
   }
 
   private setupEventListeners(): void {

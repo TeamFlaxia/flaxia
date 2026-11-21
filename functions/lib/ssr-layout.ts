@@ -75,7 +75,8 @@ export function renderSsrFooter(options: SsrFooterOptions): string {
     { label: 'Explore', url: `${baseUrl}/explore` },
     { label: 'Arcade', url: `${baseUrl}/arcade` },
     { label: 'About', url: `${baseUrl}/about` },
-    { label: 'Legal', url: `${baseUrl}/legal` },
+    { label: 'Terms', url: `${baseUrl}/terms` },
+    { label: 'Privacy', url: `${baseUrl}/privacy` },
   ];
 
   const sectionHtml = sections

@@ -3,6 +3,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { navigate as spaNavigate } from '../lib/navigation.ts';
 import { showSignInPrompt } from './SignInPrompt.js';
 
 interface UserListItem {
@@ -407,12 +408,10 @@ export function createFollowerListModal({
           showSignInPrompt(
             'follow',
             () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              void spaNavigate('/login');
             },
             () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              void spaNavigate('/register');
             },
           );
           return;

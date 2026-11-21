@@ -1,5 +1,6 @@
 <script lang="ts">
 import { t } from '../i18n.ts';
+import { navigate } from '../navigation.ts';
 
 interface Props {
   domain: string;
@@ -69,7 +70,7 @@ $effect(() => {
 
 async function toggleFollow(): Promise<void> {
   if (!currentUser) {
-    window.location.href = '/login';
+    void navigate('/login');
     return;
   }
   if (followBusy) return;

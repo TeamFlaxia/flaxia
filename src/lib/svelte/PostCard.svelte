@@ -27,7 +27,6 @@ import {
 } from '../post/card-adapters.ts';
 import { openPostModal } from '../post-modal.ts';
 import { createPostUpdatedHandler as postUpdateHandler } from '../post-update.ts';
-import { useSandboxBridge } from '../sandbox-bridge.ts';
 import { getShowNsfw } from '../settings.ts';
 import { showToast } from '../toast.ts';
 import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
@@ -90,9 +89,6 @@ let menuOpen = $state(false);
 let versionId: string | null = null;
 let stage: StageHandle | null = null;
 let replyComposer: { getElement: () => HTMLElement; focus: () => void; destroy: () => void } | null = null;
-let sandboxBridge: { destroy?: () => void } | null = null;
-let sandboxTimer: ReturnType<typeof setTimeout> | null = null;
-let destroyed = false;
 let impressionSent = false;
 
 const hasMedia = Boolean(
@@ -483,9 +479,6 @@ onMount(() => {
 });
 
 onDestroy(() => {
-  destroyed = true;
-  if (sandboxTimer) clearTimeout(sandboxTimer);
-  sandboxBridge?.destroy?.();
   stage?.destroy();
   replyComposer?.destroy();
   pauseMediaIn(root);

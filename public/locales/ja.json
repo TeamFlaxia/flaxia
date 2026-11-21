@@ -1237,5 +1237,8 @@
   "settings.password_proof_failed": "パスワードを確認できませんでした",
   "timeline.empty_title": "まだ投稿がありません",
   "timeline.empty_desc": "ユーザーをフォローするか、投稿してみましょう。",
-  "profile.not_found": "ユーザーが見つかりませんでした。"
+  "profile.not_found": "ユーザーが見つかりませんでした。",
+  "auth.sign_in_failed": "サインインを完了できませんでした。",
+  "auth.try_again": "もう一度試す",
+  "auth.back_home": "ホームに戻る"
 }

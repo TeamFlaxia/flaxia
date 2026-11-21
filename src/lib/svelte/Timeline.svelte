@@ -63,6 +63,7 @@ let disposePostUpdates: (() => void) | null = null;
 let disposePostCreated: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
+let fabObserver: IntersectionObserver | null = null;
 let boundModeShortcut: ((e: KeyboardEvent) => void) | null = null;
 
 const cardOptions = $derived<CardOptions>({
@@ -335,6 +336,7 @@ onDestroy(() => {
   disposePostUpdates?.();
   disposePostCreated?.();
   observer?.disconnect();
+  fabObserver?.disconnect();
   fabButton?.remove();
 });
 
@@ -345,10 +347,11 @@ function updateFab(): void {
     fabButton.classList.add('visible');
     return;
   }
-  const observer = new IntersectionObserver((entries) => {
+  fabObserver?.disconnect();
+  fabObserver = new IntersectionObserver((entries) => {
     fabButton?.classList.toggle('visible', !entries[0]?.isIntersecting);
   });
-  observer.observe(composer);
+  fabObserver.observe(composer);
 }
 </script>
 

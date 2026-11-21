@@ -171,6 +171,7 @@ function restoreAutosave(): void {
 async function initializeDrafts(): Promise<void> {
   if (isVaultUnlocked() && getVaultKey()) {
     draftStorageMode = 'vault';
+    vaultNotice = '';
     await loadDrafts();
     return;
   }
@@ -195,6 +196,7 @@ async function handleVaultChange(): Promise<void> {
   }
   if (draftStorageMode === 'locked' || draftStorageMode === 'local') {
     draftStorageMode = 'loading';
+    vaultNotice = '';
     await initializeDrafts();
   }
 }
@@ -261,7 +263,10 @@ function loadDraft(draft: Draft): void {
 async function unlockVault(): Promise<void> {
   try {
     await tryDeviceUnlock();
-    if (isVaultUnlocked()) await initializeDrafts();
+    if (isVaultUnlocked()) {
+      vaultNotice = '';
+      await initializeDrafts();
+    }
   } catch {
     vaultNotice = t('composer.vault_unlock_required');
   }
