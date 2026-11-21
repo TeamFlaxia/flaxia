@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import MailPage from './MailPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
@@ -42,11 +43,13 @@ onMount(() => {
       const { takePendingDraftId } = await import('../../lib/mail/navigation.ts');
       page = createMailComposePage({ currentUser, draftId: takePendingDraftId() || undefined });
     } else {
-      const { createMailPage } = await import('../../components/MailPage.ts');
-      page = createMailPage({ currentUser });
+      // The mailbox list is Svelte-owned; the other Mail surfaces remain legacy.
+      dispose = () => {};
     }
-    host.appendChild(page.getElement());
-    dispose = page.destroy;
+    if (page) {
+      host.appendChild(page.getElement());
+      dispose = page.destroy;
+    }
     navProps = {
       activeItem: 'mail',
       currentUser,
@@ -61,5 +64,9 @@ onMount(() => {
 </script>
 
 <ShellLayout {navProps}>
-  <div bind:this={host}></div>
+  {#if view === 'mail'}
+    <MailPage currentUser={(getSessionUser() ?? null) as { id: string; username: string } | null} />
+  {:else}
+    <div bind:this={host}></div>
+  {/if}
 </ShellLayout>

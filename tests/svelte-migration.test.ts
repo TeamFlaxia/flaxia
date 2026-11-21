@@ -93,7 +93,7 @@ test('settings route renders the Svelte settings page', async () => {
 test('mail routes share the shell-backed mail view', async () => {
   const view = await read('src/lib/svelte/MailView.svelte');
   assert.match(view, /ShellLayout/);
-  assert.match(view, /createMailPage/);
+  assert.match(view, /MailPage/);
   assert.match(view, /createMailSettingsPage/);
   assert.match(view, /createMailThreadPage/);
   assert.match(view, /createMailComposePage/);
@@ -146,6 +146,14 @@ test('home feed owns the composer through a Svelte mount point', async () => {
   const timeline = await read('src/lib/svelte/Timeline.svelte');
   assert.match(timeline, /<Composer \/>/);
   assert.match(timeline, /CardHost/);
+});
+
+test('mailbox list is owned by Svelte', async () => {
+  const component = await read('src/lib/svelte/MailPage.svelte');
+  assert.match(component, /mail-folder-tabs/);
+  assert.match(component, /mail-thread-row/);
+  const adapter = await read('src/lib/mail/vault-unlock.ts');
+  assert.match(adapter, /createVaultUnlockForm/);
 });
 
 test('arcade route mounts the engine through an adapter', async () => {
