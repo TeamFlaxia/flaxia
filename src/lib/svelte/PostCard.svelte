@@ -427,8 +427,8 @@ onDestroy(() => {
         title_description={props.post.title_description}
         title_description_ja={props.post.title_description_ja}
         title_icon={props.post.title_icon}
-        created_at={props.post.created_at}
-        edited_at={props.post.edited_at}
+        createdAt={props.post.created_at}
+        editedAt={props.post.edited_at}
       />
     </div>
     <div class="post-header-actions">
