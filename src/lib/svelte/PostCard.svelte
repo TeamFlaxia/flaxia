@@ -1,0 +1,478 @@
+<script lang="ts">
+import { onDestroy, onMount } from 'svelte';
+import { canUsePostColors } from '../../../shared/entitlements.ts';
+import { stripPostColors } from '../../../shared/post-colors.ts';
+import { stripMediaCues } from '../../../shared/post-cues.ts';
+import { type Post, PostCardMode, type QuotedPost, type ReactionSummary } from '../../../shared/types/post.ts';
+import { showSignInPrompt } from '../../components/SignInPrompt.ts';
+import { t } from '../i18n.ts';
+import { impressionTracker } from '../impression-tracker.ts';
+import { pauseMediaIn } from '../media-mute.ts';
+import { navigate } from '../navigation.ts';
+import {
+  confirmDelete,
+  mountActions,
+  mountLinkPreview,
+  mountMenu,
+  mountMenuButton,
+  mountPostText,
+  mountReply,
+  mountStage,
+  openCounterNotice,
+  openGameUpdate,
+  openReport,
+  openShare,
+  openVersionHistory,
+  type StageHandle,
+} from '../post/card-adapters.ts';
+import { useSandboxBridge } from '../sandbox-bridge.ts';
+import { getShowNsfw } from '../settings.ts';
+import { showToast } from '../toast.ts';
+import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
+import PollWidget from './PollWidget.svelte';
+import PostHeader from './PostHeader.svelte';
+import QuotedPostCard from './QuotedPostCard.svelte';
+
+interface Props {
+  post: Post;
+  sandboxOrigin: string;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
+  initialMode?: PostCardMode;
+  depth?: number;
+  postIndex?: number;
+  enablePostRefs?: boolean;
+  disableReply?: boolean;
+  disableReplyComposer?: boolean;
+  disableNavigation?: boolean;
+  showPinOption?: boolean;
+  pinned?: boolean;
+  onDelete?: (postId: string) => void;
+  onTogglePin?: (postId: string) => void;
+}
+let props: Props = $props();
+
+let root: HTMLDivElement;
+let textHost: HTMLDivElement;
+let linkHost: HTMLDivElement;
+let stageHost: HTMLDivElement;
+let actionsHost: HTMLDivElement;
+let replyHost: HTMLDivElement;
+let headerSlot: HTMLDivElement;
+let menuHost: HTMLDivElement;
+let pollHost: HTMLDivElement;
+let quoteHost: HTMLDivElement;
+
+let freshCount = $state(props.post.fresh_count ?? 0);
+let reloadCount = $state(props.post.reload_count ?? 0);
+let bookmarkCount = $state(props.post.bookmark_count ?? 0);
+let replyCount = $state(props.post.reply_count ?? 0);
+let impressions = $state(props.post.impressions ?? 0);
+let freshed = $state(Boolean(props.post.is_freshed));
+let reloaded = $state(Boolean(props.post.is_reloaded));
+let bookmarked = $state(Boolean(props.post.is_bookmarked));
+let reactions = $state<ReactionSummary[]>(props.post.reactions ?? []);
+let replyOpen = $state(false);
+let showNsfw = $state(false);
+let editing = $state(false);
+let editText = $state('');
+let saving = $state(false);
+let menuOpen = $state(false);
+let versionId: string | null = null;
+let stage: StageHandle | null = null;
+let replyComposer: { getElement: () => HTMLElement; focus: () => void; destroy: () => void } | null = null;
+let sandboxBridge: { destroy?: () => void } | null = null;
+let sandboxTimer: ReturnType<typeof setTimeout> | null = null;
+let destroyed = false;
+let impressionSent = false;
+
+const hasMedia = Boolean(
+  props.post.gif_key ||
+    props.post.payload_key ||
+    props.post.swf_key ||
+    props.post.thumbnail_key ||
+    (props.post.attachments && props.post.attachments.length > 0),
+);
+const textLength = (props.post.text ?? '').trim().length;
+const isLongText = !hasMedia && textLength > 90;
+const hashtags = (props.post.hashtags || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const isNsfw = hashtags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
+const displayText = props.post.text ?? '';
+const plainText = canUsePostColors({ badge_type: props.post.badge_type })
+  ? stripPostColors(displayText)
+  : stripMediaCues(displayText);
+
+function actionConfig() {
+  return {
+    postId: props.post.id,
+    freshCount,
+    reloadCount,
+    bookmarkCount,
+    replyCount,
+    impressions,
+    isFreshed: freshed,
+    isReloaded: reloaded,
+    isBookmarked: bookmarked,
+    reactions,
+    depth: props.depth ?? props.post.depth,
+    onFreshToggle: () => void toggleFresh(),
+    onReloadToggle: () => void toggleReload(),
+    onBookmarkToggle: () => void toggleBookmark(),
+    onReplyToggle: toggleReply,
+    onShare: () => openShare(props.post, handleQuote),
+    onQuote: handleQuote,
+    onReactionToggle: (emoji: string) => void toggleReaction(emoji),
+  };
+}
+
+function refreshActions(): void {
+  if (!actionsHost) return;
+  mountActions(actionsHost, actionConfig() as never);
+}
+
+function requireAuth(action: 'reply' | 'post' | 'fresh'): boolean {
+  if (props.currentUser) return true;
+  showSignInPrompt(
+    action,
+    () => void navigate('/login'),
+    () => void navigate('/register'),
+  );
+  return false;
+}
+
+async function toggleFresh(): Promise<void> {
+  if (!requireAuth('fresh')) return;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}/fresh`, { method: 'POST', credentials: 'include' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { fresh_count: number; is_freshed: boolean };
+    freshCount = data.fresh_count;
+    freshed = data.is_freshed;
+    markRecommendationProfileDirty();
+    refreshActions();
+  } catch (e) {
+    console.error('fresh failed', e);
+  }
+}
+
+async function toggleReload(): Promise<void> {
+  if (!requireAuth('fresh')) return;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}/reload`, { method: 'POST', credentials: 'include' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { reload_count: number; is_reloaded: boolean };
+    reloadCount = data.reload_count;
+    reloaded = data.is_reloaded;
+    markRecommendationProfileDirty();
+    refreshActions();
+  } catch (e) {
+    console.error('reload failed', e);
+  }
+}
+
+async function toggleBookmark(): Promise<void> {
+  if (!requireAuth('post')) return;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}/bookmark`, { method: 'POST', credentials: 'include' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { bookmark_count: number; is_bookmarked: boolean };
+    bookmarkCount = data.bookmark_count;
+    bookmarked = data.is_bookmarked;
+    refreshActions();
+  } catch (e) {
+    console.error('bookmark failed', e);
+  }
+}
+
+async function toggleReaction(emoji: string): Promise<void> {
+  if (!requireAuth('reaction' as 'fresh')) return;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}/reactions`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emoji }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { reactions?: ReactionSummary[] };
+    if (data.reactions) reactions = data.reactions;
+    refreshActions();
+  } catch (e) {
+    console.error('reaction failed', e);
+  }
+}
+
+function toggleReply(): void {
+  if (props.disableReply) return;
+  if (!requireAuth('reply')) return;
+  replyOpen = !replyOpen;
+  if (replyOpen) queueMicrotask(() => replyComposer?.focus());
+}
+
+function handleQuote(): void {
+  if (!requireAuth('post')) return;
+  // Quote is handled by the post modal; keep the legacy navigation contract.
+  void navigate(`/home`);
+}
+
+function onPostClick(e: MouseEvent): void {
+  if (props.disableNavigation) return;
+  const target = e.target as HTMLElement;
+  if (
+    target.closest(
+      'button, input, textarea, a, .poll-option, .video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track',
+    )
+  )
+    return;
+  if (window.getSelection()?.toString()) return;
+  void navigate(`/thread/${props.post.id}`, { state: { postId: props.post.id } });
+}
+
+function handleReplyCreated(): void {
+  replyCount += 1;
+  replyOpen = false;
+  refreshActions();
+}
+
+function toggleMenu(): void {
+  if (!menuHost) return;
+  if (menuOpen) {
+    menuHost.replaceChildren();
+    menuOpen = false;
+    return;
+  }
+  const isOwn = props.currentUser?.username === props.post.username;
+  const options = {
+    isOwnPost: isOwn,
+    isRemote: Boolean(props.post.is_remote),
+    showPinOption: props.showPinOption,
+    pinned: props.pinned,
+    payloadKey: props.post.payload_key,
+    currentUser: props.currentUser as never,
+    actions: {
+      onVersionHistory: () => openVersionHistory(props.post, props.sandboxOrigin, versionId, playVersion),
+      onTogglePin: () => props.onTogglePin?.(props.post.id),
+      onCounterNotice: () => openCounterNotice(props.post),
+      onEdit: startEdit,
+      onUpdate: () => openGameUpdate(props.post, props.sandboxOrigin, () => {}),
+      onDelete: deletePost,
+      onBlock: () => {},
+      onReport: () => openReport(props.post),
+    },
+  };
+  mountMenu(menuHost, options as never, () => (menuOpen = false));
+  menuOpen = true;
+}
+
+async function deletePost(): Promise<void> {
+  if (!(await confirmDelete())) return;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}`, { method: 'DELETE', credentials: 'include' });
+    if (res.ok) props.onDelete?.(props.post.id);
+    else showToast(t('post.delete_failed'), true);
+  } catch {
+    showToast(t('post.delete_failed'), true);
+  }
+}
+
+function startEdit(): void {
+  editText = plainText;
+  editing = true;
+}
+
+async function saveEdit(): Promise<void> {
+  if (saving) return;
+  const text = editText.trim();
+  if (!text) return;
+  saving = true;
+  try {
+    const res = await fetch(`/api/posts/${props.post.id}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error('save failed');
+    editing = false;
+    queueMicrotask(() =>
+      mountPostText(textHost, {
+        text,
+        mentions: props.post.mentions,
+        enablePostRefs: props.enablePostRefs,
+        badgeType: props.post.badge_type,
+      }),
+    );
+  } catch {
+    showToast(t('post.edit_failed'), true);
+  } finally {
+    saving = false;
+  }
+}
+
+function playVersion(id: string | null): void {
+  versionId = id;
+  if (!stageHost) return;
+  stage?.destroy();
+  stage = mountStage(stageHost, {
+    post: props.post,
+    mode: PostCardMode.EXECUTING,
+    sandboxOrigin: props.sandboxOrigin,
+    versionId: id ?? undefined,
+    onModeChange: () => {},
+  });
+}
+
+export function updatePost(next: Partial<Post>): void {
+  if (next.reply_count !== undefined) replyCount = next.reply_count;
+  if (next.fresh_count !== undefined) freshCount = next.fresh_count;
+  if (next.reload_count !== undefined) reloadCount = next.reload_count;
+  if (next.bookmark_count !== undefined) bookmarkCount = next.bookmark_count;
+  if (next.impressions !== undefined) impressions = next.impressions;
+  if (next.is_freshed !== undefined) freshed = next.is_freshed;
+  if (next.is_reloaded !== undefined) reloaded = next.is_reloaded;
+  if (next.is_bookmarked !== undefined) bookmarked = next.is_bookmarked;
+  if (next.reactions !== undefined) reactions = next.reactions;
+  queueMicrotask(refreshActions);
+}
+
+export function handleReplyTogglePublic(): void {
+  toggleReply();
+}
+
+onMount(() => {
+  void mountPostText(textHost, {
+    text: displayText,
+    mentions: props.post.mentions,
+    enablePostRefs: props.enablePostRefs,
+    badgeType: props.post.badge_type,
+  });
+  if (props.currentUser) void mountLinkPreview(linkHost, props.post.text);
+  if (props.post.poll) {
+    /* PollWidget renders from props below */
+  }
+  if (hasMedia)
+    stage = mountStage(stageHost, {
+      post: props.post,
+      mode: props.initialMode ?? PostCardMode.PREVIEW,
+      sandboxOrigin: props.sandboxOrigin,
+      onModeChange: () => {},
+    });
+  if (!props.disableReply && !props.disableReplyComposer) {
+    replyComposer = mountReply(replyHost, {
+      postId: props.post.id,
+      sandboxOrigin: props.sandboxOrigin,
+      onReplyCreated: handleReplyCreated,
+      onCancel: () => (replyOpen = false),
+      prefillText: props.postIndex !== undefined ? `>>${props.postIndex} ` : undefined,
+      currentUser: props.currentUser ?? undefined,
+    });
+  }
+  refreshActions();
+  mountMenuButton(menuHost, toggleMenu);
+
+  if (!props.disableNavigation && 'IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !impressionSent) {
+          impressionSent = true;
+          impressionTracker.trackImpression(props.post.id);
+        }
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(root);
+    onDestroy(() => observer.disconnect());
+  }
+});
+
+onDestroy(() => {
+  destroyed = true;
+  if (sandboxTimer) clearTimeout(sandboxTimer);
+  sandboxBridge?.destroy?.();
+  stage?.destroy();
+  replyComposer?.destroy();
+  pauseMediaIn(root);
+});
+</script>
+
+<article
+  bind:this={root}
+  class="post-card {hasMedia ? 'post-card--media' : 'post-card--text'}{isLongText ? ' post-card--long' : ''}{props.disableNavigation ? ' post-card--static' : ''}"
+  data-post-id={props.post.id}
+  data-post-index={props.postIndex}
+  onclick={onPostClick}
+>
+  <div class="post-card-header">
+    {#if props.postIndex !== undefined}<span class="post-index">{props.postIndex}</span>{/if}
+    <div bind:this={headerSlot} class="post-header-slot">
+      <PostHeader
+        username={props.post.username}
+        display_name={props.post.display_name}
+        avatar_key={props.post.avatar_key}
+        avatar_url={props.post.avatar_url}
+        profile_url={props.post.actor_id}
+        badge_type={props.post.badge_type}
+        name_color={props.post.name_color}
+        equipped_title_id={props.post.equipped_title_id}
+        title_name={props.post.title_name}
+        title_name_ja={props.post.title_name_ja}
+        title_description={props.post.title_description}
+        title_description_ja={props.post.title_description_ja}
+        title_icon={props.post.title_icon}
+        created_at={props.post.created_at}
+        edited_at={props.post.edited_at}
+      />
+    </div>
+    <div class="post-header-actions">
+      <span class="post-ai-index" hidden={props.post.ai_indexed !== true}>✓</span>
+      <div bind:this={menuHost}></div>
+    </div>
+  </div>
+
+  {#if editing}
+    <div class="edit-container">
+      <textarea class="edit-textarea" maxlength="200" bind:value={editText}></textarea>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem;">
+        <button type="button" onclick={() => (editing = false)}>{t('post.edit_cancel')}</button>
+        <button type="button" disabled={saving} onclick={() => void saveEdit()}>{t('post.edit_save')}</button>
+      </div>
+    </div>
+  {:else}
+    <div class="post-text-wrap"><div bind:this={textHost} class="post-text">{plainText}</div></div>
+  {/if}
+
+  {#if props.post.poll}
+    <div bind:this={pollHost}><PollWidget {...props.post.poll} /></div>
+  {/if}
+  <div bind:this={linkHost} class="post-link-preview-container"></div>
+
+  {#if props.post.quoted_post_id}
+    <div bind:this={quoteHost}>
+      <QuotedPostCard
+        quoted={props.post.quoted_post ?? null}
+        disableNavigation={props.disableNavigation}
+        onNavigateToThread={(id) => void navigate(`/thread/${id}`, { state: { postId: id } })}
+      />
+    </div>
+  {/if}
+
+  {#if hasMedia}<div bind:this={stageHost}></div>{/if}
+  {#if !props.disableReply}<div bind:this={actionsHost}></div>{/if}
+  <div bind:this={replyHost} style="display:{replyOpen ? 'block' : 'none'};"></div>
+
+  {#if isNsfw && getShowNsfw() && !showNsfw}
+    <div class="nsfw-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.45);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:5;">
+      <div style="font-size:1.5rem;">⚠️</div>
+      <p>{t('post.nsfw_warning')}</p>
+      <button type="button" onclick={(e) => { e.stopPropagation(); showNsfw = true; }}>{t('post.nsfw_show')}</button>
+    </div>
+  {/if}
+</article>
