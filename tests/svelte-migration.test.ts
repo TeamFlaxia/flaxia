@@ -400,9 +400,12 @@ test('sign-in prompt UI is owned by Svelte', async () => {
 
 test('login and register routes start the external auth flow', async () => {
   const login = await read('src/routes/login/+page.svelte');
-  assert.match(login, /startAuthRedirect\('login'\)/);
+  assert.match(login, /AuthRedirectPage mode="login"/);
   const register = await read('src/routes/register/+page.svelte');
-  assert.match(register, /startAuthRedirect\('register'\)/);
+  assert.match(register, /AuthRedirectPage mode="register"/);
+  const page = await read('src/lib/svelte/AuthRedirectPage.svelte');
+  assert.match(page, /startAuthRedirect\(mode\)/);
+  assert.match(page, /searchParams\.get\('error'\)/);
   const helper = await read('src/lib/svelte/auth-start.ts');
   assert.match(helper, /beginNativeAuthRedirect/);
   assert.match(helper, /\/api\/auth\/start/);

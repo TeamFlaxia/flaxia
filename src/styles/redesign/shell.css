@@ -1502,3 +1502,26 @@
 .right-panel .trending-count {
   font-size: 12px;
 }
+
+/* Auth redirect fallback (`/login?error=…`): never auto-redirect in a loop. */
+.auth-redirect-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 60vh;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.auth-redirect-message {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.auth-redirect-actions {
+  display: flex;
+  gap: 8px;
+}

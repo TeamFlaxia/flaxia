@@ -1237,5 +1237,8 @@
   "settings.password_proof_failed": "Could not verify your password",
   "timeline.empty_title": "No posts yet",
   "timeline.empty_desc": "Follow people or post something to fill your feed.",
-  "profile.not_found": "This user could not be found."
+  "profile.not_found": "This user could not be found.",
+  "auth.sign_in_failed": "Sign-in could not be completed.",
+  "auth.try_again": "Try again",
+  "auth.back_home": "Back to home"
 }

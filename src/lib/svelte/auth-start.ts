@@ -9,8 +9,9 @@ import { getResolvedTheme } from '../theme.ts';
 import { showToast } from '../toast.ts';
 
 export async function startAuthRedirect(mode: 'login' | 'register'): Promise<void> {
-  const here = `${window.location.pathname}${window.location.search}`;
-  const returnTo = here === '/login' || here === '/register' ? '/home' : here;
+  const url = new URL(window.location.href);
+  // Never return to /login?error=…: that would loop through auth forever.
+  const returnTo = url.pathname === '/login' || url.pathname === '/register' ? '/home' : `${url.pathname}${url.search}`;
 
   if (await beginNativeAuthRedirect(returnTo, mode)) return;
   if (isNativeApp()) {

@@ -168,7 +168,7 @@ function cycleSpeed(): void {
 function retry(): void {
   failed = false;
   loading = true;
-  audioEl.src = `${audioUrl}?_=${Date.now()}`;
+  audioEl.src = `${audioUrl}${audioUrl.includes('?') ? '&' : '?'}_=${Date.now()}`;
   audioEl.load();
 }
 
