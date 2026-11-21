@@ -94,9 +94,9 @@ test('mail routes share the shell-backed mail view', async () => {
   const view = await read('src/lib/svelte/MailView.svelte');
   assert.match(view, /ShellLayout/);
   assert.match(view, /MailPage/);
-  assert.match(view, /createMailSettingsPage/);
-  assert.match(view, /createMailThreadPage/);
-  assert.match(view, /createMailComposePage/);
+  assert.match(view, /MailSettingsPage/);
+  assert.match(view, /MailThreadPage/);
+  assert.match(view, /MailComposePage/);
   assert.match(view, /getSessionUser/);
   for (const route of ['mail', 'mail/settings', 'mail/compose', 'mail/thread/[id]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);

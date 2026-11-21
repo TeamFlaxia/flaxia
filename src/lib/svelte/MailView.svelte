@@ -1,8 +1,12 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { takePendingDraftId } from '../mail/navigation.ts';
 import { navigate } from '../navigation.ts';
 import { viewToPath } from '../view-nav.ts';
+import MailComposePage from './MailComposePage.svelte';
 import MailPage from './MailPage.svelte';
+import MailSettingsPage from './MailSettingsPage.svelte';
+import MailThreadPage from './MailThreadPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
@@ -10,12 +14,15 @@ import { getSessionUser } from './session.ts';
 type MailViewKind = 'mail' | 'settings' | 'thread' | 'compose';
 let { view, threadId = '' }: { view: MailViewKind; threadId?: string } = $props();
 
-let host: HTMLDivElement;
+// Draft ids ride in memory; consume once when the compose route mounts.
+let pendingDraftId = view === 'compose' ? takePendingDraftId() || undefined : undefined;
+
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
 let navProps: Record<string, unknown> = {};
 
+const currentUser = $derived((getSessionUser() ?? null) as { id: string; username: string } | null);
+
 onMount(() => {
-  let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
     const { leftNavCallbacks } = await import('../../lib/left-nav-handlers.ts');
@@ -25,44 +32,26 @@ onMount(() => {
       void navigate('/explore', { replaceState: true });
       return;
     }
-    const currentUser = { id: user.id, username: user.username };
-
-    let page: { getElement: () => HTMLElement; destroy: () => void };
-    if (view === 'settings') {
-      const { createMailSettingsPage } = await import('../../components/MailSettingsPage.ts');
-      page = createMailSettingsPage({ currentUser });
-    } else if (view === 'thread') {
-      const { createMailThreadPage } = await import('../../components/MailThreadPage.ts');
-      page = createMailThreadPage({ currentUser, threadId });
-    } else if (view === 'compose') {
-      const { createMailComposePage } = await import('../../components/MailComposePage.ts');
-      const { takePendingDraftId } = await import('../../lib/mail/navigation.ts');
-      page = createMailComposePage({ currentUser, draftId: takePendingDraftId() || undefined });
-    } else {
-      // The mailbox list is Svelte-owned; the other Mail surfaces remain legacy.
-      dispose = () => {};
-    }
-    if (page) {
-      host.appendChild(page.getElement());
-      dispose = () => page.destroy();
-    }
     navProps = {
       activeItem: 'mail',
-      currentUser,
+      currentUser: user,
       ...leftNavCallbacks({
         navigate: (target, postId, username) => void navigate(viewToPath(target, postId, username)),
-        getCurrentUsername: () => currentUser.username,
+        getCurrentUsername: () => user.username,
       }),
     };
   })();
-  return () => dispose();
 });
 </script>
 
 <ShellLayout {navProps}>
   {#if view === 'mail'}
-    <MailPage currentUser={(getSessionUser() ?? null) as { id: string; username: string } | null} />
+    <MailPage {currentUser} />
+  {:else if view === 'settings'}
+    <MailSettingsPage {currentUser} />
+  {:else if view === 'thread'}
+    <MailThreadPage {currentUser} {threadId} />
   {:else}
-    <div bind:this={host}></div>
+    <MailComposePage {currentUser} draftId={pendingDraftId} />
   {/if}
 </ShellLayout>
