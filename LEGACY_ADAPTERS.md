@@ -15,7 +15,6 @@ this ratchet.
 - `src/lib/svelte/AdminView.svelte`: `createAdminUsersTab`
 - `src/lib/svelte/LeftNav.svelte`: `createLeftNav`
 - `src/lib/svelte/MailView.svelte`: `createMailComposePage`
-- `src/lib/svelte/MailView.svelte`: `createMailPage`
 - `src/lib/svelte/MailView.svelte`: `createMailSettingsPage`
 - `src/lib/svelte/MailView.svelte`: `createMailThreadPage`
 - `src/lib/svelte/RightPanel.svelte`: `createRightPanel`
