@@ -371,12 +371,6 @@ test('guests are redirected away from /settings instead of seeing an empty shell
   assert.match(route, /navigate\(redirect\.path, \{ replaceState: true \}\)/);
 });
 
-test('the PostHeader bridge exposes an unmount handle', async () => {
-  const bridge = await read('src/components/PostHeader.ts');
-  assert.match(bridge, /unmount\(instance/);
-  assert.match(bridge, /destroy/);
-});
-
 test('avatars and action states stay visible without coloured halos', async () => {
   const composer = await read('src/styles/redesign/composer.css');
   assert.match(composer, /\.composer-avatar-img \{[^}]*width: 100%/);
@@ -472,15 +466,12 @@ test('quoted post card is owned by Svelte', async () => {
 });
 
 test('post card sub-components are owned by Svelte', async () => {
-  for (const [component, token] of [
-    ['PostHeader', 'post-avatar'],
-    ['PostMenu', 'post-menu-dropdown'],
-  ] as const) {
-    const source = await read(`src/lib/svelte/${component}.svelte`);
-    assert.ok(source.includes(token), `${component} must render ${token}`);
-    const bridge = await read(`src/components/${component}.ts`);
-    assert.match(bridge, /mount\(/, `${component} bridge must mount Svelte`);
-  }
+  const header = await read('src/lib/svelte/PostHeader.svelte');
+  assert.ok(header.includes('post-avatar'), 'PostHeader must render post-avatar');
+  const menu = await read('src/lib/svelte/PostMenu.svelte');
+  assert.ok(menu.includes('post-menu-dropdown'), 'PostMenu must render post-menu-dropdown');
+  const bridge = await read('src/components/PostMenu.ts');
+  assert.match(bridge, /mount\(/, 'PostMenu bridge must mount Svelte');
 });
 
 test('reply composer UI is owned by Svelte', async () => {

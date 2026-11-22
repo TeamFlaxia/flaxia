@@ -1,8 +1,8 @@
 <script lang="ts">
 import { onMount, tick } from 'svelte';
 import { primaryAddressForUsername } from '../../../shared/mail-address.ts';
-import { activateMailAddress } from '../../components/MailPage.ts';
 import { t } from '../i18n.ts';
+import { activateMailAddress } from '../mail/activate.ts';
 import { getQuota, listAddresses } from '../mail/api.ts';
 import { goToMail, mailBack } from '../mail/navigation.ts';
 import { mountVaultUnlock } from '../mail/vault-unlock.ts';
