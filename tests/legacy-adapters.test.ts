@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 const ROOT = new URL('../', import.meta.url).pathname;
-const FACTORY = /\b(create[A-Z][A-Za-z0-9]*)\s*\(/g;
+// Ignore DOM methods such as document.createElement(); this ratchet is about
+// bare legacy factory calls, which are never preceded by a dot.
+const FACTORY = /(?<!\.)\b(create[A-Z][A-Za-z0-9]*)\s*\(/g;
 
 async function svelteFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
