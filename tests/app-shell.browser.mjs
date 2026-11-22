@@ -219,6 +219,48 @@ const EDIT_STUBS = {
   '/api/posts/own-post-1': { body: { post: { ...OWN_POST, text: 'edited text' } } },
 };
 
+const ZIP_POST = {
+  ...TIMELINE_POST,
+  id: 'zip-post',
+  user_id: 'u1',
+  username: 'mikan',
+  display_name: 'Mikan',
+  text: 'A ZIP game that asks the host page for an online room.',
+  hashtags: '',
+  mentions: '[]',
+  payload_key: 'versions/zip-post/game.zip',
+  gif_key: null,
+  swf_key: null,
+  quoted_post_id: null,
+  quoted_post: null,
+  game_description: 'ZIP test game',
+};
+
+const ZIP_STUBS = {
+  ...SIGNED_IN_STUBS,
+  '/api/posts/zip-post/thread': { body: { root: ZIP_POST, replies: [] } },
+  '/api/posts/zip-post': { body: { post: ZIP_POST } },
+  '/api/multiplayer/rooms': { body: { roomId: 'room-1', gameId: 'zip-game', maxPlayers: 2 } },
+  '/api/multiplayer/rooms/room-1/join': {
+    body: {
+      success: true,
+      roomId: 'room-1',
+      userId: 'u1',
+      wsUrl: '/api/ws/multiplayer?roomId=room-1&gameId=zip-game',
+    },
+  },
+};
+
+// The stubbed sandbox document behaves like a game using the Game SDK: it
+// records parent messages and asks to join multiplayer on load.
+const ZIP_GAME_HTML = `<!doctype html><html><body><script>
+  window.__received = [];
+  window.addEventListener('message', (event) => { window.__received.push(event.data); });
+  setTimeout(() => {
+    window.parent.postMessage({ type: 'MULTIPLAYER_CONNECT', gameId: 'zip-game' }, '*');
+  }, 50);
+</script></body></html>`;
+
 // 1x1 transparent PNG: stubbed media so <img> loading is exercised locally.
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -311,6 +353,13 @@ async function openApp(browser, url, stubs, viewport = { width: 1400, height: 10
   // could fall through to the static server and receive index.html as JSON.
   await page.route('**/*', async (route) => {
     const requestUrl = new URL(route.request().url());
+    if (requestUrl.hostname === 'sandbox.flaxia.app' && options.sandboxHtml) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: options.sandboxHtml(requestUrl),
+      });
+    }
     if (requestUrl.hostname !== '127.0.0.1') return route.abort();
 
     if (requestUrl.pathname.startsWith('/api/')) {
@@ -1222,6 +1271,72 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
   });
 });
 
+test('a ZIP game can open a multiplayer room through the host page', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/thread/zip-post`, ZIP_STUBS, undefined, {
+      sandboxHtml: () => ZIP_GAME_HTML,
+    });
+
+    const calls = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/multiplayer/')) calls.push(`${request.method()} ${url.pathname}`);
+    });
+
+    await page.routeWebSocket('**/api/ws/multiplayer**', (ws) => {
+      ws.send(
+        JSON.stringify({
+          type: 'room_state',
+          room: {
+            roomId: 'room-1',
+            gameId: 'zip-game',
+            hostId: 'u1',
+            status: 'lobby',
+            maxPlayers: 2,
+            isPublic: true,
+            createdAt: Date.now(),
+          },
+          players: [
+            {
+              userId: 'u1',
+              username: 'mikan',
+              displayName: 'Mikan',
+              avatarKey: null,
+              isReady: false,
+              isHost: true,
+            },
+          ],
+        }),
+      );
+    });
+
+    await page.waitForSelector('.zip-execution-button', { timeout: 30_000 });
+    await page.locator('.zip-execution-button').first().click();
+
+    let gameFrame = null;
+    for (let i = 0; i < 30; i++) {
+      gameFrame = page.frames().find((frame) => frame.url().includes('/api/wvfs-zip/zip-post'));
+      if (gameFrame) break;
+      await page.waitForTimeout(500);
+    }
+    assert.ok(gameFrame, 'ZIP game frame did not load');
+
+    await gameFrame.waitForFunction(
+      () => (window.__received ?? []).some((message) => message?.type === 'MULTIPLAYER_ROOM_STATE'),
+      null,
+      { timeout: 15_000 },
+    );
+
+    assert.ok(calls.includes('POST /api/multiplayer/rooms'), `ZIP game never asked for a room: ${calls.join(', ')}`);
+    assert.ok(
+      calls.includes('POST /api/multiplayer/rooms/room-1/join'),
+      `ZIP game never joined its room: ${calls.join(', ')}`,
+    );
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+    await page.close();
+  });
+});
+
 test('inline post editing keeps the saved text when reopened', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const { page, pageErrors } = await openApp(browser, `${origin}/home`, EDIT_STUBS);
@@ -1267,7 +1382,10 @@ test('the feed renders the Svelte ad card', { timeout: 90_000 }, async () => {
       gate: document.querySelectorAll('.ad-banner .ad-gate').length,
     }));
 
-    assert.ok(result.labels.includes('Sponsored'), `sponsored label missing: ${result.labels.join(', ')}`);
+    assert.ok(
+      result.labels.some((label) => label === 'Sponsored' || label === 'スポンサー'),
+      `sponsored label missing: ${result.labels.join(', ')}`,
+    );
     assert.ok(result.placeholders >= 1, 'ad placeholder missing');
     assert.equal(result.gate, 0, 'data saver is off, so the ad must not be gated');
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);

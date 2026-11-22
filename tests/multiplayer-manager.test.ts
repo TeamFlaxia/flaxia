@@ -426,6 +426,25 @@ describe('MultiplayerManager', () => {
       assert.deepStrictEqual(msg.data, { hello: 'world' });
     });
 
+    it('sends peer_data larger than the old 8 KB relay cap', () => {
+      // Game SDK contract: peer payloads up to 65,536 JSON bytes. Game state
+      // snapshots (team rosters + match start) routinely exceed 8 KB, so the
+      // manager must not drop them before they reach the room.
+      const data = { type: 'match:start', blob: 'x'.repeat(12_000) };
+      assert.ok(JSON.stringify(data).length > 8_000);
+      manager.handleGameMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data });
+      assert.equal(mockWs.sentMessages.length, 1);
+      const msg = JSON.parse(mockWs.sentMessages[0]);
+      assert.equal(msg.type, 'peer_data');
+      assert.deepStrictEqual(msg.data, data);
+    });
+
+    it('sends a peer_data payload at the documented 65,536 byte ceiling', () => {
+      const data = { type: 'match:start', blob: 'x'.repeat(65_000) };
+      assert.ok(JSON.stringify(data).length <= 65_536);
+      manager.handleGameMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data });
+      assert.equal(mockWs.sentMessages.length, 1);
+    });
     it('does not send when WS is not open', () => {
       mockWs.readyState = 0;
       manager.handleGameMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data: { x: 1 } });
@@ -456,6 +475,17 @@ describe('MultiplayerManager', () => {
       const msg = mockIframe.postedMessages[0].msg as Record<string, unknown>;
       assert.equal(msg.type, 'MULTIPLAYER_PEER_DATA');
       assert.deepStrictEqual(msg.data, { score: 100 });
+    });
+
+    it('relays peer_data larger than the old 8 KB receive cap', () => {
+      const data = { type: 'match:start', blob: 'x'.repeat(12_000) };
+      mockWs.emit('message', { data: JSON.stringify({ type: 'player_joined', player: { userId: 'u2' } }) });
+      mockIframe.postedMessages.length = 0;
+      mockWs.emit('message', { data: JSON.stringify({ type: 'peer_data', userId: 'u2', data }) });
+      assert.equal(mockIframe.postedMessages.length, 1);
+      const msg = mockIframe.postedMessages[0].msg as Record<string, unknown>;
+      assert.equal(msg.type, 'MULTIPLAYER_PEER_DATA');
+      assert.deepStrictEqual(msg.data, data);
     });
 
     it('does not relay peer_data from a non-member', () => {

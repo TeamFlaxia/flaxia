@@ -23,8 +23,10 @@ interface MultiplayerConfig {
 
 const STUN_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const WS_OPEN = 1;
-// #123: P2P/relay payload ceiling before anything reaches the game iframe.
-const MAX_PEER_DATA_BYTES = 8_000;
+// Game SDK contract: MULTIPLAYER_SEND_PEER_DATA.data may be up to 65,536
+// JSON bytes (docs/developer/game-api.md). Match-start snapshots with two
+// full rosters are ~12 KB, so a smaller cap silently broke online play.
+const MAX_PEER_DATA_BYTES = 65_536;
 
 export class MultiplayerManager {
   private ws: WebSocket | null = null;
@@ -176,8 +178,15 @@ export class MultiplayerManager {
   // ===== WebRTC P2P =====
 
   private sendPeerData(data: unknown): void {
+    let payload: string;
+    try {
+      payload = JSON.stringify(data);
+    } catch {
+      return;
+    }
+    if (payload.length > MAX_PEER_DATA_BYTES) return;
     if (this.p2pConnected && this.dataChannel?.readyState === 'open') {
-      this.dataChannel.send(JSON.stringify(data));
+      this.dataChannel.send(payload);
     } else {
       this.sendWs({ type: 'peer_data', data });
     }
