@@ -7,7 +7,7 @@
  *
  * See docs/architecture/platform-neutrality.md.
  */
-import type { Realtime as RealtimePort, Services, Tasks } from '../../ports/index.js';
+import type { BlobMetadata, BlobStore, Realtime as RealtimePort, Services, Tasks } from '../../ports/index.js';
 
 /**
  * The subset of the Pages/Workers environment this adapter needs. Keeping it
@@ -38,11 +38,56 @@ export function createCloudflareServices(env: CloudflareBindings, ctx?: Cloudfla
   return {
     db: env.DB,
     kv: env.CACHE,
-    blobs: env.BUCKET,
+    blobs: createBlobStore(env.BUCKET),
     queue: env.AP_DELIVERY_QUEUE,
     vector: env.VECTORIZE,
     realtime: env.NOTIFICATION_STREAM ? createRealtime(env.NOTIFICATION_STREAM) : undefined,
     tasks: ctx ?? missingTasks,
+  };
+}
+
+/**
+ * R2 refuses a `ReadableStream` body unless its length is known. Chunked
+ * uploads assemble a stream of unknown length, so wrap it in a
+ * `FixedLengthStream` before handing it to the binding.
+ */
+function createBlobStore(bucket: CloudflareBindings['BUCKET']): BlobStore {
+  return {
+    get(key, options) {
+      return bucket.get(key, options?.range ? { range: options.range } : undefined) as ReturnType<BlobStore['get']>;
+    },
+    head(key) {
+      return bucket.head(key) as ReturnType<BlobStore['head']>;
+    },
+    async put(key, value, options) {
+      if (value instanceof ReadableStream && typeof options?.length === 'number') {
+        const fixed = new FixedLengthStream(options.length);
+        const pumping = value.pipeTo(fixed.writable).catch((error) => {
+          console.error('Streaming upload failed:', error);
+        });
+        try {
+          return (await bucket.put(key, fixed.readable, {
+            httpMetadata: options.httpMetadata,
+            customMetadata: options.customMetadata,
+          })) as BlobMetadata | null;
+        } finally {
+          await pumping;
+        }
+      }
+      const { length: _length, ...rest } = options ?? {};
+      return bucket.put(key, value as Parameters<typeof bucket.put>[1], rest) as Promise<BlobMetadata | null>;
+    },
+    async delete(keys) {
+      await bucket.delete(keys);
+    },
+    async list(options) {
+      const result = await bucket.list(options);
+      return {
+        objects: result.objects as BlobMetadata[],
+        truncated: result.truncated,
+        cursor: 'cursor' in result ? result.cursor : undefined,
+      };
+    },
   };
 }
 

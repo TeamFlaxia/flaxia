@@ -10,7 +10,7 @@ import type { Db } from '../ports/index.ts';
 
 import { matchBlocklist } from './blocklist.ts';
 import { upsertFileScan } from './db.ts';
-import { extractFileFeatures, type FileFeatures } from './features.ts';
+import { extractFileFeatures, type FileFeatures, kindForMime } from './features.ts';
 import { checkDeclaredType, checkExtensionMatchesMime, detectMimeType } from './mime.ts';
 
 export interface SyncScanInput {
@@ -91,6 +91,77 @@ export async function scanUploadSync(db: Db, input: SyncScanInput): Promise<Sync
     } catch (e) {
       // The scan row is bookkeeping; losing it skips the async verdict but
       // must not fail an upload that already passed the sync checks.
+      console.error('file_scans upsert failed:', e);
+    }
+  }
+
+  return { ok: true, detectedMime, features };
+}
+
+/**
+ * Run steps 2-4 for a file that was uploaded in chunks and assembled in R2.
+ *
+ * The full bytes never fit in a Worker's 128 MB isolate, so the caller streams
+ * them into storage while hashing. The header covers magic bytes and image
+ * dimensions; features are limited to the streamed SHA-256 plus the file kind,
+ * which keeps exact-file blocklist matches working. ZIP structure hashes and
+ * image perceptual hashes need a full in-memory pass and are skipped for these
+ * large uploads (`phashNote` records why).
+ */
+export async function scanChunkedUpload(
+  db: Db,
+  input: {
+    sha256: string;
+    header: Uint8Array;
+    declaredType?: string | null;
+    name?: string | null;
+    r2Key?: string | null;
+  },
+): Promise<SyncScanVerdict> {
+  const detectedMime = detectMimeType(input.header);
+  if (!detectedMime) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'unrecognized_type',
+      error: 'Unrecognized file format. Magic bytes do not match any allowed type.',
+    };
+  }
+
+  const declaredError = checkDeclaredType(input.declaredType, detectedMime);
+  if (declaredError) {
+    return { ok: false, status: 400, code: 'type_mismatch', error: declaredError };
+  }
+
+  if (input.name) {
+    const extError = checkExtensionMatchesMime(input.name, detectedMime);
+    if (extError) {
+      return { ok: false, status: 400, code: 'type_mismatch', error: extError };
+    }
+  }
+
+  const features: FileFeatures = {
+    sha256: input.sha256.toLowerCase(),
+    kind: kindForMime(detectedMime),
+  };
+  if (features.kind === 'image') features.phashNote = 'too_large';
+  if (features.kind === 'video') features.phashNote = 'deferred_to_orchestrator';
+
+  let blocked = false;
+  try {
+    blocked = (await matchBlocklist(db, features)) !== null;
+  } catch (e) {
+    console.error('Blocklist lookup failed:', e);
+    blocked = true;
+  }
+  if (blocked) {
+    return { ok: false, status: 400, code: 'file_blocked', error: 'File blocked by security policy' };
+  }
+
+  if (input.r2Key) {
+    try {
+      await upsertFileScan(db, input.r2Key, features);
+    } catch (e) {
       console.error('file_scans upsert failed:', e);
     }
   }

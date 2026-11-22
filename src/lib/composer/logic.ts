@@ -112,19 +112,24 @@ export function validateSubmission(input: {
   selectedFile: { size: number } | null;
   selectedMedia: Array<{ size: number }>;
   maxMediaAttachments: number;
+  /** Plan-aware overrides; defaults mirror the free plan. */
+  maxFileBytes?: number;
+  maxTotalBytes?: number;
 }): SubmissionIssue | null {
-  if (input.selectedFile && input.selectedFile.size > MAX_MEDIA_FILE_BYTES) {
+  const maxFileBytes = input.maxFileBytes ?? MAX_MEDIA_FILE_BYTES;
+  const maxTotalBytes = input.maxTotalBytes ?? MAX_MEDIA_TOTAL_BYTES;
+  if (input.selectedFile && input.selectedFile.size > maxFileBytes) {
     return { key: 'composer.error_file_too_large' };
   }
   if (input.selectedMedia.length > input.maxMediaAttachments) {
     return { key: 'composer.error_too_many_media', max: input.maxMediaAttachments };
   }
   for (const file of input.selectedMedia) {
-    if (file.size > MAX_MEDIA_FILE_BYTES) return { key: 'composer.error_file_too_large' };
+    if (file.size > maxFileBytes) return { key: 'composer.error_file_too_large' };
   }
   const total = input.selectedMedia.reduce((sum, file) => sum + file.size, 0);
-  if (total > MAX_MEDIA_TOTAL_BYTES) {
-    return { key: 'composer.error_total_too_large', max: 50 };
+  if (total > maxTotalBytes) {
+    return { key: 'composer.error_total_too_large', max: Math.floor(maxTotalBytes / (1024 * 1024)) };
   }
   return null;
 }

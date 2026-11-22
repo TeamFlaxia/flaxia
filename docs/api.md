@@ -209,8 +209,8 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 ### Commit Post
 `POST /api/posts/commit`
 - Body: `{ postId, text, gifKey?, zipKey?, swfKey?, attachments?: [{ key, kind }] }`
-- `attachments` is the full list (max 4, or 32 for Flaxia+, 25MB each / 50MB total); combining it
-  with legacy game keys returns 422
+- `attachments` is the full list (max 4, or 32 for Flaxia+, 25MB each / 50MB total free;
+  128MB each / 256MB total for Flaxia+); combining it with legacy game keys returns 422
 
 ### Add Attachment To Published Post
 `POST /api/posts/:id/prepare-media`

@@ -1,5 +1,5 @@
 export const CACHE_PREFIX = 'flaxia-loader-prototype-v1-';
-export const MAX_ZIP_BYTES = 25 * 1024 * 1024;
+export const MAX_ZIP_BYTES = 128 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 export const MAX_FILES = 1024;
 export const HASH_PATTERN = /^[a-f0-9]{64}$/;

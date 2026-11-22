@@ -22,7 +22,13 @@ export interface Game {
 
 export interface ArcadePageProps {
   sandboxOrigin: string;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
   initialGameId?: string;
   onBack?: () => void;
 }

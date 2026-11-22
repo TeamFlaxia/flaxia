@@ -4,6 +4,7 @@ import {
   RECOMMENDATION_VECTOR_DIM,
 } from '../../shared/recommendation/vector-codec.ts';
 import type { Post } from '../../shared/types/post.ts';
+import { maxUploadBytesForUser } from '../../shared/upload-limits.ts';
 import { findAvailableArcadeGame } from '../lib/arcade-availability.js';
 import { ArcadeAvailabilityPrefetch } from '../lib/arcade-availability-prefetch.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
@@ -1541,6 +1542,7 @@ export class ArcadePage {
     }
 
     new GameUploadModal({
+      maxUploadBytes: maxUploadBytesForUser(this.props.currentUser ?? null),
       onUploaded: (postId) => this.navigateToGame(postId),
     });
   }

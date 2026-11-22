@@ -34,7 +34,7 @@ export interface FileFeatures {
   phashNote?: string;
 }
 
-function kindForMime(mime: string): FileKind {
+export function kindForMime(mime: string): FileKind {
   if (mime.startsWith('image/')) return 'image';
   if (mime === 'application/zip') return 'zip';
   if (mime === 'application/pdf') return 'pdf';
