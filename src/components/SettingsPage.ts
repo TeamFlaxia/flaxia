@@ -10,7 +10,7 @@ import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelt
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
 import SettingsPasswordSection from '../lib/svelte/SettingsPasswordSection.svelte';
 import SettingsTitlesSection from '../lib/svelte/SettingsTitlesSection.svelte';
-import { createVaultSection } from './VaultSection.js';
+import SettingsVaultSection from '../lib/svelte/SettingsVaultSection.svelte';
 
 export interface SettingsPageProps {
   initialCategory?: string | null;
@@ -67,10 +67,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   const passwordMount = mountSettingsSection(SettingsPasswordSection, { currentUser });
   const passwordSection = passwordMount.element;
 
-  // ─── Personal Vault Section ──────────────────────────────────────────────
-  // Own component: it has three states of its own (setup / locked / unlocked)
-  // and timers to clean up, which would drown the settings page otherwise.
-  const vaultSection = currentUser ? createVaultSection() : null;
+  // Personal Vault section (Svelte): setup / locked / unlocked and pairing.
+  const vaultMount = currentUser ? mountSettingsSection(SettingsVaultSection) : null;
+  const vaultSection = vaultMount?.element;
 
   // Titles section (Svelte).
   const titlesMount = currentUser ? mountSettingsSection(SettingsTitlesSection) : null;
@@ -113,7 +112,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       titleKey: 'settings.security',
       descriptionKey: 'settings.security_description',
       iconName: 'key',
-      sections: [passwordSection, vaultSection.getElement()],
+      sections: [passwordSection, vaultSection],
     });
   }
   addCategory({
@@ -184,7 +183,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       titlesMount?.destroy();
       emojiMount?.destroy();
       billingMount?.destroy();
-      vaultSection?.destroy();
+      vaultMount?.destroy();
       bugReportMount.destroy();
       mapsMount.destroy();
       crowdMount.destroy();
