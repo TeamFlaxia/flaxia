@@ -1,33 +1,17 @@
-import {
-  clearCredentialOperation,
-  credentialOperationFor,
-  retryPendingCredentialChange,
-} from '../lib/auth-credential-operation';
-import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
-import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { getLocale, t } from '../lib/i18n.js';
-import { passwordLengthError } from '../lib/password-policy.js';
 import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { mountSettingsSection } from '../lib/settings/section-host.ts';
-import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import SettingsAccountSection from '../lib/svelte/SettingsAccountSection.svelte';
 import SettingsCrowdSection from '../lib/svelte/SettingsCrowdSection.svelte';
 import SettingsDisplaySection from '../lib/svelte/SettingsDisplaySection.svelte';
 import SettingsEmailSection from '../lib/svelte/SettingsEmailSection.svelte';
 import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelte';
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
+import SettingsPasswordSection from '../lib/svelte/SettingsPasswordSection.svelte';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
-import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
-import { syncVaultVersionAfterRewrap } from '../lib/vault/session.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
-
-function b64(b: Uint8Array): string {
-  let binary = '';
-  for (const x of b) binary += String.fromCharCode(x);
-  return btoa(binary);
-}
 
 export interface SettingsPageProps {
   initialCategory?: string | null;
@@ -114,269 +98,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   const emailMount = mountSettingsSection(SettingsEmailSection);
   const emailSection = emailMount.element;
 
-  // Password Section
-  const passwordSection = document.createElement('div');
-  passwordSection.className = 'settings-section';
-
-  const recoveryMode = sessionStorage.getItem('flaxia.recovery-login') === '1';
-
-  let currentPasswordInput2!: HTMLInputElement;
-  let newPasswordInput!: HTMLInputElement;
-  let confirmPasswordInput!: HTMLInputElement;
-  let passwordSaveButton!: HTMLButtonElement;
-  let passwordMessage!: HTMLElement;
-
-  displayMounts.push(
-    mount(
-      passwordSection,
-      () => html`
-        <h2>${t('settings.change_password')}</h2>
-        <label class="settings-label" for="settings-password-current">
-          ${recoveryMode ? t('settings.recovery_code_label') : t('settings.password_current')}
-        </label>
-        <input
-          class="settings-input"
-          id="settings-password-current"
-          type="password"
-          autocomplete="current-password"
-          placeholder=${
-            recoveryMode ? t('login.recovery_code_placeholder') : t('settings.password_current_placeholder')
-          }
-          ref=${(element: Element | null) => {
-            if (element) currentPasswordInput2 = element as unknown as HTMLInputElement;
-          }}
-        />
-        <label class="settings-label" for="settings-new-password">${t('settings.password_new')}</label>
-        <input
-          class="settings-input"
-          id="settings-new-password"
-          type="password"
-          autocomplete="new-password"
-          placeholder=${t('settings.password_new_placeholder')}
-          ref=${(element: Element | null) => {
-            if (element) newPasswordInput = element as unknown as HTMLInputElement;
-          }}
-        />
-        <label class="settings-label" for="settings-confirm-password">
-          ${t('settings.password_confirm')}
-        </label>
-        <input
-          class="settings-input"
-          id="settings-confirm-password"
-          type="password"
-          autocomplete="new-password"
-          placeholder=${t('settings.password_confirm_placeholder')}
-          ref=${(element: Element | null) => {
-            if (element) confirmPasswordInput = element as unknown as HTMLInputElement;
-          }}
-        />
-        <button
-          class="settings-save"
-          ref=${(element: Element | null) => {
-            if (element) passwordSaveButton = element as unknown as HTMLButtonElement;
-          }}
-        >
-          ${t('common.save')}
-        </button>
-        <div
-          class="settings-status"
-          role="status"
-          ref=${(element: Element | null) => {
-            if (element) passwordMessage = element as HTMLElement;
-          }}
-        ></div>
-      `,
-    ),
-  );
-
-  const recoveryButton = document.createElement('button');
-  recoveryButton.type = 'button';
-  recoveryButton.className = 'settings-save';
-  recoveryButton.textContent = t('settings.recovery_create');
-  recoveryButton.hidden = true;
-  // Enrollment is available for every Auth-linked session, including the
-  // opt-in linking phase before AUTH_AUTHORITY_MODE is enabled.
-  void fetch('/api/auth/recovery/status', { credentials: 'include', cache: 'no-store' })
-    .then((response) => {
-      recoveryButton.hidden = !response.ok;
-    })
-    .catch(() => {});
-  passwordSection.appendChild(recoveryButton);
-  recoveryButton.addEventListener('click', async () => {
-    const password = window.prompt(t('settings.recovery_current_password'));
-    if (!password) return;
-    const bytes = crypto.getRandomValues(new Uint8Array(32));
-    const code = b64(bytes).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-    if (!(await createConfirmDialog(`${t('settings.recovery_save_code')}\n\n${code}`))) return;
-    recoveryButton.disabled = true;
-    try {
-      const salt = generateSalt();
-      const verifier = await computeVerifier(code, salt, DEFAULT_SRP_KDF);
-      const proof = await createSrpProof(password);
-      if (!proof) throw new Error('Recovery proof unavailable');
-      const response = await fetch('/api/auth/recovery/enroll', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ salt: b64(salt), verifier: b64(verifier), kdf: DEFAULT_SRP_KDF, current_srp: proof }),
-      });
-      window.alert(t(response.ok ? 'settings.recovery_enabled' : 'settings.recovery_failed'));
-    } catch {
-      window.alert(t('settings.recovery_failed'));
-    } finally {
-      recoveryButton.disabled = false;
-    }
-  });
-
-  passwordSaveButton.addEventListener('click', async () => {
-    const currentPassword = currentPasswordInput2.value.trim();
-    const newPassword = newPasswordInput.value.trim();
-    const confirmPassword = confirmPasswordInput.value.trim();
-
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      passwordMessage.textContent = t('settings.password_fill_all');
-      passwordMessage.style.color = 'var(--danger-text)';
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      passwordMessage.textContent = t('settings.password_mismatch');
-      passwordMessage.style.color = 'var(--danger-text)';
-      return;
-    }
-
-    if (passwordLengthError(newPassword)) {
-      passwordMessage.textContent = t('settings.password_length');
-      passwordMessage.style.color = 'var(--danger-text)';
-      return;
-    }
-
-    passwordMessage.textContent = '';
-    passwordSaveButton.disabled = true;
-    passwordSaveButton.style.opacity = '0.6';
-
-    try {
-      if (!currentUser) return;
-      const previous = await retryPendingCredentialChange();
-      if (previous === 'committed') {
-        // A different, earlier submission was completed. The password in this
-        // form was never sent, so do not claim it was saved.
-        passwordMessage.textContent = t('settings.password_previous_completed');
-        passwordMessage.style.color = 'var(--success, #10b981)';
-        currentPasswordInput2.value = '';
-        newPasswordInput.value = '';
-        confirmPasswordInput.value = '';
-        return;
-      }
-      if (previous === 'pending') {
-        passwordMessage.textContent = t('settings.password_change_pending');
-        passwordMessage.style.color = 'var(--danger)';
-        return;
-      }
-      // Derive a fresh SRP verifier from the new password so the account
-      // continues to authenticate via SRP after the change. Neither the
-      // current nor the new password is sent to the server: the current one is
-      // proven with an SRP handshake, the new one only as its verifier.
-      const salt = generateSalt();
-      const verifier = await computeVerifier(newPassword, salt, DEFAULT_SRP_KDF);
-
-      const recovering = sessionStorage.getItem('flaxia.recovery-login') === '1';
-      const currentSrp = await createSrpProof(currentPassword, recovering);
-      if (!currentSrp) {
-        passwordMessage.textContent = t('settings.current_password_incorrect');
-        passwordMessage.style.color = 'var(--danger-text)';
-        return;
-      }
-
-      // Carry the vault across: VK is wrapped under a KEK derived from the OLD
-      // password, so it must be re-wrapped inside this very request. Refusing
-      // to proceed beats storing an envelope the new password cannot open.
-      let vaultSecret = currentPassword;
-      if (recovering) {
-        const keys = await fetchVaultKeys();
-        if (!keys) throw new Error('Vault unavailable');
-        if (keys.enabled) {
-          const phrase = window.prompt(t('settings.recovery_vault_phrase'));
-          if (!phrase) return;
-          vaultSecret = phrase;
-        }
-      }
-      const vaultRewrap = await prepareVaultRewrap(vaultSecret, newPassword, recovering);
-      if (vaultRewrap.status === 'unlock_failed') {
-        passwordMessage.textContent = t('settings.current_password_incorrect');
-        passwordMessage.style.color = 'var(--danger-text)';
-        return;
-      }
-      if (vaultRewrap.status === 'error') {
-        passwordMessage.textContent = t('settings.password_save_failed');
-        passwordMessage.style.color = 'var(--danger-text)';
-        return;
-      }
-
-      const operation = credentialOperationFor(currentUser.id);
-
-      const response = await fetch('/api/users/me/password', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          srp_salt: b64(salt),
-          srp_verifier: b64(verifier),
-          srp_group: '2048',
-          srp_kdf: DEFAULT_SRP_KDF,
-          current_srp: currentSrp,
-          operation,
-          ...(recovering ? { recovery: true } : {}),
-          ...(vaultRewrap.status === 'ok' ? { vault_kek: vaultRewrap.fields } : {}),
-        }),
-      });
-
-      if (response.ok) {
-        clearCredentialOperation();
-        if (recovering) sessionStorage.removeItem('flaxia.recovery-login');
-        storeSrpSalt(salt);
-        if (vaultRewrap.status === 'ok') await syncVaultVersionAfterRewrap();
-        passwordMessage.textContent = t('settings.password_saved');
-        passwordMessage.style.color = 'var(--accent-text)';
-        currentPasswordInput2.value = '';
-        newPasswordInput.value = '';
-        confirmPasswordInput.value = '';
-      } else {
-        const errorData = (await response.json()) as { error?: string; cancelled?: boolean };
-        if (errorData.cancelled) clearCredentialOperation();
-        const message =
-          errorData.error === 'vault_rewrap_required'
-            ? t('settings.vault_rewrap_required')
-            : errorData.error === 'vault_key_version_conflict'
-              ? t('settings.vault_changed')
-              : errorData.error || t('settings.password_save_failed');
-        passwordMessage.textContent = message;
-        passwordMessage.style.color = 'var(--danger-text)';
-      }
-    } catch (_error: unknown) {
-      passwordMessage.textContent = t('settings.password_network_error');
-      passwordMessage.style.color = 'var(--danger-text)';
-    } finally {
-      passwordSaveButton.disabled = false;
-      passwordSaveButton.style.opacity = '1';
-    }
-  });
-
-  // Add hover effects
-  const buttons = [passwordSaveButton];
-  buttons.forEach((button: HTMLButtonElement) => {
-    button.addEventListener('mouseenter', () => {
-      if (!button.disabled) {
-        button.style.opacity = '0.8';
-      }
-    });
-    button.addEventListener('mouseleave', () => {
-      if (!button.disabled) {
-        button.style.opacity = '1';
-      }
-    });
-  });
+  // Password section (Svelte).
+  const passwordMount = mountSettingsSection(SettingsPasswordSection, { currentUser });
+  const passwordSection = passwordMount.element;
 
   // ─── Personal Vault Section ──────────────────────────────────────────────
   // Own component: it has three states of its own (setup / locked / unlocked)
@@ -1018,6 +742,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       crowdMount.destroy();
       accountMount?.destroy();
       emailMount.destroy();
+      passwordMount.destroy();
       displayMount.destroy();
       languageMount.destroy();
     },
