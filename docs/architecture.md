@@ -8,11 +8,11 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 ┌─────────────────────────────────────┐
 │          flaxia.app                  │  Cloudflare Pages
 │  ┌─────────────────────────────────┐│
-│  │  SPA (Vanilla TypeScript)       ││
-│  │  ├── Timeline / PostCard        ││
-│  │  ├── PostComposer               ││
-│  │  ├── ProfilePage / ThreadPage   ││
-│  │  └── ArcadePage / AdminPage     ││
+│  │  SvelteKit SPA                   ││
+│  │  ├── routes/* (+page.svelte)     ││
+│  │  ├── src/lib/svelte/*            ││
+│  │  └── legacy DOM behind .ts       ││
+│  │      adapters (Arcade, PostText) ││
 │  └──────────┬──────────────────────┘│
 │             │ HTTP                  │
 │  ┌──────────▼──────────────────────┐│
@@ -113,21 +113,30 @@ fixed file count. Major areas include:
   Note (Create), Delete, Update, Block, Move
 - The specification of the implementation is `docs/activitypub.md`
 
-## SPA Routing
+## SvelteKit SPA
 
-The client-side SPA (`src/main.ts`) manages routing with the following views:
-- **Timeline** — Global, Following, and For You feeds with ad injection
-- **Thread** — Post detail with replies
-- **Profile** — User profile with their posts
-- **Arcade** — Browse playable game posts
-- **Search** — Text/hashtag search
-- **Bookmarks** — Bookmarked posts
-- **Notifications** — Activity notifications
-- **Admin** — Admin panel (alerts, hidden posts, users, ads)
+The client is a SvelteKit 5 SPA (`@sveltejs/adapter-static`, `ssr = false`).
+`src/routes/**/+page.svelte` owns route-level layout and session gates;
+`src/lib/svelte/` contains the migrated surfaces. Remaining legacy DOM
+factories live in `src/components/` and are only called from `.ts` adapters
+(never directly from `.svelte`). `LEGACY_ADAPTERS.md` is currently empty and is
+kept as a ratchet (`tests/legacy-adapters.test.ts`).
+
+Routes:
+- `/home` — Global / Following / For You feed (`Timeline.svelte`)
+- `/posts/[id]` — thread detail (`ThreadPage.svelte`)
+- `/profile/[username]`, `/users/[username]` — profiles
+- `/arcade`, `/arcade/[id]` — game browser/player (`ArcadeView` + legacy engine adapter)
+- `/search`, `/explore`, `/translate`, `/bookmarks`, `/notifications`
+- `/settings`, `/mail/*`, `/admin/[tab]`
+- `/docs/*`, `/download`, `/about`, `/privacy`, `/terms`, `/child-safety`
+
+Navigation always uses `src/lib/navigation.ts` (`goto`), so SvelteKit keeps
+`history.state` intact. Per-route titles live in `src/lib/page-title.ts`.
 
 ## Timeline and Recommendations
 
-The feed mode in `src/components/Timeline.ts` selects the API endpoint:
+`src/lib/svelte/Timeline.svelte` selects the feed endpoint:
 
 | Feed | Endpoint | Ordering |
 |---|---|---|
@@ -135,26 +144,24 @@ The feed mode in `src/components/Timeline.ts` selects the API endpoint:
 | Following | `GET /api/posts?following=true` | Reverse chronological, filtered to followed users |
 | For You | `GET /api/posts/recommended` | Ranked recommendations |
 
-`functions/api/routes/posts.ts` implements both chronological and recommended
-post retrieval. For You combines following, trending, and recent candidate
-sources, then applies freshness, engagement, trust, and recently-seen filters.
-Authors with a low trust score (repeated near-duplicate posts) are excluded from
-For You, and exact duplicate posts are collapsed to their newest copy across
-feeds.
+Chronological feeds return `next_cursor` (the last post's `created_at`) so the
+client can keep paging. `functions/api/routes/posts/feed.ts` implements them;
+For You lives in `functions/api/routes/posts/recommendations.ts`. For You
+combines following, trending, and recent candidates, then applies freshness,
+engagement, trust, and recently-seen filters. Authors with a low trust score
+(repeated near-duplicate posts) are excluded, and exact duplicates collapse to
+their newest copy.
 
 The explicit preference vector lives in the browser. With
 `client_rank=1&include_vectors=1`, the API also returns public candidate
-embeddings plus a server-computed `base_score` (follows, recency, popularity,
-and the caller's own history); the unlocked client blends cosine similarity
-with its Vault-held preference vector (`src/lib/recommendation/`). The server
-never stores or receives that vector. A locked/absent Vault falls back to the
-server's own order.
+embeddings plus a server-computed `base_score`; the unlocked client blends
+cosine similarity with its Vault-held vector (`src/lib/recommendation/`). The
+server never stores or receives that vector. A locked/absent Vault falls back
+to the server order.
 
-Arcade recommendations are implemented separately in
-`functions/api/routes/games.ts` (`GET /api/games?recommended=true`) using dwell,
-popularity, exploration (already-played), and freshness as base signals, then
-the same client-side ranking. See [`docs/recommendation-rl.md`](recommendation-rl.md)
-for the recommendation model.
+Arcade recommendations live in `functions/api/routes/games.ts`
+(`GET /api/games?recommended=true`) and use the same client-side ranking. See
+[`docs/recommendation-rl.md`](recommendation-rl.md).
 
 ## Layout
 
@@ -164,4 +171,8 @@ for the recommendation model.
 │  (240px)    │   (600px)        │   (350px)       │
 └─────────────┴──────────────────┴─────────────────┘
 ```
-- Mobile: Left Nav collapses to bottom tab bar, Right Panel hidden
+- The shell is centred: `nav (240–350px) + centre (600px) + rail (350px)`.
+- The right rail is hidden below 1200px and on surface pages
+  (settings/mail/maps/arcade/translate/notifications).
+- Mobile: Left Nav becomes a drawer, the bottom tab bar takes over, and the
+  centre fills the viewport.
