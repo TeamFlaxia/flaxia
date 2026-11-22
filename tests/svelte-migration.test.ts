@@ -191,8 +191,11 @@ test('F8 routes use the shell with correct rails', async () => {
     assert.match(source, /ArcadeView/);
   }
   const maps = await read('src/routes/maps/+page.svelte');
-  assert.match(maps, /createMapsPage/);
+  assert.match(maps, /<MapsPage \/>/);
   assert.match(maps, /showRightPanel=\{false\}/);
+  const mapsPage = await read('src/lib/svelte/MapsPage.svelte');
+  assert.match(mapsPage, /import\('maplibre-gl'\)/);
+  assert.doesNotMatch(maps, /createMapsPage/);
 });
 
 test('docs routes cover the index and article slugs', async () => {

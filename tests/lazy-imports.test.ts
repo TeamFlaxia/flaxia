@@ -41,7 +41,7 @@ test('heavy libraries are never statically imported', async () => {
 test('heavy libraries are dynamically imported from their owning modules', async () => {
   const expectations = [
     ['src/components/PostText.ts', "import('katex')"],
-    ['src/components/MapsPage.ts', "import('maplibre-gl')"],
+    ['src/lib/svelte/MapsPage.svelte', "import('maplibre-gl')"],
     ['src/lib/editor/ffmpeg-client.ts', "import('@ffmpeg/ffmpeg')"],
   ] as const;
   for (const [file, snippet] of expectations) {

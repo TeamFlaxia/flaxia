@@ -13,4 +13,3 @@ this ratchet.
 - `src/lib/svelte/AdminView.svelte`: `createAdminHiddenTab`
 - `src/lib/svelte/AdminView.svelte`: `createAdminLayout`
 - `src/lib/svelte/AdminView.svelte`: `createAdminUsersTab`
-- `src/routes/maps/+page.svelte`: `createMapsPage`
