@@ -20,6 +20,20 @@ interface PlayerSummary {
   isHost: boolean;
 }
 
+// Stored on the WebSocket itself so a hibernated room can rebuild its player
+// list after Cloudflare evicts the in-memory Durable Object instance.
+type PlayerAttachment = Omit<PlayerInfo, 'ws'>;
+
+interface RoomMeta {
+  roomId: string;
+  gameId: string;
+  hostId: string;
+  status: RoomStatus;
+  maxPlayers: number;
+  isPublic: boolean;
+  createdAt: number;
+}
+
 type RoomStatus = 'lobby' | 'playing' | 'finished';
 
 interface RoomMetadata {
@@ -90,9 +104,23 @@ export class MultiplayerRoom {
 
   constructor(ctx: DurableObjectState) {
     this.ctx = ctx;
+    // Persisted metadata survives hibernation; player sockets rebuild from
+    // their attachments in restorePlayers().
+    ctx.blockConcurrencyWhile(async () => {
+      const meta = await ctx.storage.get<RoomMeta>('meta');
+      if (!meta) return;
+      this.roomId = meta.roomId;
+      this.gameId = meta.gameId;
+      this.hostId = meta.hostId;
+      this.status = meta.status;
+      this.maxPlayers = meta.maxPlayers;
+      this.isPublic = meta.isPublic;
+      this.createdAt = meta.createdAt;
+    });
   }
 
   async fetch(request: Request): Promise<Response> {
+    this.restorePlayers();
     const url = new URL(request.url);
 
     if (request.headers.get('Upgrade') === 'websocket') {
@@ -111,6 +139,7 @@ export class MultiplayerRoom {
   }
 
   private async handleWebSocketUpgrade(request: Request, url: URL): Promise<Response> {
+    this.restorePlayers();
     const userId = url.searchParams.get('userId') || '';
     const username = url.searchParams.get('username') || '';
     const displayName = url.searchParams.get('display_name') || null;
@@ -167,11 +196,13 @@ export class MultiplayerRoom {
       connectedAt: Date.now(),
     };
     this.players.set(userId, info);
+    this.savePlayer(server, info);
 
     if (isHost) {
       this.hostId = userId;
     }
 
+    this.persistMeta();
     this.setInactivityAlarm();
 
     const newPlayer: PlayerSummary = {
@@ -205,6 +236,7 @@ export class MultiplayerRoom {
   }
 
   private async handleApiPost(request: Request): Promise<Response> {
+    this.restorePlayers();
     try {
       const body = (await request.json()) as {
         action: string;
@@ -217,14 +249,17 @@ export class MultiplayerRoom {
       switch (body.action) {
         case 'set_public':
           this.isPublic = body.state as unknown as boolean;
+          this.persistMeta();
           return new Response('OK', { status: 200 });
 
         case 'set_max_players':
           this.maxPlayers = body.state as unknown as number;
+          this.persistMeta();
           return new Response('OK', { status: 200 });
 
         case 'end_game':
           this.status = 'finished';
+          this.persistMeta();
           if (body.winner || body.scores) {
             this.broadcast({
               type: 'game_over',
@@ -250,6 +285,7 @@ export class MultiplayerRoom {
   }
 
   private handleApiGet(): Response {
+    this.restorePlayers();
     return new Response(
       JSON.stringify({
         roomId: this.roomId,
@@ -266,6 +302,7 @@ export class MultiplayerRoom {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    this.restorePlayers();
     if (typeof message !== 'string') return;
     // #120: bound inbound frames — an unchecked multi-MB JSON would be
     // amplified N× by broadcast to every other socket in the room.
@@ -286,6 +323,7 @@ export class MultiplayerRoom {
     // self-destructs ~5 minutes after creation regardless of activity.
     player.connectedAt = Date.now();
     this.setInactivityAlarm();
+    this.savePlayer(ws, player);
 
     switch (data.type) {
       case 'ready':
@@ -304,6 +342,7 @@ export class MultiplayerRoom {
           return;
         }
         this.status = 'playing';
+        this.persistMeta();
         this.broadcast({ type: 'game_start' });
         break;
 
@@ -362,20 +401,15 @@ export class MultiplayerRoom {
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    const player = this.findPlayerByWs(ws);
-    if (player) {
-      this.removePlayer(player.userId);
-    }
+    this.removeSocketPlayer(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {
-    const player = this.findPlayerByWs(ws);
-    if (player) {
-      this.removePlayer(player.userId);
-    }
+    this.removeSocketPlayer(ws);
   }
 
   async alarm(): Promise<void> {
+    this.restorePlayers();
     if (this.players.size === 0) {
       return;
     }
@@ -394,6 +428,56 @@ export class MultiplayerRoom {
     }
   }
 
+  private removeSocketPlayer(ws: WebSocket): void {
+    this.restorePlayers();
+    const player = this.findPlayerByWs(ws);
+    const attachment = ws.deserializeAttachment() as PlayerAttachment | null;
+    const userId = player?.userId ?? attachment?.userId;
+    if (userId) this.removePlayer(userId);
+  }
+
+  private savePlayer(ws: WebSocket, player: PlayerInfo): void {
+    try {
+      const { ws: _ws, ...attachment } = player;
+      ws.serializeAttachment(attachment);
+    } catch {
+      // A socket that is already closing cannot persist its attachment.
+    }
+  }
+
+  private restorePlayers(): void {
+    const sockets = this.ctx.getWebSockets();
+    if (sockets.length === 0) return;
+    const restored = new Map<string, PlayerInfo>();
+    for (const ws of sockets) {
+      const attachment = ws.deserializeAttachment() as PlayerAttachment | null;
+      if (!attachment || typeof attachment.userId !== 'string') continue;
+      restored.set(attachment.userId, { ...attachment, ws });
+    }
+    this.players = restored;
+    if (!this.hostId) {
+      for (const player of restored.values()) {
+        if (player.isHost) {
+          this.hostId = player.userId;
+          break;
+        }
+      }
+    }
+  }
+
+  private persistMeta(): void {
+    const meta: RoomMeta = {
+      roomId: this.roomId,
+      gameId: this.gameId,
+      hostId: this.hostId,
+      status: this.status,
+      maxPlayers: this.maxPlayers,
+      isPublic: this.isPublic,
+      createdAt: this.createdAt,
+    };
+    this.ctx.waitUntil(this.ctx.storage.put('meta', meta));
+  }
+
   private removePlayer(userId: string): void {
     this.players.delete(userId);
 
@@ -407,8 +491,12 @@ export class MultiplayerRoom {
     if (userId === this.hostId) {
       const newHost = this.players.values().next().value;
       if (newHost) {
-        newHost.isHost = true;
         this.hostId = newHost.userId;
+        for (const player of this.players.values()) {
+          player.isHost = player.userId === this.hostId;
+          this.savePlayer(player.ws, player);
+        }
+        this.persistMeta();
         this.broadcast({ type: 'host_changed', newHostId: newHost.userId });
       }
     }
