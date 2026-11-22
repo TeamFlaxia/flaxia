@@ -5,7 +5,6 @@ These Svelte entrypoints still mount legacy DOM factories. Entries may only be
 Svelte, delete its line in the same PR. `tests/legacy-adapters.test.ts` enforces
 this ratchet.
 
-- `src/lib/svelte/SettingsPage.svelte`: `createSettingsPage`
 - `src/lib/svelte/AdminView.svelte`: `createAdminAdsTab`
 - `src/lib/svelte/AdminView.svelte`: `createAdminAlertsTab`
 - `src/lib/svelte/AdminView.svelte`: `createAdminAnalyticsTab`

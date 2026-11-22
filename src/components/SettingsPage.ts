@@ -22,7 +22,6 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
-import { icon } from '../lib/icons.js';
 import { clearTileCache, getTileCacheStats, requestStoragePersistence } from '../lib/maps/cache.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -52,7 +51,7 @@ function b64(b: Uint8Array): string {
   return btoa(binary);
 }
 
-interface SettingsPageProps {
+export interface SettingsPageProps {
   initialCategory?: string | null;
   currentUser?: {
     id: string;
@@ -92,7 +91,7 @@ interface SettingsStamp {
 
 type StampEntry = { kind: 'stamp'; stamp: SettingsStamp } | { kind: 'add' } | { kind: 'error' };
 
-interface SettingsCategory {
+export interface SettingsCategory {
   id: string;
   groupKey: string;
   titleKey: string;
@@ -102,123 +101,12 @@ interface SettingsCategory {
 }
 
 /**
- * v5 two-pane settings shell: a dense category rail (Obsidian-style) on the
- * left, one bordered panel per category on the right. Replaces the previous
- * overview/back-navigation flow while keeping the same public surface.
+ * Build the settings section DOM. The Svelte shell owns the page chrome and
+ * navigation; this adapter only produces the category content.
  */
-function createSettingsTwoPane() {
-  const container = document.createElement('div');
-  container.className = 'settings-page';
-
-  const header = document.createElement('header');
-  header.className = 'settings-header';
-  const back = document.createElement('button');
-  back.type = 'button';
-  back.className = 'settings-back';
-  back.textContent = '←';
-  back.setAttribute('aria-label', t('common.back'));
-  const heading = document.createElement('h1');
-  heading.textContent = t('settings.title');
-  heading.tabIndex = -1;
-  const titleIcon = document.createElement('span');
-  titleIcon.className = 'settings-title-icon';
-  titleIcon.setAttribute('aria-hidden', 'true');
-  titleIcon.appendChild(icon('settings', { width: '18', height: '18' }));
-  heading.insertBefore(titleIcon, heading.firstChild);
-  header.appendChild(back);
-  header.appendChild(heading);
-  container.appendChild(header);
-
-  const pane = document.createElement('div');
-  pane.className = 'settings-two-pane';
-  const nav = document.createElement('nav');
-  nav.className = 'settings-nav';
-  nav.setAttribute('aria-label', t('settings.title'));
-  const content = document.createElement('div');
-  content.className = 'settings-content';
-  pane.appendChild(nav);
-  pane.appendChild(content);
-  container.appendChild(pane);
-
-  const groups = new Map<string, HTMLElement>();
-  const items = new Map<string, HTMLButtonElement>();
-  const panels = new Map<string, HTMLElement>();
-  let active: string | null = null;
-
-  back.addEventListener('click', () => window.history.back());
-
-  function showCategory(id: string | null, moveFocus = true): void {
-    const nextId = id && items.has(id) ? id : (items.keys().next().value ?? null);
-    if (!nextId) return;
-    active = nextId;
-    for (const [key, button] of items) {
-      const isActive = key === nextId;
-      button.classList.toggle('settings-nav-item--active', isActive);
-      if (isActive) button.setAttribute('aria-current', 'page');
-      else button.removeAttribute('aria-current');
-    }
-    for (const [key, panel] of panels) panel.hidden = key !== nextId;
-    if (moveFocus) panels.get(nextId)?.focus({ preventScroll: false });
-  }
-
-  function addCategory(category: SettingsCategory): void {
-    let group = groups.get(category.groupKey);
-    if (!group) {
-      const section = document.createElement('section');
-      section.className = 'settings-nav-group';
-      const title = document.createElement('h2');
-      title.className = 'settings-nav-group-title';
-      title.textContent = t(category.groupKey);
-      const list = document.createElement('div');
-      list.className = 'settings-nav-list';
-      section.appendChild(title);
-      section.appendChild(list);
-      nav.appendChild(section);
-      group = list;
-      groups.set(category.groupKey, group);
-    }
-
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'settings-nav-item';
-    const navIcon = document.createElement('span');
-    navIcon.className = 'settings-nav-icon';
-    navIcon.setAttribute('aria-hidden', 'true');
-    navIcon.appendChild(icon(category.iconName as Parameters<typeof icon>[0], { width: '16', height: '16' }));
-    const navLabel = document.createElement('span');
-    navLabel.className = 'settings-nav-label';
-    navLabel.textContent = t(category.titleKey);
-    button.appendChild(navIcon);
-    button.appendChild(navLabel);
-    button.addEventListener('click', () => showCategory(category.id));
-    group.appendChild(button);
-    items.set(category.id, button);
-
-    const panel = document.createElement('section');
-    panel.className = 'settings-panel';
-    panel.setAttribute('aria-label', t(category.titleKey));
-    panel.tabIndex = -1;
-    panel.hidden = true;
-    const intro = document.createElement('p');
-    intro.className = 'settings-panel-description';
-    intro.textContent = t(category.descriptionKey);
-    panel.appendChild(intro);
-    for (const section of category.sections) panel.appendChild(section);
-    content.appendChild(panel);
-    panels.set(category.id, panel);
-  }
-
-  return {
-    getElement: () => container,
-    addCategory,
-    showCategory,
-    getActiveCategory: () => active,
-  };
-}
-
-export function createSettingsPage({ currentUser, initialCategory }: SettingsPageProps) {
-  const navigation = createSettingsTwoPane();
-  const container = navigation.getElement();
+export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
+  const categories: SettingsCategory[] = [];
+  const addCategory = (category: SettingsCategory) => categories.push(category);
   const bugReportForm = createBugReportForm();
   let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
@@ -1774,7 +1662,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   mapsSection.appendChild(fetchBtn);
 
   if (accountSection) {
-    navigation.addCategory({
+    addCategory({
       id: 'account',
       groupKey: 'settings.group_account',
       titleKey: 'settings.account',
@@ -1784,7 +1672,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     });
   }
   if (vaultSection) {
-    navigation.addCategory({
+    addCategory({
       id: 'security',
       groupKey: 'settings.group_account',
       titleKey: 'settings.security',
@@ -1793,7 +1681,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       sections: [passwordSection, vaultSection.getElement()],
     });
   }
-  navigation.addCategory({
+  addCategory({
     id: 'appearance',
     groupKey: 'settings.group_preferences',
     titleKey: 'settings.appearance',
@@ -1802,7 +1690,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     sections: [displaySection, languageSection],
   });
   if (emojiSection) {
-    navigation.addCategory({
+    addCategory({
       id: 'emoji',
       groupKey: 'settings.group_preferences',
       titleKey: 'settings.custom_emoji',
@@ -1812,7 +1700,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     });
   }
   if (titlesSection) {
-    navigation.addCategory({
+    addCategory({
       id: 'titles',
       groupKey: 'settings.group_preferences',
       titleKey: 'settings.titles',
@@ -1822,7 +1710,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     });
   }
   if (billingSection) {
-    navigation.addCategory({
+    addCategory({
       id: 'billing',
       groupKey: 'settings.group_more',
       titleKey: 'settings.billing',
@@ -1831,7 +1719,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       sections: [billingSection],
     });
   }
-  navigation.addCategory({
+  addCategory({
     id: 'crowd',
     groupKey: 'settings.group_more',
     titleKey: 'settings.crowd',
@@ -1839,7 +1727,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     iconName: 'poll',
     sections: [crowdSection],
   });
-  navigation.addCategory({
+  addCategory({
     id: 'maps',
     groupKey: 'settings.group_preferences',
     titleKey: 'settings.maps',
@@ -1847,7 +1735,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     iconName: 'maps',
     sections: [mapsSection],
   });
-  navigation.addCategory({
+  addCategory({
     id: 'bug-report',
     groupKey: 'settings.group_other',
     titleKey: 'settings.bug_report',
@@ -1855,11 +1743,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     iconName: 'flag',
     sections: [bugReportForm.getElement()],
   });
-  navigation.showCategory(initialCategory ?? null, false);
-
   return {
-    getActiveCategory: navigation.getActiveCategory,
-    getElement: () => container,
+    categories,
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       titlesMount?.dispose();
@@ -1869,7 +1754,6 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       displayMounts.length = 0;
       vaultSection?.destroy();
       bugReportForm.destroy();
-      container.remove();
     },
   };
 }
