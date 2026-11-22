@@ -178,9 +178,11 @@ test('admin routes render the standalone admin layout', async () => {
     assert.match(source, /AdminView/);
   }
   const view = await read('src/lib/svelte/AdminView.svelte');
-  assert.match(view, /createAdminLayout/);
-  assert.match(view, /setAccessDenied/);
-  assert.match(view, /createAdminAnalyticsTab/);
+  assert.match(view, /mountAdminTab/);
+  assert.match(view, /admin_layout.access_denied/);
+  assert.doesNotMatch(view, /createAdmin/);
+  const adapter = await read('src/lib/admin/tab-adapters.ts');
+  assert.match(adapter, /createAdminAnalyticsTab/);
 });
 
 test('F8 routes use the shell with correct rails', async () => {
