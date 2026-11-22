@@ -400,6 +400,9 @@ async function deletePost(): Promise<void> {
 }
 
 function startEdit(): void {
+  // Close the menu before showing the editor; otherwise the dropdown keeps
+  // intercepting pointer events over the textarea and Save button.
+  if (menuOpen) toggleMenu();
   editText = plainText;
   editing = true;
 }
