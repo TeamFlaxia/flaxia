@@ -289,7 +289,14 @@ describe('security guards', () => {
 // pass ordinary tests while silently voiding the threat model.
 describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   it('no new code path puts a password in a request body', () => {
-    const settings = readFileSync(join(ROOT, 'src/components/SettingsPage.ts'), 'utf8');
+    const settings = [
+      'src/components/SettingsPage.ts',
+      'src/lib/svelte/SettingsPasswordSection.svelte',
+      'src/lib/svelte/SettingsEmailSection.svelte',
+      'src/lib/svelte/SettingsAccountSection.svelte',
+    ]
+      .map((file) => readFileSync(join(ROOT, file), 'utf8'))
+      .join('\n');
     assert.ok(!/current_password\s*:/.test(settings), 'settings must prove the password with SRP, not send it');
     assert.ok(!/new_password\s*:/.test(settings), 'a new password only travels as a verifier');
 
