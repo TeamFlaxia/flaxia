@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
 import type { Post } from '../../../shared/types/post.ts';
+import { maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { showSignInPrompt } from '../../components/SignInPrompt.ts';
 import { attachPlusBadge } from '../avatar.ts';
 import { charMeter, POST_CHAR_LIMIT } from '../composer/logic.ts';
@@ -54,6 +55,7 @@ let text = $state(prefillText);
 let submitting = $state(false);
 let selectedFile = $state<File | null>(null);
 let dropActive = $state(false);
+const maxFileBytes = $derived(maxUploadBytesForUser(currentUser));
 let suggestions = $state<Suggestion[]>([]);
 let activeSuggestion = $state(0);
 let mentionOpen = $state(false);
@@ -239,7 +241,7 @@ function openFilePicker(audio: boolean): void {
 }
 
 async function selectFile(file: File): Promise<void> {
-  if (file.size > 25 * 1024 * 1024) {
+  if (file.size > maxFileBytes) {
     showToast(t('reply_composer.error_file_size'), true);
     clearFile();
     return;

@@ -1,6 +1,7 @@
 // Reply submission pipeline extracted from the legacy DOM controller.
 import type { Post } from '../../../shared/types/post.ts';
 import { t } from '../i18n.ts';
+import { uploadFileBody } from '../upload.ts';
 
 export class AuthRequiredError extends Error {
   constructor() {
@@ -32,17 +33,7 @@ async function prepareReply(
 }
 
 async function uploadFile(file: File, url: string): Promise<boolean> {
-  try {
-    const response = await fetch(url, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type },
-      credentials: 'include',
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+  return uploadFileBody(file, url, file.type);
 }
 
 async function commitReply(

@@ -503,7 +503,7 @@ test('store commits atomically, isolates accounts and rejects stale writers or o
   assert.equal((await store.list('alice')).length, 0);
   await store.put(game, () => true);
   assert.equal(await store.get('game1', 'bob'), undefined);
-  await assert.rejects(store.put({ ...game, id: 'large', size: 251 * 1024 * 1024 }, () => true));
+  await assert.rejects(store.put({ ...game, id: 'large', size: 513 * 1024 * 1024 }, () => true));
   assert.equal((await store.get('game1', 'alice'))?.files.length, 1);
   await store.activate('bob');
   await assert.rejects(store.put(game, () => true));

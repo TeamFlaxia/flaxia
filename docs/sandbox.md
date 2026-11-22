@@ -82,14 +82,14 @@ When iframe is closed or replaced, all blob URLs are revoked via `URL.revokeObje
 ## ZIP Upload Validation
 
 ### Server-side (upload time)
-- Content-Length: ≤ 10MB
+- Content-Length: ≤ 25MB free / ≤ 128MB Flaxia+ (25MB per request; larger files use 16MB chunks)
 - Content-Type: `application/zip`
 
 ### Client-side (before execution)
 - File count: ≤ 255
 - Path length: ≤ 255 chars per entry
 - Directory depth: ≤ 10 levels
-- Total extracted size: ≤ 100MB
+- Total extracted size: ≤ 512MB (single entry ≤ 100MB)
 - No nested ZIPs
 - No symbolic links
 - No path traversal segments (`..`) or backslash separators

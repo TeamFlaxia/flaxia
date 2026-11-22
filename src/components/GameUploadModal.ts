@@ -1,14 +1,17 @@
 import { getMimeType } from '../../shared/file-extensions.ts';
+import { FREE_UPLOAD_MAX_BYTES } from '../../shared/upload-limits.ts';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
+import { uploadFileBody } from '../lib/upload.ts';
 
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const MAX_THUMBNAIL_SIZE = 1024 * 1024;
 const ALLOWED_EXTS = ['zip', 'html', 'htm'];
 
 export interface GameUploadModalProps {
   onUploaded: (postId: string) => void;
+  /** Plan-aware per-file ceiling; the server enforces the same value. */
+  maxUploadBytes?: number;
 }
 
 export class GameUploadModal {
@@ -270,7 +273,8 @@ export class GameUploadModal {
   }
 
   private handleFileSelection(file: File): void {
-    if (file.size > MAX_FILE_SIZE) {
+    const maxBytes = this.props.maxUploadBytes ?? FREE_UPLOAD_MAX_BYTES;
+    if (file.size > maxBytes) {
       showToast(t('arcade.upload_file_too_large'), true);
       return;
     }
@@ -415,17 +419,7 @@ export class GameUploadModal {
   }
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
-    try {
-      const response = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': file.type },
-        credentials: 'include',
-      });
-      return response.ok;
-    } catch {
-      return false;
-    }
+    return uploadFileBody(file, uploadUrl, getMimeType(file.name));
   }
 
   private async commitPost(postId: string, zipKey: string, title: string): Promise<boolean> {

@@ -1,13 +1,22 @@
 import type { Context } from 'hono';
+import {
+  FREE_UPLOAD_MAX_BYTES,
+  MAX_UPLOAD_CHUNKS,
+  PLUS_UPLOAD_MAX_BYTES,
+  SINGLE_REQUEST_UPLOAD_MAX_BYTES,
+  UPLOAD_CHUNK_BYTES,
+} from '../../shared/upload-limits.ts';
 import { detectMimeType, isAllowedImageMime } from '../api/helpers';
 import type { Bindings, Variables } from '../api/types.ts';
 import { type AttachmentKind, MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from './attachments';
 import { getUserPlan } from './billing';
+import { assembleChunks, chunkTempKey, isValidUploadId } from './chunked-upload.ts';
 import { validateImageDimensions } from './image-dimensions';
 import type { Services } from './ports/index.ts';
 import { checkRateLimit, getClientIp } from './rate-limit';
 import { submitFileScans } from './scan/clamav';
-import { scanUploadSync } from './scan/index';
+import { setScanStatus } from './scan/db';
+import { scanChunkedUpload, scanUploadSync } from './scan/index';
 
 type UploadContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
@@ -24,6 +33,13 @@ function mimeMatchesAttachmentKind(kind: AttachmentKind, mime: string): boolean 
     case 'document':
       return true;
   }
+}
+
+function tooLarge(maxBytes: number): Response {
+  return Response.json(
+    { error: `File too large. Maximum size is ${maxBytes / (1024 * 1024)}MB`, code: 'file_too_large' },
+    { status: 413 },
+  );
 }
 
 /**
@@ -61,11 +77,13 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
       const uploadIp = getClientIp(c.req.raw);
       if (
         !(await checkRateLimit(services.kv, `upload:user:${user.id}`, {
-          maxRequests: 20,
+          // A 128MB file is 8 part requests plus finalization, so a handful of
+          // large attachments in one post can legitimately exceed 20 requests.
+          maxRequests: 60,
           windowSeconds: 60,
         })) ||
         !(await checkRateLimit(services.kv, `upload:ip:${uploadIp}`, {
-          maxRequests: 60,
+          maxRequests: 240,
           windowSeconds: 60,
         }))
       ) {
@@ -73,18 +91,21 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
       }
     }
 
-    // Check file size limit (25MB = 25 * 1024 * 1024 bytes)
-    const maxSize = 25 * 1024 * 1024;
-    if (contentLength && Number(contentLength) > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
+    if (!services.blobs) {
+      return c.json({ error: 'Storage not available' }, 500);
     }
+
+    // Flaxia+ raises the per-file ceiling to 128MB; free accounts stay at
+    // 25MB. The server is authoritative — the client only mirrors this to
+    // size the picker.
+    const plan = await getUserPlan({ DB: services.db }, user.id);
+    const maxBytes = plan.isActive ? PLUS_UPLOAD_MAX_BYTES : FREE_UPLOAD_MAX_BYTES;
 
     // Multi-media attachment keys: gif|audio|video/{postId}/{position}{ext}
     const attachment = parseAttachmentKey(key);
     // Enforce the same plan ceiling as prepare/commit before consuming a body
     // or writing a forged, out-of-plan attachment slot into R2.
     if (attachment) {
-      const plan = await getUserPlan({ DB: services.db }, user.id);
       const allowedSlots = plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
       if (attachment.position > allowedSlots) {
         return c.json({ error: 'Attachment position exceeds your plan limit' }, 403);
@@ -152,16 +173,160 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
       }
     }
 
+    const url = new URL(c.req.url);
+    const partParam = url.searchParams.get('part');
+    const partsParam = url.searchParams.get('parts');
+    const uploadId = url.searchParams.get('uploadId');
+    const finalize = url.searchParams.get('finalize') === '1';
+
+    // ── Chunked transport ────────────────────────────────────────────────
+    // One request per 16MB part, then a finalize request that streams the
+    // parts into the destination object. Needed for anything above the
+    // single-request ceiling (Cloudflare caps bodies at 100MB).
+    if (partParam !== null || finalize) {
+      if (!isValidUploadId(uploadId)) {
+        return c.json({ error: 'Invalid upload id' }, 400);
+      }
+      const partCount = Number(partsParam);
+      if (!Number.isInteger(partCount) || partCount < 1 || partCount > MAX_UPLOAD_CHUNKS) {
+        return c.json({ error: 'Invalid chunk count' }, 400);
+      }
+
+      if (finalize) {
+        const parts: Array<{ key: string; size: number }> = [];
+        for (let index = 1; index <= partCount; index += 1) {
+          const tempKey = chunkTempKey(user.id, uploadId, index);
+          const head = await services.blobs.head(tempKey);
+          if (!head) {
+            return c.json({ error: 'Upload part missing', code: 'upload_part_missing' }, 409);
+          }
+          parts.push({ key: tempKey, size: head.size });
+        }
+        const discardParts = () =>
+          services.blobs
+            .delete(parts.map((part) => part.key))
+            .catch((error) => console.error('Failed to delete upload chunks:', error));
+
+        let assembled: Awaited<ReturnType<typeof assembleChunks>>;
+        try {
+          // The header carries the magic bytes the assembly step uses for the
+          // detected content type. Reject unknown/incompatible types before
+          // streaming any bytes into the destination key.
+          const firstPart = await services.blobs.get(parts[0].key, {
+            range: { offset: 0, length: Math.min(64 * 1024, parts[0].size) },
+          });
+          if (!firstPart) {
+            await discardParts();
+            return c.json({ error: 'Upload part missing', code: 'upload_part_missing' }, 409);
+          }
+          const header = new Uint8Array(await new Response(firstPart.body).arrayBuffer());
+          const detected = detectMimeType(header);
+          if (!detected) {
+            await discardParts();
+            return c.json({ error: 'Unrecognized file format. Magic bytes do not match any allowed type.' }, 400);
+          }
+          if (
+            !isAllowedImageMime(detected) &&
+            !detected.startsWith('audio/') &&
+            !detected.startsWith('video/') &&
+            detected !== 'application/pdf' &&
+            detected !== 'application/octet-stream' &&
+            detected !== 'application/zip' &&
+            detected !== 'application/x-shockwave-flash' &&
+            detected !== 'text/html'
+          ) {
+            await discardParts();
+            return c.json({ error: 'File type not allowed' }, 400);
+          }
+          if (detected === 'application/pdf' && attachment?.kind !== 'document') {
+            await discardParts();
+            return c.json({ error: 'PDF files are only allowed as document attachments' }, 400);
+          }
+          if (attachment && !mimeMatchesAttachmentKind(attachment.kind, detected)) {
+            await discardParts();
+            return c.json({ error: 'File type does not match attachment type' }, 400);
+          }
+          const dimError = validateImageDimensions(header, detected);
+          if (dimError) {
+            await discardParts();
+            return c.json({ error: dimError }, 413);
+          }
+          assembled = await assembleChunks(services.blobs, {
+            parts,
+            destKey: key,
+            contentType: detected,
+            maxBytes,
+          });
+        } catch (error: unknown) {
+          if (error instanceof Error && 'status' in error && typeof error.status === 'number') {
+            return c.json({ error: error.message }, error.status as 400);
+          }
+          throw error;
+        }
+
+        const verdict = await scanChunkedUpload(services.db, {
+          sha256: assembled.sha256,
+          header: assembled.header,
+          name: key,
+          r2Key: key,
+        });
+        if (!verdict.ok) {
+          await services.blobs.delete(key).catch(() => undefined);
+          return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+        }
+
+        // ClamAV cannot scan >25MB sources yet; record an explicit skip so
+        // the file is not left permanently pending.
+        services.tasks.waitUntil(
+          setScanStatus(services.db, key, 'skipped', {
+            detail: 'too_large',
+            sha256: assembled.sha256,
+          }).catch((error) => console.error('Failed to record scan skip:', error)),
+        );
+
+        return c.json({ success: true, key });
+      }
+
+      const part = Number(partParam);
+      if (!Number.isInteger(part) || part < 1 || part > partCount) {
+        return c.json({ error: 'Invalid chunk index' }, 400);
+      }
+      if (contentLength && Number(contentLength) > UPLOAD_CHUNK_BYTES) {
+        return c.json({ error: 'Upload chunk too large' }, 413);
+      }
+      const chunk = await c.req.arrayBuffer();
+      if (chunk.byteLength === 0 || chunk.byteLength > UPLOAD_CHUNK_BYTES) {
+        return c.json({ error: 'Upload chunk too large' }, 413);
+      }
+      await services.blobs.put(chunkTempKey(user.id, uploadId, part), chunk, {
+        httpMetadata: { contentType: 'application/octet-stream' },
+      });
+      return c.json({ success: true, part });
+    }
+
+    // ── Single-request transport ─────────────────────────────────────────
+    // Keep each body comfortably below Cloudflare's zone upload cap and the
+    // isolate memory limit; larger files must use the chunked transport.
+    const singleMax = Math.min(maxBytes, SINGLE_REQUEST_UPLOAD_MAX_BYTES);
+    if (contentLength && Number(contentLength) > singleMax) {
+      return Response.json(
+        {
+          error: `File is too large for a single request. Maximum size is ${singleMax / (1024 * 1024)}MB`,
+          code: 'chunked_upload_required',
+        },
+        { status: 413 },
+      );
+    }
+
     // Get the file data from request body
     const fileData = await c.req.arrayBuffer();
 
     // Double-check file size after reading
-    if (fileData.byteLength > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
+    if (fileData.byteLength > singleMax) {
+      return tooLarge(singleMax);
     }
-
-    if (!services.blobs) {
-      return c.json({ error: 'Storage not available' }, 500);
+    if (fileData.byteLength > maxBytes) {
+      return tooLarge(maxBytes);
     }
 
     // Validate magic bytes against declared content type. Document formats can

@@ -6,13 +6,13 @@ import { isAdmin } from '../../../lib/admin.ts';
 import {
   type AttachmentInput,
   type AttachmentRecord,
+  attachmentBudget,
   collectAttachmentKeys,
   deleteAttachmentRows,
   enrichPostsWithAttachments,
   imageAttachmentKeys,
   parseAttachmentKey,
   sequenceAttachments,
-  sumAttachmentSizes,
   validateAttachmentInputs,
 } from '../../../lib/attachments';
 import { embedPost, isImageKey, screenPostImages } from '../../../lib/crowd';
@@ -422,11 +422,12 @@ manage.put('/posts/:id', async (c) => {
             return c.json({ error: 'Attachment does not belong to this post' }, 422);
           }
         }
-        const sizeCheck = await sumAttachmentSizes(
-          c.env.BUCKET,
+        const budgetError = await attachmentBudget(
+          c.env,
+          post.user_id,
           newAttachments.map((a) => a.r2_key),
         );
-        if (sizeCheck.error) return c.json({ error: sizeCheck.error }, 413);
+        if (budgetError) return c.json({ error: budgetError }, 413);
       }
 
       const nextKeys = newAttachments.map((a) => a.r2_key);

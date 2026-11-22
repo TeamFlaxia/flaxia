@@ -80,7 +80,7 @@ export interface BlobObject extends BlobMetadata {
 }
 
 export interface BlobStore {
-  get(key: string): Promise<BlobObject | null>;
+  get(key: string, options?: { range?: { offset: number; length?: number } }): Promise<BlobObject | null>;
   head(key: string): Promise<BlobMetadata | null>;
   put(
     key: string,
@@ -88,6 +88,11 @@ export interface BlobStore {
     options?: {
       httpMetadata?: BlobMetadata['httpMetadata'];
       customMetadata?: Record<string, string>;
+      /**
+       * Byte length of a `ReadableStream` body. Some stores (R2) reject
+       * streams without a known length, so streaming callers must pass it.
+       */
+      length?: number;
     },
   ): Promise<BlobMetadata | null>;
   delete(key: string | string[]): Promise<void>;

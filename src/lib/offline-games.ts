@@ -1,10 +1,11 @@
 import { stripPostColors } from '../../shared/post-colors.ts';
 import type { Post } from '../../shared/types/post.ts';
+import { PLUS_UPLOAD_MAX_BYTES } from '../../shared/upload-limits.ts';
 import type { Game } from '../types/game.ts';
 import type { DownloadedGame, GameFile, OfflineGameStore } from './offline-game-store.ts';
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const MAX_ZIP_BYTES = 25 * 1024 * 1024;
+const MAX_ZIP_BYTES = PLUS_UPLOAD_MAX_BYTES;
 interface Options {
   store: OfflineGameStore;
   network: typeof fetch;

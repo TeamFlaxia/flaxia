@@ -25,7 +25,7 @@ export type ImageDimensions = { width: number; height: number };
 // Parse native image dimensions from the file header without full decode.
 // Returns null when the file is not a supported image or cannot be parsed
 // (malformed headers are not our problem — the browser will reject those).
-export function parseImageDimensions(data: ArrayBuffer, mime: string): ImageDimensions | null {
+export function parseImageDimensions(data: ArrayBuffer | Uint8Array, mime: string): ImageDimensions | null {
   try {
     const bytes = new Uint8Array(data);
     if (mime === 'image/png') {
@@ -101,7 +101,7 @@ export function parseImageDimensions(data: ArrayBuffer, mime: string): ImageDime
 }
 
 // Returns an error message when an uploaded image exceeds the caps, otherwise null.
-export function validateImageDimensions(data: ArrayBuffer, receivedMime: string | null): string | null {
+export function validateImageDimensions(data: ArrayBuffer | Uint8Array, receivedMime: string | null): string | null {
   if (!receivedMime || !receivedMime.startsWith('image/')) return null;
   const dims = parseImageDimensions(data, receivedMime);
   if (!dims || dims.width <= 0 || dims.height <= 0) return null;

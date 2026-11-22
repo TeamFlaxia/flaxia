@@ -20,7 +20,7 @@ onMount(() => {
     const { leftNavCallbacks } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
     const user = getSessionUser() as
-      | { id: string; username: string; display_name?: string; avatar_key?: string }
+      | { id: string; username: string; display_name?: string; avatar_key?: string; badge_type?: string | null }
       | undefined;
     const page = mountArcadePage(host, {
       sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',

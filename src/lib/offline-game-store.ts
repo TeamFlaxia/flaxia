@@ -21,7 +21,7 @@ export interface OfflineGameStore {
   delete(id: string): Promise<void>;
 }
 
-const MAX_BYTES = 250 * 1024 * 1024;
+const MAX_BYTES = 512 * 1024 * 1024;
 
 /** Bookmarked downloads are never evicted to make room for transient TL reads. */
 export function createOfflineGameStore(factory: IDBFactory = indexedDB): OfflineGameStore {

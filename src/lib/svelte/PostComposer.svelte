@@ -3,6 +3,7 @@ import { onDestroy, onMount } from 'svelte';
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../../../shared/entitlements.ts';
 import { stripPostColors } from '../../../shared/post-colors.ts';
 import type { Post, QuotedPost } from '../../../shared/types/post.ts';
+import { maxMediaTotalBytesForUser, maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { openStampPicker } from '../../components/StampPicker.ts';
 import {
   buildPollData,
@@ -49,7 +50,6 @@ interface Props {
 let { onPostCreated, currentUser = null, onDraftSaved, quotedPost = null }: Props = $props();
 let user = $state(currentUser);
 
-const MAX_FILE = 25 * 1024 * 1024;
 const SAVED_DRAFTS_KEY = 'flaxia.saved_drafts';
 const AUTOSAVE_KEY = 'flaxia.post_autosave';
 
@@ -89,6 +89,8 @@ let mentionTimer: ReturnType<typeof setTimeout> | null = null;
 let vaultUnsubscribe: (() => void) | null = null;
 
 const maxMedia = $derived(user ? maxMediaAttachmentsForUser(user as never) : 1);
+const maxFileBytes = $derived(maxUploadBytesForUser(user as never));
+const maxTotalBytes = $derived(maxMediaTotalBytesForUser(user as never));
 const char = $derived(charMeter(text.length));
 const canPost = $derived(canSubmit(text, quotedPost, submitting));
 const progress = $derived(char.ratio.toFixed(3));
@@ -345,11 +347,14 @@ async function onFilesPicked(files: File[]): Promise<void> {
       continue;
     }
     const total = selectedMedia.reduce((sum, f) => sum + f.size, 0) + file.size;
-    if (total > 50 * 1024 * 1024) {
-      showToast(t('composer.error_total_too_large', { max: 50 }), true);
+    if (total > maxTotalBytes) {
+      showToast(t('composer.error_total_too_large', { max: Math.floor(maxTotalBytes / (1024 * 1024)) }), true);
       break;
     }
-    if (file.size > MAX_FILE) showToast(t('composer.attach_over_size'), false);
+    if (file.size > maxFileBytes) {
+      showToast(t('composer.attach_over_size'), false);
+      continue;
+    }
     selectedMedia = [...selectedMedia, file];
   }
   renderMediaList();
@@ -393,7 +398,11 @@ async function selectSingleFile(file: File): Promise<void> {
     showToast(dimError, true);
     return;
   }
-  if (file.size > MAX_FILE) showToast(t('composer.attach_over_size'), false);
+  if (file.size > maxFileBytes) {
+    clearFile();
+    showToast(t('composer.attach_over_size'), false);
+    return;
+  }
   selectedFile = file;
   renderFilePreviewHost();
   queueMicrotask(() => {
@@ -589,7 +598,13 @@ async function submit(): Promise<void> {
   if (submitting) return;
   const value = text.trim();
   if (!value) return;
-  const issue = validateSubmission({ selectedFile, selectedMedia, maxMediaAttachments: maxMedia });
+  const issue = validateSubmission({
+    selectedFile,
+    selectedMedia,
+    maxMediaAttachments: maxMedia,
+    maxFileBytes,
+    maxTotalBytes,
+  });
   if (issue) {
     showToast(t(issue.key, 'max' in issue ? { max: issue.max } : undefined), true);
     return;

@@ -2,6 +2,7 @@
 // Svelte composer can reuse the exact request/response handling.
 import { attachmentMimeType, getMimeType } from '../../../shared/file-extensions.ts';
 import type { Post } from '../../../shared/types/post.ts';
+import { uploadFileBody } from '../upload.ts';
 import type { PollData } from './logic.ts';
 
 interface PreparedUpload {
@@ -55,17 +56,7 @@ async function prepareAttachments(files: File[]): Promise<{ postId: string; uplo
 }
 
 async function uploadFile(file: File, uploadUrl: string): Promise<boolean> {
-  try {
-    const response = await fetch(uploadUrl, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type || getMime(file.name) || 'application/octet-stream' },
-      credentials: 'include',
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+  return uploadFileBody(file, uploadUrl, file.type || getMime(file.name));
 }
 
 function getMime(name: string): string {

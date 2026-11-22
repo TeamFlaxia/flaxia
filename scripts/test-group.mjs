@@ -18,6 +18,7 @@ const groups = {
     'svelte-shell',
     'tailwind-tokens',
     'media-upload-ports',
+    'upload-limits',
   ],
   'auth-vault': [
     'auth',
@@ -62,6 +63,7 @@ const groups = {
   ],
   'posts-feeds': [
     'ai-index',
+    'chunked-upload',
     'composer-logic',
     'ai-tags',
     'ai-tags-e2e',

@@ -1,8 +1,9 @@
 /**
  * Shared helpers for multi-media post attachments (image / audio / video / document).
  *
- * One post can carry up to MAX_ATTACHMENTS files (50MB total, 25MB each);
- * active Flaxia+ subscribers raise the count to MAX_ATTACHMENTS_PLUS.
+ * One post can carry up to MAX_ATTACHMENTS files (50MB total, 25MB each on
+ * the free plan; Flaxia+ raises both the count to MAX_ATTACHMENTS_PLUS and
+ * the byte caps to the shared upload limits).
  * Game payloads (zip / swf / html) are NOT part of this system — they keep
  * using the legacy gif_key / payload_key / swf_key / thumbnail_key columns.
  *
@@ -11,7 +12,15 @@
  */
 
 import { GAME_FILE_EXTENSIONS } from '../../shared/file-extensions.ts';
+import {
+  FREE_MEDIA_TOTAL_BYTES,
+  FREE_UPLOAD_MAX_BYTES,
+  PLUS_MEDIA_TOTAL_BYTES,
+  PLUS_UPLOAD_MAX_BYTES,
+} from '../../shared/upload-limits.ts';
 import { enrichPostsWithAiIndex } from './ai-index.ts';
+import { getUserPlan } from './billing.ts';
+import type { Db } from './ports/index.ts';
 
 export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';
 
@@ -19,8 +28,10 @@ export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';
 export const MAX_ATTACHMENTS = 4;
 /** Flaxia+ ceiling. Also the hard cap baked into R2 key slots. */
 export const MAX_ATTACHMENTS_PLUS = 32;
-export const MAX_ATTACHMENT_FILE_BYTES = 25 * 1024 * 1024;
-export const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
+/** Default (free) per-file and per-post media budgets. Flaxia+ callers pass
+ * the larger shared limits into `sumAttachmentSizes`. */
+export const MAX_ATTACHMENT_FILE_BYTES = FREE_UPLOAD_MAX_BYTES;
+export const MAX_ATTACHMENT_TOTAL_BYTES = FREE_MEDIA_TOTAL_BYTES;
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const;
 const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'opus'] as const;
@@ -176,23 +187,42 @@ export function sequenceAttachments(inputs: AttachmentInput[]): AttachmentRecord
 export async function sumAttachmentSizes(
   bucket: R2Bucket,
   keys: string[],
+  limits: { maxFileBytes?: number; maxTotalBytes?: number } = {},
 ): Promise<{ total: number; error: string | null }> {
+  const maxFileBytes = limits.maxFileBytes ?? MAX_ATTACHMENT_FILE_BYTES;
+  const maxTotalBytes = limits.maxTotalBytes ?? MAX_ATTACHMENT_TOTAL_BYTES;
   let total = 0;
   for (const key of keys) {
     const head = await bucket.head(key);
     if (!head) return { total, error: `Attachment not found in storage: ${key}` };
-    if (head.size > MAX_ATTACHMENT_FILE_BYTES) {
-      return { total, error: `File too large. Maximum size is ${MAX_ATTACHMENT_FILE_BYTES / (1024 * 1024)}MB` };
+    if (head.size > maxFileBytes) {
+      return { total, error: `File too large. Maximum size is ${maxFileBytes / (1024 * 1024)}MB` };
     }
     total += head.size;
   }
-  if (total > MAX_ATTACHMENT_TOTAL_BYTES) {
+  if (total > maxTotalBytes) {
     return {
       total,
-      error: `Attachments exceed ${MAX_ATTACHMENT_TOTAL_BYTES / (1024 * 1024)}MB total limit`,
+      error: `Attachments exceed ${maxTotalBytes / (1024 * 1024)}MB total limit`,
     };
   }
   return { total, error: null };
+}
+
+/**
+ * Plan-aware attachment budget: Flaxia+ gets 128MB per file / 256MB total,
+ * everyone else keeps 25MB / 50MB. Returns an error string or null.
+ */
+export async function attachmentBudget(
+  env: { DB: Db; BUCKET: R2Bucket },
+  userId: string,
+  keys: string[],
+): Promise<string | null> {
+  const plan = await getUserPlan({ DB: env.DB }, userId);
+  const limits = plan.isActive
+    ? { maxFileBytes: PLUS_UPLOAD_MAX_BYTES, maxTotalBytes: PLUS_MEDIA_TOTAL_BYTES }
+    : undefined;
+  return (await sumAttachmentSizes(env.BUCKET, keys, limits)).error;
 }
 
 export interface AttachmentsEnrichable {

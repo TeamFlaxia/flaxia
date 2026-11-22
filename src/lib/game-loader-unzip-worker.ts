@@ -11,7 +11,7 @@ import {
 self.addEventListener('message', (event: MessageEvent<ArrayBuffer>) => {
   try {
     if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > MAX_ZIP_BYTES)
-      throw new Error('ZIP exceeds 25 MB');
+      throw new Error('ZIP exceeds 128 MB');
     let total = 0;
     let count = 0;
     const seen = new Set<string>();

@@ -2,6 +2,7 @@ import { GAME_AUDIO_MUTE_RUNTIME } from '../../sandbox/zip-preview-protocol.js';
 import { CAPTURE_BRIDGE_IIFE } from '../../shared/capture-bridge.generated.ts';
 import { getMimeType, validateFileType } from '../../shared/file-extensions.ts';
 import {
+  ZIP_MAX_ENTRY_SIZE,
   ZIP_MAX_FILE_COUNT,
   ZIP_MAX_PATH_DEPTH,
   ZIP_MAX_PATH_LENGTH,
@@ -217,9 +218,12 @@ function validateZipCentralDirectory(cdData: Uint8Array, cdEntries: number): voi
         hasIndexHtml = true;
       }
 
+      if (uncompressedSize > ZIP_MAX_ENTRY_SIZE) {
+        throw new Error(`File too large (max ${ZIP_MAX_ENTRY_SIZE / (1024 * 1024)}MB): ${fileName}`);
+      }
       totalSize += uncompressedSize;
       if (totalSize > ZIP_MAX_TOTAL_SIZE) {
-        throw new Error('Extracted size too large (max 100MB)');
+        throw new Error(`Extracted size too large (max ${ZIP_MAX_TOTAL_SIZE / (1024 * 1024)}MB)`);
       }
     }
 
@@ -282,7 +286,7 @@ async function extractFileFromR2(
       // A decompression bomb must not exhaust the isolate: reject a declared
       // size above the archive budget and pass an output buffer as well, so
       // fflate cannot allocate past the cap even if the declared size lies.
-      if (entry.uncompressedSize > ZIP_MAX_TOTAL_SIZE) {
+      if (entry.uncompressedSize > ZIP_MAX_ENTRY_SIZE) {
         console.warn(`ZIP entry exceeds size limit: ${entry.fileName} (${entry.uncompressedSize} bytes)`);
         return null;
       }
@@ -851,7 +855,6 @@ export async function extractZipToR2(
     const entries = [...index.entries()].sort((a, b) => a[1].localHeaderOffset - b[1].localHeaderOffset);
 
     const newFiles: string[] = [];
-    const puts: Promise<void>[] = [];
 
     for (const [fileName, entry] of entries) {
       if (newFiles.length >= maxFiles) break;
@@ -862,19 +865,16 @@ export async function extractZipToR2(
 
       const r2Key = `${wvfsBase(postId, versionId)}/${fileName}`;
       const contentType = getMimeType(fileName);
-      puts.push(
-        bucket
-          .put(r2Key, fileData, {
-            httpMetadata: { contentType },
-            customMetadata: sourceMetadata(source),
-          })
-          .then(() => {}),
-      );
+      // Sequential puts bound live memory: a batch of 14 already-compressed
+      // files could otherwise hold hundreds of MB at once in one isolate.
+      await bucket.put(r2Key, fileData, {
+        httpMetadata: { contentType },
+        customMetadata: sourceMetadata(source),
+      });
       newFiles.push(fileName);
     }
 
     if (newFiles.length > 0) {
-      await Promise.all(puts);
       await bucket.put(manifestKey, JSON.stringify({ files: [...existing, ...newFiles] }), {
         httpMetadata: { contentType: 'application/json' },
         customMetadata: sourceMetadata(source),

@@ -26,6 +26,14 @@ ZIP 作成 → 投稿作成（prepare）→ アップロード（upload）→ �
 
 `PUT /api/upload/:key` に ZIP のバイナリを送ります。
 
+- 無料プラン: 1 ファイル 25 MB まで
+- Flaxia+ : 1 ファイル 128 MB まで
+- 25 MB を超えるファイルはクライアントが 16 MB ずつに分割し、
+  `PUT /api/upload/:key?uploadId=…&part=N&parts=M` →
+  `PUT /api/upload/:key?uploadId=…&parts=M&finalize=1` で 1 オブジェクトに結合します
+  （Cloudflare のリクエストボディ上限と Worker のメモリ上限を避けるため）。
+  公式クライアント（`src/lib/upload.ts`）は自動で切り替えます。
+
 ### 4. 確定する
 
 `POST /api/posts/commit` に `postId` と `zipKey` を指定します。
@@ -43,8 +51,9 @@ ZIP 作成 → 投稿作成（prepare）→ アップロード（upload）→ �
 
 | 項目 | 制限 |
 |---|---|
-| Content-Length | 10 MB 以下 |
-| Content-Type | `application/zip` |
+| Content-Length | 無料 25 MB / Flaxia+ 128 MB |
+| 1 リクエスト | 25 MB 以下（超過分は 16 MB の分割アップロード） |
+| Content-Type | ZIP は `application/zip`（メディアは実 MIME） |
 
 ### クライアント側（実行前）
 
@@ -53,7 +62,7 @@ ZIP 作成 → 投稿作成（prepare）→ アップロード（upload）→ �
 | ファイル数 | 255 以下 |
 | パス長 | エントリごとに 255 文字以下 |
 | ディレクトリ深度 | 10 階以下 |
-| 展開後サイズ | 100 MB 以下 |
+| 展開後サイズ | 512 MB 以下（1 エントリ 100 MB 以下） |
 | 入れ子 ZIP | 不可 |
 | シンボリックリンク | 不可 |
 | パス traversal（`..`） | 不可 |
