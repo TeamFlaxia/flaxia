@@ -26,7 +26,7 @@ function readU32(view: DataView, offset: number): number {
 }
 
 /** Locate the end-of-central-directory record (searching the comment area). */
-function findEocd(bytes: Uint8Array): { cdOffset: number; cdSize: number; cdEntries: number } | null {
+export function findEocd(bytes: Uint8Array): { cdOffset: number; cdSize: number; cdEntries: number } | null {
   const min = Math.max(0, bytes.length - 22 - 65535);
   for (let i = bytes.length - 22; i >= min; i--) {
     if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x05 && bytes[i + 3] === 0x06) {
@@ -42,21 +42,19 @@ function findEocd(bytes: Uint8Array): { cdOffset: number; cdSize: number; cdEntr
 }
 
 /**
- * Parse the central directory of a ZIP. Returns null when the archive is not
- * parseable (the caller keeps sha256-only features in that case).
+ * Parse a central directory located at `startOffset` inside `bytes`. The
+ * caller may pass either a whole archive (offset from the EOCD) or just the
+ * directory bytes read with an R2 range request (offset 0).
  */
-export function listZipEntries(bytes: Uint8Array): ZipListEntry[] | null {
-  const eocd = findEocd(bytes);
-  if (!eocd) return null;
-  const cdEnd = eocd.cdOffset + eocd.cdSize;
-  if (eocd.cdOffset >= bytes.length || cdEnd > bytes.length) return null;
-  if (eocd.cdEntries > MAX_ZIP_ENTRIES) return null;
+export function listZipEntriesAt(bytes: Uint8Array, startOffset: number, cdEntries: number): ZipListEntry[] | null {
+  if (startOffset < 0 || startOffset >= bytes.length) return null;
+  if (cdEntries > MAX_ZIP_ENTRIES) return null;
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
   const entries: ZipListEntry[] = [];
-  let offset = eocd.cdOffset;
+  let offset = startOffset;
 
-  for (let i = 0; i < eocd.cdEntries; i++) {
+  for (let i = 0; i < cdEntries; i++) {
     if (offset + 46 > bytes.length) return null;
     if (readU32(view, offset) !== 0x02014b50) return null;
 
@@ -79,18 +77,44 @@ export function listZipEntries(bytes: Uint8Array): ZipListEntry[] | null {
   return entries;
 }
 
+/** Parse the central directory of a complete ZIP buffer. */
+export function listZipEntries(bytes: Uint8Array): ZipListEntry[] | null {
+  const eocd = findEocd(bytes);
+  if (!eocd) return null;
+  const cdEnd = eocd.cdOffset + eocd.cdSize;
+  if (eocd.cdOffset >= bytes.length || cdEnd > bytes.length) return null;
+  return listZipEntriesAt(bytes, eocd.cdOffset, eocd.cdEntries);
+}
+
+/** Parse central-directory bytes obtained with an R2 range request. */
+export function listZipEntriesFromCentralDirectory(cdBytes: Uint8Array, cdEntries: number): ZipListEntry[] | null {
+  return listZipEntriesAt(cdBytes, 0, cdEntries);
+}
+
 /**
  * Stable hash of an archive's entry list. Records are length-prefixed so entry
  * names containing separators cannot forge the same canonical string.
- * Returns null when the ZIP cannot be parsed.
  */
-export function zipStructureHash(bytes: Uint8Array): string | null {
-  const entries = listZipEntries(bytes);
-  if (!entries) return null;
+function structureHashForEntries(entries: ZipListEntry[]): string {
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   let canonical = '';
   for (const entry of entries) {
     canonical += `${entry.name.length}:${entry.name}:${entry.size}:${entry.crc32}\n`;
   }
   return bytesToHex(sha256(new TextEncoder().encode(canonical)));
+}
+
+/** Hash a whole archive. Returns null when the ZIP cannot be parsed. */
+export function zipStructureHash(bytes: Uint8Array): string | null {
+  const entries = listZipEntries(bytes);
+  return entries ? structureHashForEntries(entries) : null;
+}
+
+/**
+ * Hash a central directory read separately from the archive (R2 range reads
+ * for objects too large to buffer in a Worker).
+ */
+export function zipStructureHashFromCentralDirectory(cdBytes: Uint8Array, cdEntries: number): string | null {
+  const entries = listZipEntriesFromCentralDirectory(cdBytes, cdEntries);
+  return entries ? structureHashForEntries(entries) : null;
 }

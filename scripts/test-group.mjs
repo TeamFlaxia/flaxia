@@ -79,6 +79,7 @@ const groups = {
     'post-colors',
     'post-colors-api',
     'posts',
+    'zip-range',
     'recommendation',
     'recommended',
     'search',

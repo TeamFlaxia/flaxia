@@ -17,6 +17,7 @@ import { checkRateLimit, getClientIp } from './rate-limit';
 import { submitFileScans } from './scan/clamav';
 import { setScanStatus } from './scan/db';
 import { scanChunkedUpload, scanUploadSync } from './scan/index';
+import { readZipStructureHash } from './scan/zip-range.ts';
 
 type UploadContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
@@ -208,6 +209,7 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
             .catch((error) => console.error('Failed to delete upload chunks:', error));
 
         let assembled: Awaited<ReturnType<typeof assembleChunks>>;
+        let detectedMime: string | null = null;
         try {
           // The header carries the magic bytes the assembly step uses for the
           // detected content type. Reject unknown/incompatible types before
@@ -221,6 +223,7 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
           }
           const header = new Uint8Array(await new Response(firstPart.body).arrayBuffer());
           const detected = detectMimeType(header);
+          detectedMime = detected;
           if (!detected) {
             await discardParts();
             return c.json({ error: 'Unrecognized file format. Magic bytes do not match any allowed type.' }, 400);
@@ -264,11 +267,14 @@ export async function handleMediaUpload(c: UploadContext, env: Bindings, service
           throw error;
         }
 
+        const structureHash =
+          detectedMime === 'application/zip' ? await readZipStructureHash(services.blobs, key, assembled.size) : null;
         const verdict = await scanChunkedUpload(services.db, {
           sha256: assembled.sha256,
           header: assembled.header,
           name: key,
           r2Key: key,
+          structureHash,
         });
         if (!verdict.ok) {
           await services.blobs.delete(key).catch(() => undefined);

@@ -77,7 +77,7 @@ code (Cloudflare Workers constraint):
 |---|---|---|---|---|
 | image (PNG / GIF / baseline JPEG) | ✔ | — | — | 64-bit luma pHash, decoded in-Worker |
 | image (WebP / progressive JPEG / palette PNG) | ✔ | — | — | `null` + `phashNote` (fail-open to sha-only) |
-| zip | ✔ | entry-list hash | — | — |
+| zip | ✔ | entry-list hash (whole buffer, or R2 ranges for chunked uploads) | — | — |
 | pdf | ✔ | — | normalized text hash | — |
 | video | ✔ | — | — | deferred — orchestrator keyframe pHash |
 | audio / other | ✔ | — | — | — |
@@ -267,6 +267,14 @@ substring of the ClamAV verdict name).
 
 - Progressive JPEG, WebP, and palette PNG get sha256-only matching (in-Worker
   decode unsupported) — `phashNote` records why.
+- Chunked uploads above 25 MiB get the ZIP structure hash from R2 range reads
+  (EOCD + central directory), so recompressed archive variants still match the
+  blocklist. Large images keep `phashNote = 'too_large'`: a full decode cannot
+  fit in the Worker isolate, and the Crowd container image currently only
+  exposes `video-phash` (no `image-phash` command), so no image pHash is
+  submitted for them.
+- ClamAV remains skipped for objects above the 25 MiB scan-file limit; the
+  `file_scans` row records `too_large` so the unscanned state is visible.
 - pHash distance 8 is tuned for the 64-bit hash, not for adversarial
   perturbations; ClamAV remains the primary malware gate.
 - pHash drops coefficients below `1e-9` of the strongest before the median and
