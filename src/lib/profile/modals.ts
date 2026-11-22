@@ -1,13 +1,14 @@
 // Adapters around legacy modal factories used by the Svelte profile page.
 
+import { mount, unmount } from 'svelte';
 import { createBlockedUsersModal } from '../../components/BlockedUsersModal.ts';
-import { createFollowerListModal } from '../../components/FollowerListModal.ts';
 import { clearMeCache } from '../auth-cache.ts';
 import { createConfirmDialog } from '../confirm-dialog.ts';
 import { safeRemoveFromBody } from '../dom-utils.ts';
 import { t } from '../i18n.ts';
 import { registerModal } from '../modal-state.ts';
 import { navigate } from '../navigation.ts';
+import FollowerListModal from '../svelte/FollowerListModal.svelte';
 import { mountEditProfileModal } from './edit-modal-mount.ts';
 
 export interface ProfileModalUser {
@@ -30,13 +31,15 @@ export function openFollowerList(
   initialTab: 'followers' | 'following',
   currentUser: ProfileModalUser | null,
 ): void {
-  const modal = createFollowerListModal({
-    username,
-    initialTab,
-    currentUser: currentUser as never,
-    onClose: () => safeRemoveFromBody(modal.getElement()),
-  });
-  document.body.appendChild(modal.getElement());
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  let instance: ReturnType<typeof mount> | null = null;
+  const close = () => {
+    if (instance) void unmount(instance);
+    instance = null;
+    host.remove();
+  };
+  instance = mount(FollowerListModal, { target: host, props: { username, initialTab, currentUser, onClose: close } });
 }
 
 export function openBlockedUsers(onUnblock: () => void): void {
