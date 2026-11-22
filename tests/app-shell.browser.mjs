@@ -316,7 +316,7 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
         const element = document.querySelector(selector);
         if (!element) return null;
         const bounds = element.getBoundingClientRect();
-        return { width: bounds.width, height: bounds.height };
+        return { width: bounds.width, height: bounds.height, x: bounds.x };
       };
 
       const sheet = [...document.styleSheets].find((entry) => entry.href?.includes('/assets/'));
@@ -339,6 +339,7 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
         center: measure('.timeline, .main-content'),
         right: measure('.right-panel'),
         appChildren: document.querySelector('#app')?.children.length ?? 0,
+        viewportWidth: document.documentElement.clientWidth,
         bodyBackground: getComputedStyle(document.body).backgroundColor,
         textColor: getComputedStyle(document.body).color,
         postCard: (() => {
@@ -359,18 +360,22 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
     // (240px nav, unpadded cards). The shipped CSS must stay unlayered.
     assert.equal(result.layerBlocks, 0, 'app CSS must not use @layer');
 
-    // The shipped design: 240px nav + flexible centre + 350px rail, filling
-    // the viewport with no centred max-width or dead margins.
+    // The shipped design: centred 240px nav + 600px centre + 350px rail.
     assert.ok(result.appChildren > 0, '#app was never populated');
     assert.ok(result.left, 'left nav missing');
     assert.ok(Math.abs(result.left.width - 240) < 1, `left nav width: ${result.left.width}`);
     assert.ok(result.right, 'right rail missing');
     assert.ok(Math.abs(result.right.width - 350) < 1, `right rail width: ${result.right.width}`);
     assert.ok(result.center, 'content column missing');
-    assert.ok(result.center.width > 600, `content column should grow past 600 (got ${result.center.width})`);
+    assert.ok(Math.abs(result.center.width - 600) < 1, `content column width: ${result.center.width}`);
     assert.ok(
-      Math.abs(result.left.width + result.center.width + result.right.width - 1400) < 1,
-      'the three panes must fill the 1400px viewport',
+      Math.abs(result.left.width + result.center.width + result.right.width - 1190) < 1,
+      'the three panes must total 240 + 600 + 350',
+    );
+    const rightEdge = result.right.x + result.right.width;
+    assert.ok(
+      Math.abs(result.left.x - (result.viewportWidth - rightEdge)) < 1,
+      `shell should be centred (left x ${result.left.x}, right edge ${rightEdge})`,
     );
     assert.equal(result.leftNavPadding, '16px');
 
@@ -889,7 +894,7 @@ test('the right panel renders trending, games and routes every click', {
   });
 });
 
-test('surface pages take the full width without a right rail', { timeout: 90_000 }, async () => {
+test('surface pages use the 600px centre without a right rail', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const stubs = SIGNED_IN_STUBS;
 
@@ -906,7 +911,7 @@ test('surface pages take the full width without a right rail', { timeout: 90_000
       };
     });
     assert.equal(layout.right, false, '/settings must not mount the right rail');
-    assert.equal(layout.content, 1400 - layout.nav, 'content fills every pixel beside the left nav');
+    assert.equal(layout.content, 600, 'surface content keeps the 600px centre');
     assert.ok(layout.overflow <= 1, `no horizontal overflow (${layout.overflow}px)`);
     await settings.page.close();
 
@@ -922,7 +927,8 @@ test('surface pages take the full width without a right rail', { timeout: 90_000
       return { nav: w('.left-nav'), content: w('.main-content'), right: w('.right-panel') };
     });
     assert.ok(homeLayout.right > 0, 'feed pages keep the right rail');
-    assert.equal(homeLayout.nav + homeLayout.content + homeLayout.right, 1400, 'the three panes fill the viewport');
+    assert.equal(homeLayout.content, 600, 'feed content keeps the 600px centre');
+    assert.equal(homeLayout.nav + homeLayout.content + homeLayout.right, 1190, 'the three panes total 1190px');
     await home.page.close();
   });
 });
