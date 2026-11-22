@@ -131,6 +131,7 @@ const groups = {
     'multiplayer-client',
     'multiplayer-manager',
     'multiplayer-ticket',
+    'multiplayer-worker-hibernation',
     'nsfw',
     'offline-client',
     'offline-games',
