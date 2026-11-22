@@ -339,6 +339,7 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
         center: measure('.timeline, .main-content'),
         right: measure('.right-panel'),
         appChildren: document.querySelector('#app')?.children.length ?? 0,
+        viewportWidth: document.documentElement.clientWidth,
         bodyBackground: getComputedStyle(document.body).backgroundColor,
         textColor: getComputedStyle(document.body).color,
         postCard: (() => {
@@ -371,7 +372,11 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
       Math.abs(result.left.width + result.center.width + result.right.width - 1190) < 1,
       'the three panes must total 240 + 600 + 350',
     );
-    assert.ok(Math.abs(result.left.x - (1400 - 1190) / 2) < 1, `shell should be centred (left x ${result.left.x})`);
+    const rightEdge = result.right.x + result.right.width;
+    assert.ok(
+      Math.abs(result.left.x - (result.viewportWidth - rightEdge)) < 1,
+      `shell should be centred (left x ${result.left.x}, right edge ${rightEdge})`,
+    );
     assert.equal(result.leftNavPadding, '16px');
 
     // Tokens and card chrome resolve to the legacy values.
