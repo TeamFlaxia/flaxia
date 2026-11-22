@@ -1,5 +1,7 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
+import { strToU8, zipSync } from 'fflate';
+import { zipStructureHash } from '../functions/lib/scan/zip-list.ts';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 // 1x1 transparent PNG; the chunked path only inspects the header for magic
@@ -16,6 +18,16 @@ function paddedPng(totalBytes: number): Uint8Array {
 function split(bytes: Uint8Array, parts: number): Uint8Array[] {
   const size = Math.ceil(bytes.length / parts);
   return Array.from({ length: parts }, (_, index) => bytes.slice(index * size, (index + 1) * size));
+}
+
+async function prepareZip(cookie: string) {
+  const response = await fetch(`${BASE_URL}/api/posts/prepare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ filename: 'game.zip', contentType: 'application/zip' }),
+  });
+  assert.equal(response.status, 200);
+  return (await response.json()) as { postId: string; zipKey: string; zipUploadUrl: string };
 }
 
 async function prepareImage(cookie: string, name = 'chunked.png') {
@@ -115,6 +127,43 @@ describe('chunked uploads', () => {
       { method: 'PUT', headers: { Cookie: cookie } },
     );
     assert.equal(finalize.status, 200, await finalize.text());
+  });
+
+  it('stores the ZIP structure hash for chunked game uploads', async () => {
+    const { cookie } = await seedUserAndLogin('chunked-zip');
+    const prepared = await prepareZip(cookie);
+    const bytes = zipSync({
+      'index.html': strToU8('<html><body>game</body></html>'),
+      'assets/main.js': strToU8('console.log("chunked zip")'),
+    });
+    const parts = split(bytes, 2);
+    const uploadId = crypto.randomUUID();
+
+    for (const [index, part] of parts.entries()) {
+      const response = await fetch(
+        `${BASE_URL}/api/upload/${prepared.zipKey}?uploadId=${uploadId}&part=${index + 1}&parts=${parts.length}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/zip', Cookie: cookie },
+          body: part,
+        },
+      );
+      assert.equal(response.status, 200, await response.text());
+    }
+
+    const finalize = await fetch(
+      `${BASE_URL}/api/upload/${prepared.zipKey}?uploadId=${uploadId}&parts=${parts.length}&finalize=1`,
+      { method: 'PUT', headers: { Cookie: cookie } },
+    );
+    assert.equal(finalize.status, 200, await finalize.text());
+
+    const scansResponse = await fetch(`${BASE_URL}/api/test/file-scans`);
+    const scans = (await scansResponse.json()) as {
+      scans: Array<{ r2_key: string; structure_hash: string | null }>;
+    };
+    const row = scans.scans.find((entry) => entry.r2_key === prepared.zipKey);
+    assert.ok(row, 'expected a file_scans row for the chunked ZIP');
+    assert.equal(row.structure_hash, zipStructureHash(bytes));
   });
 
   it('rejects a chunked upload above the free 25MB ceiling', async () => {

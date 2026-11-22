@@ -104,9 +104,10 @@ export async function scanUploadSync(db: Db, input: SyncScanInput): Promise<Sync
  * The full bytes never fit in a Worker's 128 MB isolate, so the caller streams
  * them into storage while hashing. The header covers magic bytes and image
  * dimensions; features are limited to the streamed SHA-256 plus the file kind,
- * which keeps exact-file blocklist matches working. ZIP structure hashes and
- * image perceptual hashes need a full in-memory pass and are skipped for these
- * large uploads (`phashNote` records why).
+ * which keeps exact-file blocklist matches working. ZIP structure hashes are
+ * read from the central directory with R2 range requests and passed in by the
+ * caller. Image perceptual hashes still need a full in-memory decode; large
+ * images record `phashNote = 'too_large'`.
  */
 export async function scanChunkedUpload(
   db: Db,
@@ -116,6 +117,8 @@ export async function scanChunkedUpload(
     declaredType?: string | null;
     name?: string | null;
     r2Key?: string | null;
+    /** ZIP entry-list hash read from R2 ranges after assembly. */
+    structureHash?: string | null;
   },
 ): Promise<SyncScanVerdict> {
   const detectedMime = detectMimeType(input.header);
@@ -144,6 +147,7 @@ export async function scanChunkedUpload(
     sha256: input.sha256.toLowerCase(),
     kind: kindForMime(detectedMime),
   };
+  if (features.kind === 'zip' && input.structureHash) features.structureHash = input.structureHash;
   if (features.kind === 'image') features.phashNote = 'too_large';
   if (features.kind === 'video') features.phashNote = 'deferred_to_orchestrator';
 
