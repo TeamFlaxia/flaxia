@@ -1,5 +1,4 @@
 <script lang="ts">
-import type { Notification } from '../../components/NotificationsPage.ts';
 import { t } from '../i18n.ts';
 import { type IconName, icon } from '../icons.ts';
 import {
@@ -8,6 +7,7 @@ import {
   isLiveNotification,
   notificationSegments,
 } from '../notifications/format.ts';
+import type { Notification } from '../notifications/types.ts';
 
 let {
   notifications,

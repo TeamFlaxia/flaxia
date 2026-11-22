@@ -1,9 +1,9 @@
 // Pure formatting helpers for the notification feed, shared with the Svelte
 // rewrite. Keeps the legacy copy and grouping rules in one testable place.
 
-import type { Notification } from '../../components/NotificationsPage.ts';
 import { t } from '../i18n.ts';
 import type { IconName } from '../icons.ts';
+import type { Notification } from './types.ts';
 
 export type TextSegment = { text: string; kind: 'strong' | 'muted' | 'text' };
 

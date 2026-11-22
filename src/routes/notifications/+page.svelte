@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-import type { Notification } from '../../components/NotificationsPage.ts';
 import { navigate } from '../../lib/navigation.ts';
+import type { Notification } from '../../lib/notifications/types.ts';
 import { fetchNotifications, invalidateNotificationsCache } from '../../lib/notifications-api.ts';
 import NotificationsPage from '../../lib/svelte/NotificationsPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
