@@ -1,7 +1,6 @@
 // Adapters around legacy modal factories used by the Svelte profile page.
 
 import { createBlockedUsersModal } from '../../components/BlockedUsersModal.ts';
-import { createEditProfileModal } from '../../components/EditProfileModal.ts';
 import { createFollowerListModal } from '../../components/FollowerListModal.ts';
 import { clearMeCache } from '../auth-cache.ts';
 import { createConfirmDialog } from '../confirm-dialog.ts';
@@ -9,6 +8,7 @@ import { safeRemoveFromBody } from '../dom-utils.ts';
 import { t } from '../i18n.ts';
 import { registerModal } from '../modal-state.ts';
 import { navigate } from '../navigation.ts';
+import { mountEditProfileModal } from './edit-modal-mount.ts';
 
 export interface ProfileModalUser {
   username: string;
@@ -22,8 +22,7 @@ export interface ProfileModalUser {
 }
 
 export function openEditProfile(user: ProfileModalUser, onSave: () => void): void {
-  const modal = createEditProfileModal({ currentUser: user as never, onSave });
-  document.body.appendChild(modal.getElement());
+  mountEditProfileModal(user, onSave);
 }
 
 export function openFollowerList(

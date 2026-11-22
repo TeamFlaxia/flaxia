@@ -18,7 +18,6 @@
   "functions/lib/wvfs-zip-server.ts": 1088,
   "src/components/AdCard.ts": 526,
   "src/components/ArcadePage.ts": 3148,
-  "src/components/EditProfileModal.ts": 1033,
   "src/components/FollowerListModal.ts": 562,
   "src/components/ImagePreview.ts": 507,
   "src/components/MailPage.ts": 590,
