@@ -21,24 +21,15 @@ import {
   startCrowdNode,
   stopCrowdNode,
 } from '../lib/crowd-node.js';
-import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { mountSettingsSection } from '../lib/settings/section-host.ts';
-import {
-  getDataSaverMode,
-  getReplyStyle,
-  getShowNsfw,
-  isBrowserSaveDataEnabled,
-  ReplyStyle,
-  setDataSaverMode,
-  setReplyStyle,
-  setShowNsfw,
-} from '../lib/settings.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
+import SettingsDisplaySection from '../lib/svelte/SettingsDisplaySection.svelte';
+import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelte';
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
-import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
 import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
 import { syncVaultVersionAfterRewrap } from '../lib/vault/session.js';
@@ -238,198 +229,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
     accountSection.appendChild(accountActions);
   }
 
-  // Display Section
-  const displaySection = document.createElement('div');
-  displaySection.className = 'settings-section';
-
-  const displayTitle = document.createElement('h2');
-  displayTitle.textContent = t('settings.display');
-
-  const currentStyle = getReplyStyle();
-
-  const radioGroup = document.createElement('div');
-  radioGroup.className = 'settings-choice-list';
-
-  const styles: { value: ReplyStyle; labelKey: string; descKey: string }[] = [
-    { value: 'twitter', labelKey: 'settings.reply_style_twitter', descKey: 'settings.reply_style_twitter_desc' },
-    { value: '2ch', labelKey: 'settings.reply_style_2ch', descKey: 'settings.reply_style_2ch_desc' },
-  ];
-
-  const createChoiceCard = (options: {
-    name: string;
-    value: string;
-    checked: boolean;
-    labelKey: string;
-    descKey: string;
-    onChange: () => void;
-  }): HTMLElement => {
-    const label = document.createElement('label');
-    label.className = 'settings-radio-card';
-
-    const radio = document.createElement('input');
-    radio.type = 'radio';
-    radio.name = options.name;
-    radio.value = options.value;
-    radio.checked = options.checked;
-    radio.className = 'settings-radio';
-
-    const textDiv = document.createElement('div');
-    textDiv.className = 'settings-radio-text';
-
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'settings-radio-name';
-    nameSpan.textContent = t(options.labelKey);
-
-    const descSpan = document.createElement('span');
-    descSpan.className = 'settings-radio-desc';
-    descSpan.textContent = t(options.descKey);
-
-    textDiv.appendChild(nameSpan);
-    textDiv.appendChild(descSpan);
-    label.appendChild(radio);
-    label.appendChild(textDiv);
-    radio.addEventListener('change', options.onChange);
-    return label;
-  };
-
-  displayMounts.push(
-    mount(radioGroup, () =>
-      each(
-        () => styles,
-        (style) => style.value,
-        (style) =>
-          legacy(
-            createChoiceCard({
-              name: 'reply-style',
-              value: style().value,
-              checked: currentStyle === style().value,
-              labelKey: style().labelKey,
-              descKey: style().descKey,
-              onChange: () => {
-                setReplyStyle(style().value);
-                displayMessage.textContent = t('settings.display_saved');
-                displayMessage.style.color = 'var(--accent-text)';
-              },
-            }),
-          ),
-      ),
-    ),
-  );
-
-  // NSFW toggle
-  const nsfwLabel = document.createElement('label');
-  nsfwLabel.className = 'settings-switch-row';
-
-  const nsfwCheckbox = document.createElement('input');
-  nsfwCheckbox.type = 'checkbox';
-  nsfwCheckbox.checked = getShowNsfw();
-  nsfwCheckbox.className = 'settings-switch';
-
-  const nsfwTextDiv = document.createElement('div');
-  nsfwTextDiv.className = 'settings-switch-text';
-
-  const nsfwNameSpan = document.createElement('span');
-  nsfwNameSpan.className = 'settings-switch-name';
-  nsfwNameSpan.textContent = t('settings.nsfw');
-
-  const nsfwDescSpan = document.createElement('span');
-  nsfwDescSpan.className = 'settings-switch-desc';
-  nsfwDescSpan.textContent = t('settings.nsfw_desc');
-
-  nsfwTextDiv.appendChild(nsfwNameSpan);
-  nsfwTextDiv.appendChild(nsfwDescSpan);
-  nsfwLabel.appendChild(nsfwTextDiv);
-  nsfwLabel.appendChild(nsfwCheckbox);
-
-  nsfwCheckbox.addEventListener('change', () => {
-    setShowNsfw(nsfwCheckbox.checked);
-    displayMessage.textContent = t('settings.display_saved');
-    displayMessage.style.color = 'var(--accent-text)';
-  });
-
-  // Data saver toggle (traffic-priority mode, device-local only)
-  const dataSaverLabel = document.createElement('label');
-  dataSaverLabel.className = 'settings-switch-row';
-
-  const dataSaverCheckbox = document.createElement('input');
-  dataSaverCheckbox.type = 'checkbox';
-  // Reflect the browser Save-Data hint on first paint so the toggle is
-  // already on when the OS/browser requests reduced data usage.
-  dataSaverCheckbox.checked = getDataSaverMode() || isBrowserSaveDataEnabled();
-  dataSaverCheckbox.className = 'settings-switch';
-
-  const dataSaverTextDiv = document.createElement('div');
-  dataSaverTextDiv.className = 'settings-switch-text';
-
-  const dataSaverNameSpan = document.createElement('span');
-  dataSaverNameSpan.className = 'settings-switch-name';
-  dataSaverNameSpan.textContent = t('settings.data_saver');
-
-  const dataSaverDescSpan = document.createElement('span');
-  dataSaverDescSpan.className = 'settings-switch-desc';
-  dataSaverDescSpan.textContent = t('settings.data_saver_desc');
-
-  dataSaverTextDiv.appendChild(dataSaverNameSpan);
-  dataSaverTextDiv.appendChild(dataSaverDescSpan);
-  dataSaverLabel.appendChild(dataSaverTextDiv);
-  dataSaverLabel.appendChild(dataSaverCheckbox);
-
-  dataSaverCheckbox.addEventListener('change', () => {
-    setDataSaverMode(dataSaverCheckbox.checked);
-    displayMessage.textContent = t('settings.display_saved');
-    displayMessage.style.color = 'var(--accent-text)';
-  });
-
-  // Theme selector
-  const themeTitle = document.createElement('div');
-  themeTitle.className = 'fx-label settings-subheading';
-  themeTitle.textContent = t('settings.theme');
-
-  const currentTheme = getTheme();
-  const themeRadioGroup = document.createElement('div');
-  themeRadioGroup.className = 'settings-choice-list';
-
-  const themes: { value: Theme; labelKey: string; descKey: string }[] = [
-    { value: 'light', labelKey: 'settings.theme_light', descKey: 'settings.theme_light_desc' },
-    { value: 'dark', labelKey: 'settings.theme_dark', descKey: 'settings.theme_dark_desc' },
-    { value: 'system', labelKey: 'settings.theme_system', descKey: 'settings.theme_system_desc' },
-  ];
-
-  displayMounts.push(
-    mount(themeRadioGroup, () =>
-      each(
-        () => themes,
-        (theme) => theme.value,
-        (theme) =>
-          legacy(
-            createChoiceCard({
-              name: 'theme',
-              value: theme().value,
-              checked: currentTheme === theme().value,
-              labelKey: theme().labelKey,
-              descKey: theme().descKey,
-              onChange: () => {
-                setTheme(theme().value);
-                displayMessage.textContent = t('settings.display_saved');
-                displayMessage.style.color = 'var(--accent-text)';
-              },
-            }),
-          ),
-      ),
-    ),
-  );
-
-  const displayMessage = document.createElement('div');
-  displayMessage.setAttribute('role', 'status');
-  displayMessage.className = 'settings-status';
-
-  displaySection.appendChild(displayTitle);
-  displaySection.appendChild(radioGroup);
-  displaySection.appendChild(nsfwLabel);
-  displaySection.appendChild(dataSaverLabel);
-  displaySection.appendChild(themeTitle);
-  displaySection.appendChild(themeRadioGroup);
-  displaySection.appendChild(displayMessage);
+  // Display section (Svelte): reply style, NSFW, data saver and theme.
+  const displayMount = mountSettingsSection(SettingsDisplaySection);
+  const displaySection = displayMount.element;
 
   // Crowd Section (opt in/out of donating browser compute)
   const crowdSection = document.createElement('div');
@@ -535,72 +337,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   // state through the public API so the toggle is correct on first paint.
   void resolveCrowdConsentState().then(onCrowdConsentChange);
 
-  // Language Section
-  const languageSection = document.createElement('div');
-  languageSection.className = 'settings-section';
-
-  let languageSelect!: HTMLSelectElement;
-  let languageSaveButton!: HTMLButtonElement;
-  let languageMessage!: HTMLElement;
-  const languageLocales = signal<Array<{ code: string; nativeName: string }>>([]);
-
-  displayMounts.push(
-    mount(
-      languageSection,
-      () => html`
-        <h2>${t('settings.language')}</h2>
-        <select
-          class="settings-input"
-          aria-label=${t('settings.language')}
-          ref=${(element: Element | null) => {
-            if (element) languageSelect = element as unknown as HTMLSelectElement;
-          }}
-        >
-          ${each(
-            () => languageLocales(),
-            (locale) => locale.code,
-            (locale) => html`<option value=${locale().code}>${locale().nativeName}</option>`,
-          )}
-        </select>
-        <button
-          class="settings-save"
-          ref=${(element: Element | null) => {
-            if (element) languageSaveButton = element as HTMLButtonElement;
-          }}
-        >
-          ${t('common.save')}
-        </button>
-        <div
-          class="settings-status"
-          role="status"
-          ref=${(element: Element | null) => {
-            if (element) languageMessage = element as HTMLElement;
-          }}
-        ></div>
-      `,
-    ),
-  );
-
-  const applyLanguageSelection = () => {
-    const desired = currentUser?.language || getLocale();
-    if ([...languageSelect.options].some((option) => option.value === desired)) {
-      languageSelect.value = desired;
-    }
-  };
-
-  fetch('/locales/index.json')
-    .then((r) => r.json())
-    .then((locales) => {
-      languageLocales.set(locales as { code: string; nativeName: string }[]);
-      applyLanguageSelection();
-    })
-    .catch(() => {
-      languageLocales.set([
-        { code: 'en', nativeName: 'en' },
-        { code: 'ja', nativeName: 'ja' },
-      ]);
-      applyLanguageSelection();
-    });
+  // Language section (Svelte).
+  const languageMount = mountSettingsSection(SettingsLanguageSection, { currentUser });
+  const languageSection = languageMount.element;
 
   // Email Section
   const emailSection = document.createElement('div');
@@ -770,41 +509,6 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       window.alert(t('settings.recovery_failed'));
     } finally {
       recoveryButton.disabled = false;
-    }
-  });
-
-  // Event handlers
-  languageSaveButton.addEventListener('click', async () => {
-    const language = languageSelect.value;
-    languageMessage.textContent = '';
-    languageSaveButton.disabled = true;
-    languageSaveButton.style.opacity = '0.6';
-
-    try {
-      const response = await fetch('/api/users/me', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ language }),
-      });
-
-      if (response.ok) {
-        languageMessage.textContent = t('settings.language_saved');
-        languageMessage.style.color = 'var(--accent-text)';
-        await setLocale(language);
-        location.reload();
-      } else {
-        const errorData = (await response.json()) as { error?: string };
-        languageMessage.textContent = errorData.error || t('settings.language_save_failed');
-        languageMessage.style.color = 'var(--danger-text)';
-      }
-    } catch (_error: unknown) {
-      languageMessage.textContent = t('settings.language_network_error');
-      languageMessage.style.color = 'var(--danger-text)';
-    } finally {
-      languageSaveButton.disabled = false;
-      languageSaveButton.style.opacity = '1';
     }
   });
 
@@ -995,7 +699,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   });
 
   // Add hover effects
-  const buttons = [languageSaveButton, emailSaveButton, passwordSaveButton];
+  const buttons = [emailSaveButton, passwordSaveButton];
   buttons.forEach((button: HTMLButtonElement) => {
     button.addEventListener('mouseenter', () => {
       if (!button.disabled) {
@@ -1647,6 +1351,8 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       vaultSection?.destroy();
       bugReportForm.destroy();
       mapsMount.destroy();
+      displayMount.destroy();
+      languageMount.destroy();
     },
   };
 }
