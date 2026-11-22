@@ -1,8 +1,10 @@
 // Adapters around legacy DOM card factories. Kept in a .ts module so the
 // Svelte timeline never calls a create* factory directly.
+
+import { mount, unmount } from 'svelte';
 import { type Ad, type Post, PostCardMode } from '../../../shared/types/post.ts';
-import { createAdCard } from '../../components/AdCard.js';
 import { createPostCard, type PostCard } from '../../components/PostCard.js';
+import AdCard from '../svelte/AdCard.svelte';
 
 export interface CardHandle {
   element: HTMLElement;
@@ -41,6 +43,14 @@ export function mountPostCard(host: HTMLElement, post: Post, options: CardOption
   };
 }
 
-export function mountAdCard(host: HTMLElement, ad: Ad): void {
-  host.replaceChildren(createAdCard(ad));
+export function mountAdCard(host: HTMLElement, ad: Ad): CardHandle {
+  host.replaceChildren();
+  const instance = mount(AdCard, { target: host, props: { ad } });
+  return {
+    element: host,
+    update: () => undefined,
+    destroy: () => {
+      void unmount(instance);
+    },
+  };
 }
