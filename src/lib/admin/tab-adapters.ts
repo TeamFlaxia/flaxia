@@ -12,6 +12,9 @@ export interface AdminTabHost {
   appendChild(node: HTMLElement): void;
 }
 
+/** Mount host for Svelte tab bodies that have already been migrated. */
+type SvelteTabHost = HTMLElement;
+
 export async function mountAdminTab(
   tab: AdminTab,
   host: AdminTabHost,
@@ -42,10 +45,14 @@ export async function mountAdminTab(
       return () => view.destroy();
     }
     case 'ads': {
-      const { createAdminAdsTab } = await import('../../components/AdminAdsTab.ts');
-      const view = createAdminAdsTab({ onNavigateToTab });
-      host.appendChild(view.getElement());
-      return () => view.destroy();
+      const [{ default: AdminAdsTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminAdsTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminAdsTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
     case 'counter': {
       const { createAdminCounterTab } = await import('../../components/AdminCounterTab.ts');
