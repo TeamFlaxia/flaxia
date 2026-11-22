@@ -660,7 +660,7 @@ test('the mobile viewport keeps the bottom nav and the left drawer', { timeout: 
   });
 });
 
-test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint sharp', {
+test('responsive rail and drawer breakpoints stay sharp', {
   timeout: 120_000,
 }, async () => {
   await withServer(async ({ browser, origin }) => {
@@ -721,9 +721,13 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       } else {
         assert.equal(layout.bottomNavDisplay, 'none', `${label}: bottom nav should be hidden`);
         assert.ok(layout.leftNav, `${label}: left nav missing`);
-        // 769–1024px is the icon-only rail: labels are hidden, so the
-        // sidebar must shrink with them instead of keeping the 240px width.
-        assert.ok(Math.abs(layout.leftNav.width - 72) < 1, `${label}: nav width ${layout.leftNav.width}`);
+        // 769–1024px is the icon-only rail; above it the full 240px nav
+        // returns (the rail breakpoint at 1199px is independent).
+        const expectedNav = testCase.width <= 1024 ? 72 : 240;
+        assert.ok(
+          Math.abs(layout.leftNav.width - expectedNav) < 1,
+          `${label}: nav width ${layout.leftNav.width} (expected ${expectedNav})`,
+        );
         assert.ok(layout.leftNav.left >= 0, `${label}: left nav should be on-screen`);
       }
 
