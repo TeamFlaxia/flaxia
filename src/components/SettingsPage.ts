@@ -8,7 +8,7 @@ import SettingsEmailSection from '../lib/svelte/SettingsEmailSection.svelte';
 import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelte';
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
 import SettingsPasswordSection from '../lib/svelte/SettingsPasswordSection.svelte';
-import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
+import SettingsTitlesSection from '../lib/svelte/SettingsTitlesSection.svelte';
 import { createAddStampModal } from './AddStampModal.js';
 import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
@@ -27,23 +27,11 @@ export interface SettingsPageProps {
   };
 }
 
-interface SettingsTitle {
-  id: string;
-  icon: string;
-  name: string;
-  name_ja?: string | null;
-  description: string;
-  description_ja?: string | null;
-  equipped?: boolean;
-}
-
 interface BillingHistoryRow {
   key: string;
   left: string;
   right: string;
 }
-
-type TitleEntry = { kind: 'title'; title: SettingsTitle } | { kind: 'empty' } | { kind: 'error' };
 
 interface SettingsStamp {
   id: string;
@@ -71,9 +59,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   const addCategory = (category: SettingsCategory) => categories.push(category);
   const bugReportForm = createBugReportForm();
   let emojiSection: HTMLDivElement | undefined;
-  let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
-  let titlesMount: Mounted | undefined;
   let stampsMount: Mounted | undefined;
   let historyMount: Mounted | undefined;
   const displayMounts: Mounted[] = [];
@@ -107,108 +93,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   // and timers to clean up, which would drown the settings page otherwise.
   const vaultSection = currentUser ? createVaultSection() : null;
 
-  // ─── Titles Section ───────────────────────────────────────────────────────
-  // Titles are awarded by other systems (for example Arcade achievements).
-  // Settings only lists what the user owns; equipping happens in the profile
-  // editor.
-  if (currentUser) {
-    titlesSection = document.createElement('div');
-    titlesSection.className = 'settings-section';
-
-    const titlesTitle = document.createElement('h2');
-    titlesTitle.textContent = t('settings.titles') || 'Titles';
-
-    const titlesDesc = document.createElement('p');
-    titlesDesc.textContent =
-      t('settings.titles_desc') || 'Titles you have earned. Choose one to show after your username from Edit profile.';
-    titlesDesc.style.cssText = 'color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;';
-
-    const titlesGrid = document.createElement('div');
-    titlesGrid.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem;';
-
-    titlesSection.appendChild(titlesTitle);
-    titlesSection.appendChild(titlesDesc);
-    titlesSection.appendChild(titlesGrid);
-
-    const titlesSignal = signal<TitleEntry[]>([]);
-
-    const renderTitleEntry = (entry: TitleEntry): HTMLElement => {
-      if (entry.kind === 'empty' || entry.kind === 'error') {
-        const message = document.createElement('p');
-        message.textContent =
-          entry.kind === 'empty'
-            ? t('settings.titles_empty') || 'You have not earned any titles yet.'
-            : t('settings.titles_load_failed') || 'Failed to load titles.';
-        message.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
-        return message;
-      }
-
-      const title = entry.title;
-      const card = document.createElement('div');
-      card.style.cssText = `
-        display: flex;
-        align-items: flex-start;
-        gap: 0.875rem;
-        padding: 0.875rem 1rem;
-        border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
-        border-radius: 8px;
-        background: var(--bg-secondary);
-      `;
-
-      const iconEl = createTitleIcon(title.icon, 'settings-title-icon');
-
-      const text = document.createElement('div');
-      text.style.cssText = 'min-width: 0; flex: 1;';
-
-      const nameRow = document.createElement('div');
-      nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
-
-      const name = document.createElement('strong');
-      name.textContent = titleName(title);
-      name.style.cssText = 'color: var(--text-primary);';
-      nameRow.appendChild(name);
-
-      if (title.equipped) {
-        const equipped = document.createElement('span');
-        equipped.textContent = t('settings.titles_equipped') || 'Equipped';
-        equipped.style.cssText =
-          'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
-        nameRow.appendChild(equipped);
-      }
-
-      const description = document.createElement('div');
-      description.textContent = titleDescription(title);
-      description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
-
-      text.appendChild(nameRow);
-      text.appendChild(description);
-      if (iconEl) card.appendChild(iconEl);
-      card.appendChild(text);
-      return card;
-    };
-
-    titlesMount = mount(titlesGrid, () =>
-      each(
-        () => titlesSignal(),
-        (entry) => (entry.kind === 'title' ? entry.title.id : entry.kind),
-        (entry) => legacy(renderTitleEntry(entry())),
-      ),
-    );
-
-    fetch('/api/titles/me', { credentials: 'include' })
-      .then((response) =>
-        response.ok
-          ? (response.json() as Promise<{ titles?: SettingsTitle[] }>)
-          : Promise.reject(new Error(String(response.status))),
-      )
-      .then((data) => {
-        const titles = data.titles ?? [];
-        titlesSignal.set(titles.length === 0 ? [{ kind: 'empty' }] : titles.map((title) => ({ kind: 'title', title })));
-      })
-      .catch(() => {
-        titlesSignal.set([{ kind: 'error' }]);
-      });
-  }
+  // Titles section (Svelte).
+  const titlesMount = currentUser ? mountSettingsSection(SettingsTitlesSection) : null;
+  const titlesSection = titlesMount?.element;
 
   // Shared billing state: populated by `loadBilling`, read by the stamp counter.
   let currentPlan: {
@@ -731,7 +618,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   return {
     categories,
     destroy: () => {
-      titlesMount?.dispose();
+      titlesMount?.destroy();
       stampsMount?.dispose();
       historyMount?.dispose();
       for (const mounted of displayMounts) mounted.dispose();
