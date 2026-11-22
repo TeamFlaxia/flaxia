@@ -22,27 +22,44 @@ export async function mountAdminTab(
 ): Promise<() => void> {
   switch (tab) {
     case 'analytics': {
-      const { createAdminAnalyticsTab } = await import('../../components/AdminAnalyticsTab.ts');
-      host.appendChild(createAdminAnalyticsTab().getElement());
-      return () => undefined;
+      const [{ default: AdminAnalyticsTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminAnalyticsTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminAnalyticsTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
     case 'alerts': {
-      const { createAdminAlertsTab } = await import('../../components/AdminAlertsTab.ts');
-      const view = createAdminAlertsTab({ onNavigateToTab });
-      host.appendChild(view.getElement());
-      return () => view.destroy();
+      const [{ default: AdminAlertsTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminAlertsTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminAlertsTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
     case 'hidden': {
-      const { createAdminHiddenTab } = await import('../../components/AdminHiddenTab.ts');
-      const view = createAdminHiddenTab({ onNavigateToTab });
-      host.appendChild(view.getElement());
-      return () => view.destroy();
+      const [{ default: AdminHiddenTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminHiddenTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminHiddenTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
     case 'users': {
-      const { createAdminUsersTab } = await import('../../components/AdminUsersTab.ts');
-      const view = createAdminUsersTab({ onNavigateToTab });
-      host.appendChild(view.getElement());
-      return () => view.destroy();
+      const [{ default: AdminUsersTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminUsersTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminUsersTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
     case 'ads': {
       const [{ default: AdminAdsTab }, { mount, unmount }] = await Promise.all([
@@ -55,10 +72,14 @@ export async function mountAdminTab(
       };
     }
     case 'counter': {
-      const { createAdminCounterTab } = await import('../../components/AdminCounterTab.ts');
-      const view = createAdminCounterTab({ onNavigateToTab });
-      host.appendChild(view.getElement());
-      return () => view.destroy();
+      const [{ default: AdminCounterTab }, { mount, unmount }] = await Promise.all([
+        import('../svelte/AdminCounterTab.svelte'),
+        import('svelte'),
+      ]);
+      const component = mount(AdminCounterTab, { target: host as SvelteTabHost });
+      return () => {
+        void unmount(component);
+      };
     }
   }
 }
