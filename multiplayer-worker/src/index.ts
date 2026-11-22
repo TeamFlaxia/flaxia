@@ -61,9 +61,20 @@ const INACTIVITY_TIMEOUT_MS = 300_000;
 const LOBBY_TIMEOUT_MS = 1_800_000;
 // #120: inbound frame and payload ceilings. Broadcast multiplies every byte
 // by the room size, so unbounded payloads are a ready-made amplifier.
-const MAX_WS_MESSAGE_BYTES = 64_000;
-const MAX_RELAY_PAYLOAD_BYTES = 8_000;
+// The Game SDK contract is 65,536 JSON bytes for peer payloads; the frame
+// ceiling leaves room for the relay envelope around that payload.
+const MAX_WS_MESSAGE_BYTES = 131_072;
+const MAX_RELAY_PAYLOAD_BYTES = 65_536;
 const MAX_CHAT_MESSAGE_LENGTH = 500;
+
+function jsonSize(value: unknown): number {
+  try {
+    const json = JSON.stringify(value);
+    return typeof json === 'string' ? json.length : 0;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
 
 export class MultiplayerRoom {
   private ctx: DurableObjectState;
@@ -298,7 +309,7 @@ export class MultiplayerRoom {
 
       case 'input':
         // Game inputs relay at play frequency: bound the payload, not the rate.
-        if (typeof data.timestamp !== 'number' || JSON.stringify(data.input).length > MAX_RELAY_PAYLOAD_BYTES) {
+        if (typeof data.timestamp !== 'number' || jsonSize(data.input) > MAX_RELAY_PAYLOAD_BYTES) {
           return;
         }
         this.broadcast({ type: 'player_input', userId: player.userId, input: data.input }, player.userId);
@@ -339,12 +350,12 @@ export class MultiplayerRoom {
         // bounded — otherwise anyone could pump arbitrary data at anyone.
         if (typeof data.targetUserId !== 'string' || !this.players.has(data.targetUserId)) return;
         if (!data.signal || typeof data.signal !== 'object') return;
-        if (JSON.stringify(data.signal).length > MAX_RELAY_PAYLOAD_BYTES) return;
+        if (jsonSize(data.signal) > MAX_RELAY_PAYLOAD_BYTES) return;
         this.sendTo(data.targetUserId, { type: 'signal', userId: player.userId, signal: data.signal });
         break;
 
       case 'peer_data':
-        if (JSON.stringify(data.data).length > MAX_RELAY_PAYLOAD_BYTES) return;
+        if (jsonSize(data.data) > MAX_RELAY_PAYLOAD_BYTES) return;
         this.broadcast({ type: 'peer_data', userId: player.userId, data: data.data }, player.userId);
         break;
     }

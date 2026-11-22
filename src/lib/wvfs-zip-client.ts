@@ -1,6 +1,7 @@
 import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 import { registerGameFrame } from './game-badge-bridge.js';
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
+import { attachMultiplayerFrame, type MultiplayerFrameHandle } from './multiplayer-frame.js';
 import { isNativeApp } from './native-api.ts';
 import { isOffline } from './offline-status.js';
 import {
@@ -35,6 +36,7 @@ export async function executeWvfsZip(
   }
 
   let unregisterFrame: (() => void) | null = null;
+  let multiplayer: MultiplayerFrameHandle | null = null;
 
   try {
     containerEl.innerHTML = '';
@@ -80,6 +82,9 @@ export async function executeWvfsZip(
     // Bind the frame to this post so the Game API can answer identity/title
     // frames for it — the game itself never names a post.
     unregisterFrame = registerGameFrame(iframe, postId);
+    // ZIP games are the normal Arcade payload: without this bridge their
+    // MULTIPLAYER_CONNECT never reached the room API.
+    multiplayer = attachMultiplayerFrame(iframe);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
@@ -95,6 +100,8 @@ export async function executeWvfsZip(
       postId,
       destroy: () => {
         clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
+        multiplayer?.destroy();
+        multiplayer = null;
         unregisterFrame?.();
         unregisterFrame = null;
         disconnectStorage();
@@ -112,6 +119,8 @@ export async function executeWvfsZip(
     activeHandle = handle;
     return handle;
   } catch (error) {
+    multiplayer?.destroy();
+    multiplayer = null;
     unregisterFrame?.();
     if (activeHandle) {
       activeHandle.destroy();

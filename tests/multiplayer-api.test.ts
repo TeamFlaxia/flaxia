@@ -523,6 +523,28 @@ function connectMultiplayer(
   return { socket, opened };
 }
 
+function waitForMessage(socket: WebSocket, predicate: (msg: Record<string, unknown>) => boolean, timeoutMs = 5000) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.removeEventListener('message', onMessage);
+      reject(new Error('Timed out waiting for WebSocket message'));
+    }, timeoutMs);
+    function onMessage(event: MessageEvent) {
+      let msg: Record<string, unknown>;
+      try {
+        msg = JSON.parse(String(event.data)) as Record<string, unknown>;
+      } catch {
+        return;
+      }
+      if (!predicate(msg)) return;
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      resolve(msg);
+    }
+    socket.addEventListener('message', onMessage);
+  });
+}
+
 async function createWsRoom(cookie: string, gameId: string, maxPlayers: number): Promise<string> {
   const response = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
     method: 'POST',
@@ -565,6 +587,60 @@ describe('WebSocket /api/ws/multiplayer — membership gate', () => {
 
     host.socket.close();
     member.socket.close();
+  });
+});
+
+describe('WebSocket /api/ws/multiplayer — peer data relay', () => {
+  beforeEach(resetDb);
+
+  async function openRoom() {
+    const { cookie: hostCookie } = await seedUserAndLogin('relay-host');
+    const roomId = await createWsRoom(hostCookie, 'relay-game', 2);
+    const host = connectMultiplayer(roomId, 'relay-game', hostCookie);
+    assert.equal(await host.opened, true);
+
+    const { cookie: guestCookie } = await seedUserAndLogin('relay-guest');
+    const joinRes = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: guestCookie },
+    });
+    assert.equal(joinRes.status, 200);
+    const guest = connectMultiplayer(roomId, 'relay-game', guestCookie);
+    assert.equal(await guest.opened, true);
+
+    return { host, guest };
+  }
+
+  it('relays a peer payload larger than the old 8 KB cap', async () => {
+    const { host, guest } = await openRoom();
+    try {
+      const data = { type: 'match:start', blob: 'x'.repeat(12_000) };
+      assert.ok(JSON.stringify(data).length > 8_000);
+
+      const received = waitForMessage(guest.socket, (msg) => msg.type === 'peer_data');
+      host.socket.send(JSON.stringify({ type: 'peer_data', data }));
+      const msg = await received;
+      assert.deepStrictEqual(msg.data, data);
+    } finally {
+      host.socket.close();
+      guest.socket.close();
+    }
+  });
+
+  it('relays a peer payload at the documented 65,536 byte limit', async () => {
+    const { host, guest } = await openRoom();
+    try {
+      const data = { type: 'match:start', blob: 'x'.repeat(65_000) };
+      assert.ok(JSON.stringify(data).length <= 65_536);
+
+      const received = waitForMessage(guest.socket, (msg) => msg.type === 'peer_data');
+      host.socket.send(JSON.stringify({ type: 'peer_data', data }));
+      const msg = await received;
+      assert.deepStrictEqual(msg.data, data);
+    } finally {
+      host.socket.close();
+      guest.socket.close();
+    }
   });
 });
 
