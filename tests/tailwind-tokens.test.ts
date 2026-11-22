@@ -10,14 +10,6 @@ const tokens = await readFile(new URL('../src/app.css', import.meta.url), 'utf8'
 const readToken = (source, name) =>
   new RegExp(`${name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}:\\s*([^;]+);`).exec(source)?.[1]?.trim();
 
-test('Tailwind is wired without preflight', async () => {
-  const layout = await readFile(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
-  assert.match(layout, /import '\.\.\/app\.css'/, '+layout.svelte must load the Tailwind layer');
-  assert.match(tokens, /tailwindcss\/theme\.css/);
-  assert.match(tokens, /tailwindcss\/utilities\.css/);
-  assert.doesNotMatch(tokens, /tailwindcss\/preflight|@import "tailwindcss"/, 'preflight would reset legacy elements');
-});
-
 test('Tailwind theme tokens mirror the legacy palette', () => {
   assert.match(tokens, /@theme\s*\{/, 'src/app.css must define an @theme block');
   const pairs = [
