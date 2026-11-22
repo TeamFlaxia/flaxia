@@ -102,17 +102,25 @@ const hasMedia = Boolean(
 );
 const textLength = (props.post.text ?? '').trim().length;
 const isLongText = !hasMedia && textLength > 90;
-const hashtags = (props.post.hashtags || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-const isNsfw = hashtags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
-const displayText = props.stripLeadingPostRef
-  ? (props.post.text ?? '').replace(/^\s*>>\d+\s*/g, '').trimStart()
-  : (props.post.text ?? '');
-const plainText = canUsePostColors({ badge_type: props.post.badge_type })
-  ? stripPostColors(displayText)
-  : stripMediaCues(displayText);
+function parseHashtags(value: string): string[] {
+  return (value || '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+let currentText = $state(props.post.text ?? '');
+let currentHashtags = $state<string[]>(parseHashtags(props.post.hashtags));
+let currentMentions = $state(props.post.mentions);
+
+const hashtags = $derived(currentHashtags);
+const isNsfw = $derived(hashtags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18'));
+const displayText = $derived(
+  props.stripLeadingPostRef ? currentText.replace(/^\s*>>\d+\s*/g, '').trimStart() : currentText,
+);
+const plainText = $derived(
+  canUsePostColors({ badge_type: props.post.badge_type }) ? stripPostColors(displayText) : stripMediaCues(displayText),
+);
 
 function actionConfig() {
   return {
@@ -165,6 +173,9 @@ function broadcast(update: Partial<Post>): void {
         bookmarkCount: update.bookmark_count,
         replyCount: update.reply_count,
         reactions: update.reactions,
+        text: update.text,
+        hashtags: update.hashtags,
+        mentions: update.mentions,
       },
     }),
   );
@@ -406,15 +417,15 @@ async function saveEdit(): Promise<void> {
       body: JSON.stringify({ text }),
     });
     if (!res.ok) throw new Error('save failed');
+    const data = (await res.json()) as { post?: Post };
+    const updated = data.post;
     editing = false;
-    queueMicrotask(() =>
-      mountPostText(textHost, {
-        text,
-        mentions: props.post.mentions,
-        enablePostRefs: props.enablePostRefs,
-        badgeType: props.post.badge_type,
-      }),
-    );
+    if (updated) {
+      updatePost({ text: updated.text, hashtags: updated.hashtags, mentions: updated.mentions });
+      broadcast({ text: updated.text, hashtags: updated.hashtags, mentions: updated.mentions });
+    } else {
+      updatePost({ text });
+    }
   } catch {
     showToast(t('post.edit_failed'), true);
   } finally {
@@ -442,6 +453,22 @@ function handleStageModeChange(mode: PostCardMode): void {
 }
 
 export function updatePost(next: Partial<Post>): void {
+  if (next.text !== undefined) {
+    currentText = next.text;
+    if (next.hashtags !== undefined) currentHashtags = parseHashtags(next.hashtags);
+    if (next.mentions !== undefined) currentMentions = next.mentions;
+    queueMicrotask(() => {
+      void mountPostText(textHost, {
+        text: displayText,
+        mentions: currentMentions,
+        enablePostRefs: props.enablePostRefs,
+        badgeType: props.post.badge_type,
+      });
+      if (props.currentUser) mountLinkPreview(linkHost, currentText);
+    });
+  } else if (next.hashtags !== undefined) {
+    currentHashtags = parseHashtags(next.hashtags);
+  }
   if (next.reply_count !== undefined) replyCount = next.reply_count;
   if (next.fresh_count !== undefined) freshCount = next.fresh_count;
   if (next.reload_count !== undefined) reloadCount = next.reload_count;
@@ -503,6 +530,9 @@ onMount(() => {
       bookmark_count: detail.bookmarkCount as number | undefined,
       reply_count: detail.replyCount as number | undefined,
       reactions: detail.reactions as ReactionSummary[] | undefined,
+      text: detail.text as string | undefined,
+      hashtags: detail.hashtags as string | undefined,
+      mentions: detail.mentions as string | undefined,
     });
   }) as EventListener;
   window.addEventListener('postUpdated', onPostUpdated);
@@ -567,9 +597,12 @@ onDestroy(() => {
   {#if editing}
     <div class="edit-container">
       <textarea class="edit-textarea" maxlength="200" bind:value={editText}></textarea>
-      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem;">
-        <button type="button" onclick={() => (editing = false)}>{t('post.edit_cancel')}</button>
-        <button type="button" disabled={saving} onclick={() => void saveEdit()}>{t('post.edit_save')}</button>
+      <div class="edit-actions">
+        <span class="edit-count">{editText.length}/200</span>
+        <button type="button" class="edit-cancel" onclick={() => (editing = false)}>{t('post.edit_cancel')}</button>
+        <button type="button" class="edit-save" disabled={saving} onclick={() => void saveEdit()}>
+          {t('post.edit_save')}
+        </button>
       </div>
     </div>
   {/if}
@@ -605,3 +638,67 @@ onDestroy(() => {
     </div>
   {/if}
 </article>
+
+
+<style>
+  .edit-container {
+    margin: 0.5rem 0;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+  }
+
+  .edit-textarea {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 4.5rem;
+    padding: 0.5rem;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font: inherit;
+    line-height: 1.5;
+  }
+
+  .edit-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+
+  .edit-count {
+    margin-right: auto;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+
+  .edit-cancel,
+  .edit-save {
+    padding: 0.35rem 0.85rem;
+    border-radius: 9999px;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  .edit-cancel {
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  .edit-save {
+    border: 0;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .edit-save:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+</style>

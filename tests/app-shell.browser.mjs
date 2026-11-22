@@ -152,6 +152,18 @@ const BUSY_STUBS = {
   },
 };
 
+const OWN_POST = {
+  ...TIMELINE_POST,
+  id: 'own-post-1',
+  user_id: 'u1',
+  username: 'mikan',
+  display_name: 'Mikan',
+  text: 'original text',
+  hashtags: '',
+  quoted_post_id: null,
+  quoted_post: null,
+};
+
 const AD_POSTS = Array.from({ length: 8 }, (_, index) => ({ ...MEDIA_POST, id: `ad-post-${index}` }));
 const AD_STUBS = {
   ...MEDIA_STUBS,
@@ -197,6 +209,14 @@ const SIGNED_IN_STUBS = {
       ],
     },
   },
+};
+
+const EDIT_STUBS = {
+  ...SIGNED_IN_STUBS,
+  '/api/me': { body: { user: { id: 'u1', username: 'mikan', display_name: 'Mikan', language: 'en' } } },
+  '/api/posts': { body: { posts: [OWN_POST], nextCursor: null } },
+  '/api/posts/recommended': { body: { posts: [OWN_POST], nextCursor: null } },
+  '/api/posts/own-post-1': { body: { post: { ...OWN_POST, text: 'edited text' } } },
 };
 
 // 1x1 transparent PNG: stubbed media so <img> loading is exercised locally.
@@ -1199,6 +1219,40 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(draft, 'Hi @quoted ');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('inline post editing keeps the saved text when reopened', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/home`, EDIT_STUBS);
+    await page.waitForSelector('.post-card', { timeout: 30_000 });
+
+    const openEdit = async () => {
+      await page.locator('.post-menu-button').first().click();
+      await page
+        .locator('.post-menu-dropdown .fx-menu-item')
+        .filter({ hasText: /Edit|編集/ })
+        .first()
+        .click();
+      await page.waitForSelector('.edit-textarea', { timeout: 10_000 });
+    };
+
+    await openEdit();
+    await page.locator('.edit-textarea').fill('edited text');
+    await page
+      .locator('.edit-container button')
+      .filter({ hasText: /Save|保存/ })
+      .click();
+
+    await page.waitForFunction(
+      () => (document.querySelector('.post-card .post-text')?.textContent ?? '').includes('edited text'),
+      { timeout: 10_000 },
+    );
+
+    await openEdit();
+    assert.equal(await page.locator('.edit-textarea').inputValue(), 'edited text');
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+    await page.close();
   });
 });
 
