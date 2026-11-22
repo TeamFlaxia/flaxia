@@ -8,7 +8,7 @@
 
 export const LEFT_NAV_WIDTH_DEFAULT = 240;
 export const LEFT_NAV_WIDTH_MIN = 200;
-export const LEFT_NAV_WIDTH_MAX = 380;
+export const LEFT_NAV_WIDTH_MAX = 350;
 export const LEFT_NAV_ICON_WIDTH = 72;
 export const LEFT_NAV_ICON_THRESHOLD = 140;
 export const LEFT_NAV_WIDTH_STORAGE_KEY = 'flaxia_left_nav_width';

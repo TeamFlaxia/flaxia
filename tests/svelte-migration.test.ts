@@ -394,8 +394,9 @@ test('Crowd can fetch its data: WASM while the centre column grows without a rai
   const ssr = await read('functions/lib/ssr-security-headers.ts');
   assert.match(ssr, /connect-src [^;]*data:/);
   const overrides = await read('src/styles/legacy/overrides.css');
-  assert.match(overrides, /#app \.main-container \{[^}]*max-width: none/);
-  assert.match(overrides, /#app \.main-container:not\(:has\(\.right-panel\)\) > \.main-content[\s\S]*max-width: none/);
+  assert.match(overrides, /#app \.main-content \{[^}]*max-width: 600px/);
+  assert.match(overrides, /#app \.right-panel \{[^}]*width: 350px/);
+  assert.match(overrides, /#app \.main-container \{[^}]*margin: 0 auto/);
 });
 
 test('the document title follows the route', async () => {

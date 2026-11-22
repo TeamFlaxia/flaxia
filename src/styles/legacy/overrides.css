@@ -15,27 +15,30 @@
    ============================================================ */
 
 /* ------------------------------------------------------------
-   Shell geometry — 240 / 600 / 350, the documented legacy layout
+   Shell geometry — centred, 240-350 / 600 / 350
    ------------------------------------------------------------ */
-/* Full-bleed three-pane shell. The old 1200/600/350 geometry left large
-   dead margins; the centre now grows to fill whatever the nav rails leave. */
 #app .main-container {
-  max-width: none;
+  max-width: calc(var(--flaxia-nav-width, 240px) + 950px);
   width: 100%;
-  margin: 0;
-  justify-content: flex-start;
+  margin: 0 auto;
+  justify-content: center;
+}
+
+/* Without the right rail the shell is just the nav + 600px centre. */
+#app .main-container:not(:has(.right-panel)) {
+  max-width: calc(var(--flaxia-nav-width, 240px) + 600px);
 }
 
 #app .main-container > :not(.left-nav):not(.right-panel) {
-  flex: 1 1 auto;
+  flex: 0 1 600px;
   min-width: 0;
-  max-width: none;
-  width: auto;
+  max-width: 600px;
+  width: 100%;
   border-right: 1px solid var(--border);
 }
 
 #app .main-content {
-  max-width: none;
+  max-width: 600px;
   width: 100%;
   padding: 0;
 }
@@ -46,21 +49,25 @@
   padding: 0;
 }
 
-/* No right rail: the centre owns the whole remainder, with no trailing rule. */
+/* No right rail: keep the centre at 600px and drop the trailing rule. */
 #app .main-container:not(:has(.right-panel)) > .main-content,
 #app .main-container:not(:has(.right-panel)) > .timeline {
-  max-width: none;
+  max-width: 600px;
   border-right: 0;
 }
 
-/* Surface pages (settings, mail) used to centre themselves at 820px. */
 @media (max-width: 1024px) {
-  /* The rail is hidden at this width; drop the leftover divider too. */
+  /* The rail is hidden at this width; the shell is nav + centre. */
+  #app .main-container {
+    max-width: calc(var(--flaxia-nav-width, 240px) + 600px);
+  }
+
   #app .main-container > .main-content {
     border-right: 0;
   }
 }
 
+/* Surface pages fill the 600px centre. */
 #app .settings-page,
 #app .mail-page,
 #app .mail-thread-page,
@@ -69,7 +76,7 @@
 #app .maps-page,
 #app .arcade-page,
 #app .translate-page {
-  max-width: none;
+  max-width: 600px;
   width: 100%;
   margin-inline: 0;
 }
@@ -81,8 +88,9 @@
 }
 
 #app .left-nav {
-  /* Keep the resize handle functional: default to the legacy 240px. */
+  /* Keep the resize handle functional: default 240px, hard cap 350px. */
   width: var(--flaxia-nav-width, 240px);
+  max-width: 350px;
   padding: 1rem;
   gap: 0;
 }
@@ -99,6 +107,7 @@
   }
 
   #app .main-container > :not(.left-nav):not(.right-panel),
+  #app .main-content,
   #app .thread-main-content {
     max-width: 100%;
     border-right: none;
