@@ -48,3 +48,13 @@ test('shell layout keeps the three-column landmark structure', async () => {
   assert.match(source, /<LeftNav/);
   assert.match(source, /<RightPanel/);
 });
+
+test('shell bootstrap restores the global Crowd node init', async () => {
+  const source = await read('src/lib/svelte/bootstrap.ts');
+  assert.match(source, /canRunFlaxiaNode\(\)/);
+  assert.match(source, /initCrowdNode\(/);
+  assert.match(source, /showCrowdConsentModal\(/);
+  assert.match(source, /notifyCrowdConsentChanged\(\)/);
+  // A missing node bundle must not break app init.
+  assert.match(source, /Failed to initialize Crowd node/);
+});
