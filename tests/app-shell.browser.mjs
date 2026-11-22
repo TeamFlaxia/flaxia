@@ -352,6 +352,10 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
           const nav = document.querySelector('.left-nav');
           return nav ? getComputedStyle(nav).padding : null;
         })(),
+        rightPanelPadding: (() => {
+          const rail = document.querySelector('.right-panel');
+          return rail ? getComputedStyle(rail).paddingTop : null;
+        })(),
       };
     });
 
@@ -378,6 +382,7 @@ test('the built app boots into the three-column shell', { timeout: 90_000 }, asy
       `shell should be centred (left x ${result.left.x}, right edge ${rightEdge})`,
     );
     assert.equal(result.leftNavPadding, '16px');
+    assert.equal(result.rightPanelPadding, '16px');
 
     // Tokens and card chrome resolve to the legacy values.
     assert.equal(result.bodyBackground, 'rgb(255, 255, 255)');
@@ -503,6 +508,17 @@ test('/settings mounts the engine-rendered sections for a signed-in user', { tim
         })(),
       };
     });
+
+    const settingsPane = await page.evaluate(() => {
+      const pane = document.querySelector('.settings-two-pane');
+      const nav = document.querySelector('.settings-nav');
+      return {
+        columns: getComputedStyle(pane).gridTemplateColumns.split(' ').filter(Boolean).length,
+        navDirection: nav ? getComputedStyle(nav).flexDirection : '',
+      };
+    });
+    assert.equal(settingsPane.columns, 1, 'the 600px settings page must stack its panes');
+    assert.equal(settingsPane.navDirection, 'row', 'the narrow settings rail must be horizontal');
 
     assert.ok(result.sectionCount >= 8, `expected the settings panels, found ${result.sectionCount}`);
     assert.deepEqual(
@@ -654,6 +670,8 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
       { width: 900, height: 1024, mobile: false },
       // At the right-rail breakpoint the rail is already hidden.
       { width: 1024, height: 1024, mobile: false },
+      // The rail needs nav + 600 + 350 = 1190px; just below that it is hidden.
+      { width: 1100, height: 900, mobile: false },
     ];
 
     for (const testCase of cases) {
@@ -690,7 +708,7 @@ test('the 768-1024px range keeps the right rail hidden and the drawer breakpoint
 
       const label = `${testCase.width}px`;
 
-      // The right rail is hidden at and below 1024px.
+      // The right rail is hidden below 1200px.
       assert.equal(layout.rightPanelDisplay, 'none', `${label}: right rail should be hidden`);
       assert.ok(layout.overflow <= 1, `${label}: horizontal overflow ${layout.overflow}px`);
       assert.ok(layout.content, `${label}: content column missing`);

@@ -660,8 +660,9 @@
   overscroll-behavior: contain;
 }
 
-/* Legacy breakpoint hides the third column; keep it. */
-@media (max-width: 1024px) {
+/* The rail needs nav + 600 + 350 = 1190px; below that the centre would be
+   squeezed below its 600px target, so hide the third column. */
+@media (max-width: 1199px) {
   .right-panel {
     display: none;
   }

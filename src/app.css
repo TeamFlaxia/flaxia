@@ -6,7 +6,12 @@
  * these tokens one at a time. Kept out of the legacy CSS bundle for now so the
  * unlayered-CSS invariant stays true.
  */
-@import "tailwindcss";
+/* No preflight: the legacy skin is unlayered and authoritative. Import the
+   theme + utility layers so new Svelte surfaces can opt into utilities without
+   resetting every legacy element. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
 
 @theme {
   --font-sans: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

@@ -46,7 +46,7 @@
 #app .right-panel {
   width: 350px;
   flex: 0 0 350px;
-  padding: 0;
+  padding: 16px 14px 28px;
 }
 
 /* No right rail: keep the centre at 600px and drop the trailing rule. */
@@ -56,8 +56,9 @@
   border-right: 0;
 }
 
-@media (max-width: 1024px) {
-  /* The rail is hidden at this width; the shell is nav + centre. */
+@media (max-width: 1199px) {
+  /* Below 1190px (nav + 600 + 350) the rail would squeeze the centre, so the
+     shell drops it and stays at nav + 600. */
   #app .main-container {
     max-width: calc(var(--flaxia-nav-width, 240px) + 600px);
   }
