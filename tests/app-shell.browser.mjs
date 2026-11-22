@@ -152,6 +152,33 @@ const BUSY_STUBS = {
   },
 };
 
+const AD_POSTS = Array.from({ length: 8 }, (_, index) => ({ ...MEDIA_POST, id: `ad-post-${index}` }));
+const AD_STUBS = {
+  ...MEDIA_STUBS,
+  '/api/posts': { body: { posts: AD_POSTS, nextCursor: null } },
+  '/api/posts/recommended': { body: { posts: AD_POSTS, nextCursor: null } },
+  '/api/ads/active': {
+    body: {
+      ads: [
+        {
+          id: 'ad-test-1',
+          title: 'Test ad',
+          body_text: 'Sponsored test',
+          ad_type: 'self_hosted',
+          payload_type: 'image',
+          payload_key: 'ad/payload/test',
+          thumbnail_key: null,
+          click_url: 'https://example.com/ad',
+          impressions: 1,
+          clicks: 0,
+          active: 1,
+          created_at: '2026-11-22T00:00:00.000Z',
+        },
+      ],
+    },
+  },
+};
+
 const SIGNED_IN_STUBS = {
   ...GUEST_STUBS,
   '/api/me': {
@@ -1172,6 +1199,25 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(draft, 'Hi @quoted ');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('the feed renders the Svelte ad card', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/home`, AD_STUBS);
+
+    await page.waitForSelector('.ad-banner', { timeout: 30_000 });
+    const result = await page.evaluate(() => ({
+      labels: [...document.querySelectorAll('.ad-banner .ad-label')].map((node) => (node.textContent ?? '').trim()),
+      placeholders: document.querySelectorAll('.ad-banner .ad-placeholder').length,
+      gate: document.querySelectorAll('.ad-banner .ad-gate').length,
+    }));
+
+    assert.ok(result.labels.includes('Sponsored'), `sponsored label missing: ${result.labels.join(', ')}`);
+    assert.ok(result.placeholders >= 1, 'ad placeholder missing');
+    assert.equal(result.gate, 0, 'data saver is off, so the ad must not be gated');
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+    await page.close();
   });
 });
 

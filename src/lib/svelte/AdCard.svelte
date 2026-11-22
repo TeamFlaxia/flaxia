@@ -8,7 +8,7 @@ import { t } from '../i18n.ts';
 import { nativeApiHref } from '../native-api.ts';
 import { isDataSaverEnabled } from '../settings.js';
 import { executeUniversalZip, type UniversalZipExecutorHandle } from '../zip-manager.js';
-import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
+import { executeFlash, type FlashPlayerHandle } from '../../components/FlashPlayer.js';
 
 let { ad }: { ad: Ad } = $props();
 
@@ -26,7 +26,7 @@ let observer: IntersectionObserver | null = null;
 const hasStage = $derived(ad.ad_type === 'admax' || ad.payload_type !== null);
 const gated = $derived(dataSaver && hasStage && !stage);
 const aspectRatio = $derived(ad.payload_type === 'swf' ? '4 / 3' : '16 / 9');
-const admaxHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:300px;height:250px;overflow:hidden}</style></head><body><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1628379583847546" crossorigin="anonymous"></script><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-1628379583847546" data-ad-slot="1386532572" data-ad-format="auto" data-full-width-responsive="true"></ins><script>${ADSENSE_INLINE_BOOTSTRAP}</script></body></html>`;
+const admaxHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;padding:0;width:300px;height:250px;overflow:hidden}</style></head><body><script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1628379583847546" crossorigin="anonymous"><\/script><ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-1628379583847546" data-ad-slot="1386532572" data-ad-format="auto" data-full-width-responsive="true"></ins><script>${ADSENSE_INLINE_BOOTSTRAP}<\/script></body></html>`;
 
 function destroyExecutors(): void {
   zipHandle?.destroy();
