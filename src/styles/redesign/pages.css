@@ -784,6 +784,9 @@
   min-width: 0;
   margin-inline: auto;
   border-inline: 0;
+  /* The shell centres this page at 600px, so the two-pane split must react to
+     the page width rather than the viewport width. */
+  container-type: inline-size;
 }
 
 .settings-header {
@@ -1339,8 +1342,8 @@
   font-weight: 400;
 }
 
-/* Mobile: stacked panes with a horizontal category rail */
-@media (max-width: 900px) {
+/* Narrow container: stacked panes with a horizontal category rail */
+@container (max-width: 700px) {
   .settings-two-pane {
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
@@ -1383,7 +1386,7 @@
   }
 }
 
-@media (min-width: 901px) {
+@container (min-width: 701px) {
   .settings-back {
     display: none;
   }
