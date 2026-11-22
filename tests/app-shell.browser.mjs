@@ -361,6 +361,8 @@ async function openApp(browser, url, stubs, viewport = { width: 1400, height: 10
       });
     }
     if (requestUrl.hostname !== '127.0.0.1') return route.abort();
+    // WebSocket upgrades are handled by page.routeWebSocket, not the JSON stub.
+    if (requestUrl.pathname.startsWith('/api/ws/')) return route.continue();
 
     if (requestUrl.pathname.startsWith('/api/')) {
       // Media goes through /api/images/*; answer with a real PNG (optionally
@@ -1283,7 +1285,10 @@ test('a ZIP game can open a multiplayer room through the host page', { timeout: 
       if (url.pathname.startsWith('/api/multiplayer/')) calls.push(`${request.method()} ${url.pathname}`);
     });
 
-    await page.routeWebSocket('**/api/ws/multiplayer**', (ws) => {
+    await page.routeWebSocket('**/api/ws/multiplayer**', async (ws) => {
+      // The manager attaches its listener right after constructing WebSocket;
+      // give that task a turn so the first room_state is not dropped.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       ws.send(
         JSON.stringify({
           type: 'room_state',

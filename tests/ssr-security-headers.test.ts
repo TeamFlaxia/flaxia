@@ -112,6 +112,7 @@ test('main CSP applies to legacy paths; game previews use sandbox.flaxia.app', a
 
 test('legacy Arcade frames use the sandbox WVFS route and typed opaque bridge', async () => {
   const sandboxFrame = await readFile(new URL('../src/components/SandboxFrame.ts', import.meta.url), 'utf8');
+  const frameBridge = await readFile(new URL('../src/lib/multiplayer-frame.ts', import.meta.url), 'utf8');
   const multiplayer = await readFile(new URL('../src/lib/multiplayer-manager.ts', import.meta.url), 'utf8');
   assert.match(sandboxFrame, /createWvfsGameUrl/);
   const gameUrl = await readFile(new URL('../shared/wvfs-game-url.ts', import.meta.url), 'utf8');
@@ -119,11 +120,11 @@ test('legacy Arcade frames use the sandbox WVFS route and typed opaque bridge', 
   assert.match(sandboxFrame, /iframe\.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups'/);
   assert.match(sandboxFrame, /iframe\.allow = 'fullscreen; web-share'/);
   assert.doesNotMatch(sandboxFrame, /\/run\//, 'retired /run route must not be used');
-  assert.match(sandboxFrame, /event\.source !== iframe\.contentWindow \|\| event\.origin !== 'null'/);
-  assert.match(sandboxFrame, /isParentMessage\(data\)/);
+  assert.match(frameBridge, /event\.source !== iframe\.contentWindow \|\| event\.origin !== 'null'/);
+  assert.match(frameBridge, /isParentMessage\(data\)/);
   assert.match(multiplayer, /isParentMessage\(message\)/);
   assert.match(multiplayer, /postMessage\(message, '\*'\)/);
-  assert.doesNotMatch(sandboxFrame + multiplayer, /allow-same-origin/);
+  assert.doesNotMatch(sandboxFrame + frameBridge + multiplayer, /allow-same-origin/);
 });
 
 test('sandbox policies separate permissive games from the pinned PDF viewer', async () => {
