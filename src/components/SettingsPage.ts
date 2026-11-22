@@ -1,6 +1,7 @@
 import { mountSettingsSection } from '../lib/settings/section-host.ts';
 import SettingsAccountSection from '../lib/svelte/SettingsAccountSection.svelte';
 import SettingsBillingSection from '../lib/svelte/SettingsBillingSection.svelte';
+import SettingsBugReportSection from '../lib/svelte/SettingsBugReportSection.svelte';
 import SettingsCrowdSection from '../lib/svelte/SettingsCrowdSection.svelte';
 import SettingsDisplaySection from '../lib/svelte/SettingsDisplaySection.svelte';
 import SettingsEmailSection from '../lib/svelte/SettingsEmailSection.svelte';
@@ -9,7 +10,6 @@ import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelt
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
 import SettingsPasswordSection from '../lib/svelte/SettingsPasswordSection.svelte';
 import SettingsTitlesSection from '../lib/svelte/SettingsTitlesSection.svelte';
-import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
 
 export interface SettingsPageProps {
@@ -42,7 +42,6 @@ export interface SettingsCategory {
 export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   const categories: SettingsCategory[] = [];
   const addCategory = (category: SettingsCategory) => categories.push(category);
-  const bugReportForm = createBugReportForm();
 
   // Account section (Svelte).
   const accountMount = currentUser ? mountSettingsSection(SettingsAccountSection, { currentUser }) : null;
@@ -88,6 +87,10 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
     window.Capacitor.isNativePlatform();
   const billingMount = currentUser && !isCapacitorApp ? mountSettingsSection(SettingsBillingSection) : null;
   const billingSection = billingMount?.element;
+
+  // Bug report section (Svelte).
+  const bugReportMount = mountSettingsSection(SettingsBugReportSection);
+  const bugReportSection = bugReportMount.element;
 
   // Maps section (Svelte): on-device tile cache + city tile packs.
   const mapsMount = mountSettingsSection(SettingsMapsSection);
@@ -173,7 +176,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
     titleKey: 'settings.bug_report',
     descriptionKey: 'settings.bug_report_description',
     iconName: 'flag',
-    sections: [bugReportForm.getElement()],
+    sections: [bugReportSection],
   });
   return {
     categories,
@@ -182,7 +185,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       emojiMount?.destroy();
       billingMount?.destroy();
       vaultSection?.destroy();
-      bugReportForm.destroy();
+      bugReportMount.destroy();
       mapsMount.destroy();
       crowdMount.destroy();
       accountMount?.destroy();
