@@ -1,33 +1,19 @@
-import { applyNameColor } from '../../shared/name-color.ts';
-import { clearMeCache } from '../lib/auth-cache';
 import {
   clearCredentialOperation,
   credentialOperationFor,
   retryPendingCredentialChange,
 } from '../lib/auth-credential-operation';
-import { clearDeletionOperation, deletionOperationFor } from '../lib/auth-deletion';
 import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
-import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
-import {
-  CROWD_CONSENT_CHANGE_EVENT,
-  canRunFlaxiaNode,
-  denyCrowdConsent,
-  getCrowdConsentState,
-  getCrowdNodeController,
-  grantCrowdConsent,
-  initCrowdNode,
-  resolveCrowdConsentState,
-  startCrowdNode,
-  stopCrowdNode,
-} from '../lib/crowd-node.js';
 import { getLocale, t } from '../lib/i18n.js';
-import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { each, html, legacy, type Mounted, mount, signal } from '../lib/render/index.ts';
 import { mountSettingsSection } from '../lib/settings/section-host.ts';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
+import SettingsAccountSection from '../lib/svelte/SettingsAccountSection.svelte';
+import SettingsCrowdSection from '../lib/svelte/SettingsCrowdSection.svelte';
 import SettingsDisplaySection from '../lib/svelte/SettingsDisplaySection.svelte';
+import SettingsEmailSection from '../lib/svelte/SettingsEmailSection.svelte';
 import SettingsLanguageSection from '../lib/svelte/SettingsLanguageSection.svelte';
 import SettingsMapsSection from '../lib/svelte/SettingsMapsSection.svelte';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
@@ -100,7 +86,6 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   const categories: SettingsCategory[] = [];
   const addCategory = (category: SettingsCategory) => categories.push(category);
   const bugReportForm = createBugReportForm();
-  let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
   let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
@@ -109,294 +94,25 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   let historyMount: Mounted | undefined;
   const displayMounts: Mounted[] = [];
 
-  // Account Section
-  if (currentUser) {
-    accountSection = document.createElement('div');
-    accountSection.className = 'settings-section';
-
-    const accountTitle = document.createElement('h2');
-    accountTitle.textContent = t('settings.account');
-
-    const userChip = document.createElement('div');
-    userChip.className = 'settings-user';
-
-    const avatarUrl = nativeApiHref(
-      currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar',
-    );
-    const displayName = currentUser.display_name || currentUser.username;
-
-    const avatarWrap = document.createElement('div');
-    avatarWrap.className = 'settings-user-avatar';
-    const avatarEl = document.createElement('img');
-    avatarEl.src = avatarUrl;
-    avatarEl.alt = '';
-    avatarEl.className = 'settings-user-avatar-img';
-    avatarEl.onerror = () => {
-      avatarEl.src = nativeApiHref('/api/images/default-avatar');
-    };
-    avatarWrap.appendChild(avatarEl);
-    attachPlusBadge(avatarWrap, currentUser.badge_type);
-    userChip.appendChild(avatarWrap);
-
-    const infoDiv = document.createElement('div');
-    infoDiv.className = 'settings-user-info';
-    userChip.appendChild(infoDiv);
-
-    const displayNameEl = document.createElement('div');
-    displayNameEl.className = 'settings-user-name';
-    displayNameEl.textContent = displayName;
-    applyNameColor(displayNameEl, currentUser.name_color, currentUser.badge_type);
-    infoDiv.appendChild(displayNameEl);
-
-    const usernameEl = document.createElement('div');
-    usernameEl.className = 'settings-user-username';
-    usernameEl.textContent = `@${currentUser.username}`;
-    infoDiv.appendChild(usernameEl);
-
-    const logoutButton = document.createElement('button');
-    logoutButton.textContent = t('auth.sign_out');
-    logoutButton.className = 'settings-button';
-
-    logoutButton.addEventListener('click', async () => {
-      const confirmed = await createConfirmDialog(t('auth.logout_confirm', { username: currentUser.username }));
-      if (!confirmed) return;
-      try {
-        const response = await fetch('/api/auth/logout', {
-          method: 'POST',
-          credentials: 'include',
-        });
-
-        if (response.ok) {
-          clearMeCache();
-          window.location.href = '/';
-        } else {
-          alert(t('auth.logout_failed'));
-        }
-      } catch (error) {
-        console.error('Logout error:', error);
-        alert(t('auth.logout_error'));
-      }
-    });
-
-    const deleteButton = document.createElement('button');
-    deleteButton.textContent = t('settings.delete_account');
-    deleteButton.className = 'settings-button settings-button--danger';
-
-    deleteButton.addEventListener('click', async () => {
-      const confirmed = await createConfirmDialog(
-        t('settings.delete_account_confirm', { username: currentUser.username }),
-      );
-      if (!confirmed) return;
-      const password = window.prompt(
-        t('settings.current_password') || 'Enter your current password to confirm deletion',
-      );
-      if (!password) return;
-      try {
-        const current_srp = await createSrpProof(password);
-        if (!current_srp) {
-          alert(t('settings.password_proof_failed') || 'Could not verify your password');
-          return;
-        }
-        const operation = deletionOperationFor(currentUser.id);
-        const response = await fetch('/api/users/me', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ current_srp, operation }),
-        });
-
-        if (response.ok) {
-          clearDeletionOperation();
-          clearMeCache();
-          window.location.href = '/';
-        } else {
-          const data = (await response.json().catch(() => ({}))) as { cancelled?: boolean };
-          if (data.cancelled) clearDeletionOperation();
-          alert(t('settings.delete_account_failed'));
-        }
-      } catch (error) {
-        console.error('Delete account error:', error);
-        alert(t('settings.delete_account_error'));
-      }
-    });
-
-    accountSection.appendChild(accountTitle);
-    accountSection.appendChild(userChip);
-    const accountActions = document.createElement('div');
-    accountActions.className = 'settings-account-actions';
-    accountActions.appendChild(logoutButton);
-    accountActions.appendChild(deleteButton);
-    accountSection.appendChild(accountActions);
-  }
+  // Account section (Svelte).
+  const accountMount = currentUser ? mountSettingsSection(SettingsAccountSection, { currentUser }) : null;
+  const accountSection = accountMount?.element;
 
   // Display section (Svelte): reply style, NSFW, data saver and theme.
   const displayMount = mountSettingsSection(SettingsDisplaySection);
   const displaySection = displayMount.element;
 
-  // Crowd Section (opt in/out of donating browser compute)
-  const crowdSection = document.createElement('div');
-  crowdSection.className = 'settings-section';
-
-  const nodeAvailable = canRunFlaxiaNode();
-
-  let crowdCheckbox!: HTMLInputElement;
-  let crowdStatus!: HTMLElement;
-  let crowdMessage!: HTMLElement;
-
-  displayMounts.push(
-    mount(
-      crowdSection,
-      () => html`
-        <h2>${t('settings.crowd')}</h2>
-        <label class=${nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled'}>
-          <div class="settings-switch-text">
-            <span class="settings-switch-name">${t('settings.crowd')}</span>
-            <span class="settings-switch-desc">${t('settings.crowd_desc')}</span>
-          </div>
-          <input
-            class="settings-switch"
-            type="checkbox"
-            ?checked=${getCrowdConsentState() === 'granted'}
-            ?disabled=${!nodeAvailable}
-            ref=${(element: Element | null) => {
-              if (element) crowdCheckbox = element as HTMLInputElement;
-            }}
-          />
-        </label>
-        <div
-          class="settings-status settings-status--sm"
-          ref=${(element: Element | null) => {
-            if (element) crowdStatus = element as HTMLElement;
-          }}
-        ></div>
-        <div
-          class="settings-status"
-          role="status"
-          ref=${(element: Element | null) => {
-            if (element) crowdMessage = element as HTMLElement;
-          }}
-        ></div>
-      `,
-    ),
-  );
-
-  const updateCrowdStatus = () => {
-    if (!nodeAvailable) {
-      crowdStatus.textContent = t('settings.crowd_unavailable');
-      return;
-    }
-    const state = getCrowdConsentState();
-    crowdStatus.textContent =
-      state === 'granted'
-        ? t('settings.crowd_running')
-        : state === 'denied'
-          ? t('settings.crowd_denied')
-          : t('settings.crowd_unset');
-    crowdStatus.style.color = state === 'granted' ? 'var(--accent-text)' : 'var(--text-muted)';
-  };
-  updateCrowdStatus();
-
-  crowdCheckbox.addEventListener('change', async () => {
-    if (!nodeAvailable) return;
-    // The node controller is created during deferred app init; make sure it
-    // exists before mutating state so a fast navigation never loses the toggle.
-    if (!getCrowdNodeController()) {
-      try {
-        await initCrowdNode();
-      } catch {
-        // fall through to the availability check below
-      }
-    }
-    if (!getCrowdNodeController()) {
-      crowdMessage.textContent = t('settings.crowd_unavailable');
-      crowdMessage.style.color = 'var(--danger-text)';
-      crowdCheckbox.checked = false;
-      return;
-    }
-    if (crowdCheckbox.checked) {
-      grantCrowdConsent();
-      startCrowdNode();
-    } else {
-      denyCrowdConsent();
-      stopCrowdNode();
-    }
-    updateCrowdStatus();
-    crowdMessage.textContent = t('settings.crowd_saved');
-    crowdMessage.style.color = 'var(--accent-text)';
-  });
-
-  // Stay in sync if consent is changed elsewhere (e.g. the consent modal).
-  const onCrowdConsentChange = () => {
-    crowdCheckbox.checked = getCrowdConsentState() === 'granted';
-    updateCrowdStatus();
-  };
-  window.addEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
-
-  // The node bundle is loaded during deferred app init, which may run after this
-  // screen renders (e.g. a direct /settings reload). Load its persisted consent
-  // state through the public API so the toggle is correct on first paint.
-  void resolveCrowdConsentState().then(onCrowdConsentChange);
+  // Crowd section (Svelte): opt in/out of donating browser compute.
+  const crowdMount = mountSettingsSection(SettingsCrowdSection);
+  const crowdSection = crowdMount.element;
 
   // Language section (Svelte).
   const languageMount = mountSettingsSection(SettingsLanguageSection, { currentUser });
   const languageSection = languageMount.element;
 
-  // Email Section
-  const emailSection = document.createElement('div');
-  emailSection.className = 'settings-section';
-
-  let currentPasswordInput!: HTMLInputElement;
-  let newEmailInput!: HTMLInputElement;
-  let emailSaveButton!: HTMLButtonElement;
-  let emailMessage!: HTMLElement;
-
-  displayMounts.push(
-    mount(
-      emailSection,
-      () => html`
-        <h2>${t('settings.change_email')}</h2>
-        <label class="settings-label" for="settings-email-current-password">
-          ${t('settings.email_current_password')}
-        </label>
-        <input
-          class="settings-input"
-          id="settings-email-current-password"
-          type="password"
-          autocomplete="current-password"
-          placeholder=${t('settings.email_current_password_placeholder')}
-          ref=${(element: Element | null) => {
-            if (element) currentPasswordInput = element as unknown as HTMLInputElement;
-          }}
-        />
-        <label class="settings-label" for="settings-new-email">${t('settings.email_new_email')}</label>
-        <input
-          class="settings-input"
-          id="settings-new-email"
-          type="email"
-          autocomplete="email"
-          placeholder=${t('settings.email_new_email_placeholder')}
-          ref=${(element: Element | null) => {
-            if (element) newEmailInput = element as unknown as HTMLInputElement;
-          }}
-        />
-        <button
-          class="settings-save"
-          ref=${(element: Element | null) => {
-            if (element) emailSaveButton = element as unknown as HTMLButtonElement;
-          }}
-        >
-          ${t('common.save')}
-        </button>
-        <div
-          class="settings-status"
-          role="status"
-          ref=${(element: Element | null) => {
-            if (element) emailMessage = element as HTMLElement;
-          }}
-        ></div>
-      `,
-    ),
-  );
+  // Email section (Svelte).
+  const emailMount = mountSettingsSection(SettingsEmailSection);
+  const emailSection = emailMount.element;
 
   // Password Section
   const passwordSection = document.createElement('div');
@@ -509,57 +225,6 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       window.alert(t('settings.recovery_failed'));
     } finally {
       recoveryButton.disabled = false;
-    }
-  });
-
-  emailSaveButton.addEventListener('click', async () => {
-    const currentPassword = currentPasswordInput.value.trim();
-    const newEmail = newEmailInput.value.trim();
-
-    if (!currentPassword || !newEmail) {
-      emailMessage.textContent = t('settings.email_fill_all');
-      emailMessage.style.color = 'var(--danger-text)';
-      return;
-    }
-
-    emailMessage.textContent = '';
-    emailSaveButton.disabled = true;
-    emailSaveButton.style.opacity = '0.6';
-
-    try {
-      // Re-authenticate with an SRP proof: the server verifies knowledge of
-      // the current password without ever receiving it.
-      const proof = await createSrpProof(currentPassword);
-      if (!proof) {
-        emailMessage.textContent = t('settings.current_password_incorrect');
-        emailMessage.style.color = 'var(--danger-text)';
-        return;
-      }
-
-      const response = await fetch('/api/users/me/email', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ current_srp: proof, new_email: newEmail }),
-      });
-
-      if (response.ok) {
-        emailMessage.textContent = t('settings.email_saved');
-        emailMessage.style.color = 'var(--accent-text)';
-        currentPasswordInput.value = '';
-        newEmailInput.value = '';
-      } else {
-        const errorData = (await response.json()) as { error?: string };
-        emailMessage.textContent = errorData.error || t('settings.email_save_failed');
-        emailMessage.style.color = 'var(--danger-text)';
-      }
-    } catch (_error: unknown) {
-      emailMessage.textContent = t('settings.email_network_error');
-      emailMessage.style.color = 'var(--danger-text)';
-    } finally {
-      emailSaveButton.disabled = false;
-      emailSaveButton.style.opacity = '1';
     }
   });
 
@@ -699,7 +364,7 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   });
 
   // Add hover effects
-  const buttons = [emailSaveButton, passwordSaveButton];
+  const buttons = [passwordSaveButton];
   buttons.forEach((button: HTMLButtonElement) => {
     button.addEventListener('mouseenter', () => {
       if (!button.disabled) {
@@ -1342,7 +1007,6 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
   return {
     categories,
     destroy: () => {
-      window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       titlesMount?.dispose();
       stampsMount?.dispose();
       historyMount?.dispose();
@@ -1351,6 +1015,9 @@ export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
       vaultSection?.destroy();
       bugReportForm.destroy();
       mapsMount.destroy();
+      crowdMount.destroy();
+      accountMount?.destroy();
+      emailMount.destroy();
       displayMount.destroy();
       languageMount.destroy();
     },
