@@ -74,14 +74,18 @@ describe('render/media-box-guards', () => {
 });
 
 describe('render/settings-guards', () => {
-  it('builds the settings forms through the engine, not innerHTML', () => {
+  it('builds the settings forms in Svelte, not innerHTML', () => {
     const settings = read('src/components/SettingsPage.ts');
-    assert.match(settings, /html/);
-    assert.match(settings, /displayMounts\.push\(/);
-    assert.doesNotMatch(settings, /const languageSelect = document\.createElement/);
-    assert.doesNotMatch(settings, /languageSelect\.innerHTML/);
+    assert.match(settings, /mountSettingsSection/);
+    assert.doesNotMatch(settings, /innerHTML|\.push\(mount\(/);
     const language = read('src/lib/svelte/SettingsLanguageSection.svelte');
     assert.match(language, /fetch\('\/locales\/index\.json'\)/);
     assert.doesNotMatch(language, /innerHTML/);
+    const billing = read('src/lib/svelte/SettingsBillingSection.svelte');
+    assert.match(billing, /\/api\/billing\/plan/);
+    assert.doesNotMatch(billing, /innerHTML/);
+    const emoji = read('src/lib/svelte/SettingsEmojiSection.svelte');
+    assert.match(emoji, /\/api\/stamps/);
+    assert.doesNotMatch(emoji, /innerHTML/);
   });
 });
