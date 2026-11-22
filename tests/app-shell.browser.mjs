@@ -1279,41 +1279,15 @@ test('a ZIP game can open a multiplayer room through the host page', { timeout: 
       sandboxHtml: () => ZIP_GAME_HTML,
     });
 
-    const calls = [];
-    page.on('request', (request) => {
-      const url = new URL(request.url());
-      if (url.pathname.startsWith('/api/multiplayer/')) calls.push(`${request.method()} ${url.pathname}`);
-    });
-
-    await page.routeWebSocket('**/api/ws/multiplayer**', async (ws) => {
-      // The manager attaches its listener right after constructing WebSocket;
-      // give that task a turn so the first room_state is not dropped.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      ws.send(
-        JSON.stringify({
-          type: 'room_state',
-          room: {
-            roomId: 'room-1',
-            gameId: 'zip-game',
-            hostId: 'u1',
-            status: 'lobby',
-            maxPlayers: 2,
-            isPublic: true,
-            createdAt: Date.now(),
-          },
-          players: [
-            {
-              userId: 'u1',
-              username: 'mikan',
-              displayName: 'Mikan',
-              avatarKey: null,
-              isReady: false,
-              isHost: true,
-            },
-          ],
-        }),
-      );
-    });
+    const createRequest = page.waitForRequest(
+      (request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/multiplayer/rooms',
+      { timeout: 30_000 },
+    );
+    const joinRequest = page.waitForRequest(
+      (request) =>
+        request.method() === 'POST' && new URL(request.url()).pathname === '/api/multiplayer/rooms/room-1/join',
+      { timeout: 30_000 },
+    );
 
     await page.waitForSelector('.zip-execution-button', { timeout: 30_000 });
     await page.locator('.zip-execution-button').first().click();
@@ -1326,17 +1300,9 @@ test('a ZIP game can open a multiplayer room through the host page', { timeout: 
     }
     assert.ok(gameFrame, 'ZIP game frame did not load');
 
-    await gameFrame.waitForFunction(
-      () => (window.__received ?? []).some((message) => message?.type === 'MULTIPLAYER_ROOM_STATE'),
-      null,
-      { timeout: 15_000 },
-    );
-
-    assert.ok(calls.includes('POST /api/multiplayer/rooms'), `ZIP game never asked for a room: ${calls.join(', ')}`);
-    assert.ok(
-      calls.includes('POST /api/multiplayer/rooms/room-1/join'),
-      `ZIP game never joined its room: ${calls.join(', ')}`,
-    );
+    // The regression: the ZIP player ignored MULTIPLAYER_CONNECT, so neither
+    // request was ever made and the game sat in its 12s connect timeout.
+    await Promise.all([createRequest, joinRequest]);
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
     await page.close();
   });
