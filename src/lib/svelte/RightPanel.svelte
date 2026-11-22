@@ -29,7 +29,10 @@ let tags = $state<TrendingTag[]>([]);
 let tagsLoading = $state(true);
 let games = $state<PopularGame[]>([]);
 let gamesLoading = $state(true);
-let showGames = $state(true);
+// Keep the games card out of the layout until the API confirms it has
+// content: rendering a loading card that then disappears shifts the help
+// card and blows the CLS budget on slow responses.
+let showGames = $state(false);
 
 const maxCount = $derived(Math.max(...tags.map((tag) => tag.count), 1));
 const shortcut = commandShortcutLabel();
