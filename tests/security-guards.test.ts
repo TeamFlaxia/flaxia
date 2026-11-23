@@ -66,19 +66,8 @@ describe('security guards', () => {
     );
     assert.ok(renderer.includes('DOMPurify'), 'mail renderer must sanitize with DOMPurify');
 
-    const workerToml = readFileSync(join(ROOT, 'mail-worker/wrangler.toml'), 'utf8');
-    // The Wrangler default enables workers.dev, so an absent/commented line is
-    // not enough: the config must explicitly disable it.
-    assert.match(workerToml, /^\s*workers_dev\s*=\s*false\s*$/m, 'mail worker must explicitly set workers_dev = false');
-    assert.ok(!/^\s*workers_dev\s*=\s*true\s*$/m.test(workerToml), 'mail worker must not expose workers.dev');
-    // Apex cutover (D6) has executed: inbound mail is our canonical receive
-    // path and must be explicitly enabled, not silently defaulted by deploy.
-    assert.match(
-      workerToml,
-      /^\s*MAIL_INBOUND_ENABLED\s*=\s*"1"\s*$/m,
-      'cutover complete: inbound mail must be enabled',
-    );
-
+    // The Worker config (workers.dev disabled, inbound enabled) lives in the
+    // flaxia-mail repo and is guarded by its own routing test.
     const pagesToml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
     assert.ok(pagesToml.includes('MAIL_SERVICE'), 'Pages must bind MAIL_SERVICE');
     assert.ok(pagesToml.includes('MAIL_DOMAIN = "flaxia.app"'), 'mail domain must be apex flaxia.app');
@@ -93,7 +82,8 @@ describe('security guards', () => {
   });
 
   it('never decrypts vault key material server-side (mail included)', () => {
-    const offenders = walk(join(ROOT, 'mail-worker'))
+    const mailFiles = [join(ROOT, 'functions/api/routes/mail.ts'), join(ROOT, 'functions/lib/mail-service.ts')];
+    const offenders = mailFiles
       .filter((file) =>
         /deriveVaultKe|unlockVaultWith|unwrapSecret|decryptVaultItem|wrapVaultKey/.test(readFileSync(file, 'utf8')),
       )

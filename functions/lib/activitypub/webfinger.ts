@@ -1,5 +1,4 @@
-/// <reference types="@cloudflare/workers-types" />
-
+import type { Db } from '../ports/index.ts';
 import { actorUrl, parseWebfingerResource, profileUrl } from './actor.ts';
 
 /**
@@ -11,7 +10,7 @@ import { actorUrl, parseWebfingerResource, profileUrl } from './actor.ts';
  */
 
 export interface WebFingerEnv {
-  DB: D1Database;
+  DB: Db;
   BASE_URL: string;
 }
 

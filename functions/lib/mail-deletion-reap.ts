@@ -2,8 +2,9 @@
 // original request (docs/mail.md §11.3). Runs from the scheduled backend
 // worker, which holds the MAIL_SERVICE binding.
 import { deleteMailAccount, type MailServiceEnv } from './mail-service.ts';
+import type { Db } from './ports/index.ts';
 
-type ReapEnv = MailServiceEnv & { DB: D1Database };
+type ReapEnv = MailServiceEnv & { DB: Db };
 
 export async function reapMailDeletions(env: ReapEnv): Promise<number> {
   const rows = await env.DB.prepare(

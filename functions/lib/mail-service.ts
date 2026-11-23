@@ -5,35 +5,15 @@
 // timestamp, the HTTP method, the exact path+query, and the body hash, so a
 // captured signature cannot be replayed against a different endpoint.
 
-import { hmacHex } from './hmac.ts';
-import { sha256Hex } from './sha256.ts';
+import { signMailInternal } from '@flaxia/mail-contract';
 
-export { sha256Hex };
+export { sha256Hex } from './sha256.ts';
+export { signMailInternal };
 
 export type MailServiceEnv = {
   MAIL_SERVICE?: Fetcher;
   MAIL_INTERNAL_SECRET?: string;
 };
-
-export async function signMailInternal(
-  env: MailServiceEnv,
-  userId: string,
-  method: string,
-  path: string,
-  body = '',
-): Promise<Record<string, string> | null> {
-  const secret = env.MAIL_INTERNAL_SECRET;
-  if (!secret) return null;
-
-  const ts = String(Math.floor(Date.now() / 1000));
-  const target = new URL(`https://flaxia-mail${path}`);
-  const message = `${userId}.${ts}.${method.toUpperCase()}.${target.pathname}${target.search}.${await sha256Hex(body)}`;
-  return {
-    'x-flaxia-user-id': userId,
-    'x-flaxia-ts': ts,
-    'x-flaxia-sig': await hmacHex(secret, message),
-  };
-}
 
 export async function callMailService(
   env: MailServiceEnv,

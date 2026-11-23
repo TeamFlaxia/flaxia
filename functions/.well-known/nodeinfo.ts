@@ -1,4 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
 interface Env {
   BASE_URL: string;
 }

@@ -1,4 +1,4 @@
-/// <reference types="@cloudflare/workers-types" />
+import type { Db } from '../ports/index.ts';
 
 /**
  * Author presentation for remote ActivityPub posts.
@@ -10,10 +10,7 @@
 /**
  * Present a remote post with the author of the remote actor.
  */
-export async function enrichPostsWithRemoteAuthors(
-  posts: Array<Record<string, unknown>>,
-  db: D1Database,
-): Promise<void> {
+export async function enrichPostsWithRemoteAuthors(posts: Array<Record<string, unknown>>, db: Db): Promise<void> {
   const nested: Array<Record<string, unknown>> = [];
   for (const post of posts) {
     const quoted = post.quoted_post;

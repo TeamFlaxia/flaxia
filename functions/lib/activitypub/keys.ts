@@ -1,5 +1,4 @@
-/// <reference types="@cloudflare/workers-types" />
-
+import type { Db } from '../ports/index.ts';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from './crypto.ts';
 
 /**
@@ -9,7 +8,7 @@ import { exportPrivateKey, exportPublicKey, generateKeyPair } from './crypto.ts'
  * never federated has no key yet. Concurrent requests must never replace a
  * published key, so the row is only inserted once.
  */
-export async function ensureActorKey(db: D1Database, userId: string): Promise<string> {
+export async function ensureActorKey(db: Db, userId: string): Promise<string> {
   const existing = await db
     .prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
     .bind(userId)
@@ -44,7 +43,7 @@ export async function ensureActorKey(db: D1Database, userId: string): Promise<st
  * that federates with it.
  */
 export async function actorSignOptions(
-  db: D1Database,
+  db: Db,
   baseUrl: string,
   username: string,
 ): Promise<{ privateKeyPem: string; keyId: string } | Record<string, never>> {
@@ -60,7 +59,7 @@ export async function actorSignOptions(
 }
 
 /** The private key of a local actor, when it exists. */
-export async function actorPrivateKey(db: D1Database, userId: string): Promise<string | null> {
+export async function actorPrivateKey(db: Db, userId: string): Promise<string | null> {
   const key = await db
     .prepare('SELECT private_key_pem FROM actor_keys WHERE user_id = ?')
     .bind(userId)

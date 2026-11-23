@@ -32,7 +32,7 @@ separate repository is *possible* later, but neither is part of this decision.
    - composition roots that receive the real bindings: `functions/api/[[route]].ts`,
      `functions/queue-worker.ts`, `src/sandbox-worker.ts`
    - generated artifacts (`*.generated.ts`, `*.d.ts`, `worker-configuration.d.ts`)
-   - other independently deployed runtimes (`mail-worker/`, `do-worker/`,
+   - other independently deployed runtimes (`flaxia-mail`, `do-worker/`,
      `multiplayer-worker/`)
 3. Port definitions mirror today's binding shapes so the first migration is a
    pure adapter change with no behaviour change.
@@ -49,6 +49,24 @@ separate repository is *possible* later, but neither is part of this decision.
   of implementing the same ports.
 - The baseline is intentionally ugly at first. It is a ratchet, not an
   endorsement: every PR may remove entries, none may add them.
+
+## Progress
+
+Ports are defined in `functions/lib/ports/index.ts`: `Db`, `Kv`, `BlobStore`,
+`Queue`, `Realtime`, `Vector`, and `Tasks` (over `waitUntil`). The only
+implementation is `functions/lib/adapters/cloudflare/**`, and
+`createCloudflareServices(env, ctx)` is the single conversion point. At the time
+of writing it is called from `functions/api/routes/media.ts` only.
+
+- **Media upload is fully port-based.** `functions/lib/media-upload.ts` uses
+  `services.db/kv/blobs/tasks` and has no direct `c.env` access;
+  `tests/media-upload-ports.test.ts` guards that.
+- The remaining ratchet baseline is **92 files / 147 violations** in
+  `tests/architecture-baseline.json`. The ratchet only shrinks: a PR may remove
+  entries, never add them.
+- **Next target:** migrate the `Db` port into more routes, starting with the
+  feed and post routes that still declare `D1Database` / `c.env`. Each migrated
+  slice must delete its baseline entries in the same PR.
 
 ## Non-goals
 

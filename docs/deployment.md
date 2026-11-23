@@ -13,56 +13,73 @@ wrangler d1 execute flaxia --remote --command "UPDATE users SET role='admin' WHE
 
 ## Overview
 
-Flaxia consists of 4+ deployable components:
+Flaxia consists of several independently deployed components. The auth and mail
+Workers live in their own repositories; the rest are deploy units inside this
+repo:
 
 | Component | Config | Deployment Command |
 |---|---|---|
-| Main Pages (SPA + API) | `wrangler.toml` | `pnpm deploy` |
-| Queue Worker (ActivityPub delivery, `flaxia-ap-delivery`) | `wrangler.worker.toml` | GitHub Actions `deploy-queue` |
-| Sandbox Worker | `wrangler.sandbox.toml` | `pnpm deploy:sandbox` |
-| Mail Worker (`flaxia-mail`) | `mail-worker/wrangler.toml` | `npm run deploy:mail`（D1 migrate 後にデプロイ。`workers.dev` 公開なし） |
+| Main Pages (SPA + API) | `wrangler.toml` | `npm run deploy` |
+| Auth Worker (`flaxia-auth`, separate repo) | `../flaxia-auth/wrangler.jsonc` | run from the `TeamFlaxia/flaxia-auth` repo |
+| Mail Worker (`flaxia-mail`, separate repo; no `workers.dev` route) | `../flaxia-mail/worker/wrangler.toml` | deploy from the `TeamFlaxia/flaxia-mail` repo |
+| Queue Worker (ActivityPub delivery, `flaxia-ap-delivery`) | `wrangler.worker.toml`, `functions/queue-worker.ts` | GitHub Actions `deploy-queue` |
+| Sandbox Worker (`flaxia-sandbox`) | `wrangler.sandbox.toml` | `npm run deploy:sandbox` |
+| DO Worker (`notif-stream`) | `do-worker/wrangler.toml` | `npm run deploy:do` |
+| Multiplayer Worker (`multiplayer-worker`) | `multiplayer-worker/wrangler.toml` | `npm run deploy:multiplayer` |
 | Status Worker (`status.flaxia.app`) | `status-worker/wrangler.toml.example`（設定は未作成） | 現在デプロイ不可（下記参照） |
 
+Repo / データ所有 / secret / デプロイ順の全体像は
+`docs/architecture/service-map.md` を参照。
+
 ## Flaxia Mail (`docs/mail.md`)
+
+**Mail は独立デプロイ。** Worker・D1・R2・queue は `TeamFlaxia/flaxia-mail` リポジトリが
+所有し、共有契約は `@flaxia/mail-contract`（mail address / WebCrypto・HMAC / ECIES）
+として公開されている。Flaxia 側に残るのは `functions/api/routes/mail.ts` の proxy、
+`src/lib/mail/*` と `src/routes/mail/*` の UI、`MAIL_SERVICE` binding、および
+`MAIL_INTERNAL_SECRET` の設定だけ。`MAIL_THREAD_SECRET` は Worker 側で管理する。
+`mail-worker/` と `npm run deploy:mail` は分割完了に伴いこのリポジトリから削除済み。
+
+デプロイ順は **mail → pages**。Pages は `MAIL_SERVICE` を service 名で解決するため、
+Flaxia の mail API 側に変更が入るときは先に `flaxia-mail` をデプロイする
+（`.github/workflows/deploy.yml` の `deploy-queue` も mail internal API の変更前に
+mail をデプロイするようコメントしている）。
 
 Mail は apex `flaxia.app` の `@flaxia.app` メールボックス。既存の human Email Routing 転送は削除され、ユーザーメールは Mail Worker（`flaxia-mail`）へ向き、未知の宛先は 550 で拒否される（D6）。`postmaster@flaxia.app` と `abuse@flaxia.app` の2件だけは Email Routing で `teamflaxia@proton.me` へ転送される例外（`docs/mail.md` §11.1.3）。
 
 ```bash
-# 1. Mail の D1 / R2 / Queue を作成
-npx wrangler d1 create flaxia-mail
-#    -> database_id は mail-worker/wrangler.toml にコミット済み。
-#       DB を作り直した場合だけ、その値を更新してコミットする。
-npx wrangler r2 bucket create flaxia-mail-content
-npx wrangler queues create flaxia-mail-queue
-npx wrangler queues create flaxia-mail-dlq
-# 本番 migrate は deploy.yml の deploy-mail が実行する。
-# ローカルから実行する場合: npm run migrate:mail:prod
+# flaxia-mail リポジトリ（worker/ が Worker の root。deploy は CI と同じ手順）
+npx wrangler d1 create flaxia-mail                   # 初回のみ
+npx wrangler r2 bucket create flaxia-mail-content    # 初回のみ
+npx wrangler queues create flaxia-mail-queue         # 初回のみ
+npx wrangler queues create flaxia-mail-dlq           # 初回のみ
 
-# 2. Worker をデプロイ（Email Routing ハンドラ + 内部 API）
-npm run deploy:mail
+cd worker
+npx wrangler d1 migrations apply flaxia-mail --remote  # deploy より先に適用
+npx wrangler deploy
+npx wrangler secret put MAIL_INTERNAL_SECRET
+npx wrangler secret put MAIL_THREAD_SECRET
+```
 
-# 3. Pages 側の binding が有効になるよう Pages をデプロイする。
-#    P2 (MIME parse / 暗号化保存 / threading / 一覧・スレッド UI) は実装済み。
-#    ただし初回デプロイでは Email Routing / MX をまだ切り替えず、
-#    MAIL_INBOUND_ENABLED=0 のままテストする。受信テストが通ったら
-#    Worker の MAIL_INBOUND_ENABLED を "1" にして Email Routing を cutover する。
-#    MAIL_INTERNAL_SECRET / MAIL_THREAD_SECRET は secret として設定:
-npx wrangler secret put MAIL_INTERNAL_SECRET --config mail-worker/wrangler.toml
-npx wrangler secret put MAIL_THREAD_SECRET --config mail-worker/wrangler.toml
+```bash
+# Flaxia リポジトリ（Pages と scheduled queue worker）
 npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
-# 予約されたアカウント削除（scheduled backend worker）も Mail を消すため、
-# 同じ secret を backend worker にも設定する。
 npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.worker.toml
 ```
 
-DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。初回デプロイでは Email Routing に一切触れない。P2 の受信 cutover は `docs/mail.md` §11.1 の手順で行う。
+`database_id` は `flaxia-mail` リポジトリの `worker/wrangler.toml` にコミット済み。
+DB を作り直した場合だけ、その値を更新してコミットする。P2 (MIME parse / 暗号化保存 /
+threading / 一覧・スレッド UI) は実装済みで、2026-11-07 の apex cutover 以降
+`MAIL_INBOUND_ENABLED=1` で受信している。受信を止めたい障害時だけ `"0"` にして再デプロイする。
+
+DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。apex cutover は 2026-11-07 に実行済みで、catch-all は Mail Worker に向いている。再構築・障害時の手順は `docs/mail.md` §11.1 を正とする。
 
 ### postmaster/abuse 転送（Cloudflare ダッシュボード作業）
 
 コード変更は不要。Cloudflare Email Routing で以下を設定します：
 
 1. **宛先（Destination）を登録・検証** — `teamflaxia@proton.me` を Destination Address として追加。Cloudflare から届く確認メールを proton.me 側で承認する。未検証の宛先への転送ルールは作成できない。
-2. **ルーティングルール（Custom address）** — `postmaster@flaxia.app` → `teamflaxia@proton.me`、`abuse@flaxia.app` → `teamflaxia@proton.me` の2件を作成。どちらのルールも「Catch-all」の上位に置く。**P1 デプロイでは catch-all を変更しない**（P2 の cutover 時に Mail Worker へ向ける）。
+2. **ルーティングルール（Custom address）** — `postmaster@flaxia.app` → `teamflaxia@proton.me`、`abuse@flaxia.app` → `teamflaxia@proton.me` の2件を作成。どちらのルールも catch-all（Mail Worker 行き）の上位に置く。
 3. **検証** — 外部アドレスから `postmaster@flaxia.app` / `abuse@flaxia.app` 宛にテスト送信し、proton.me 側に届くことを確認する。届かなければ Email Routing の「Domain status」が `Active` になっているか、宛先が `Verified` かを確認する。
 4. **注意** — この2アドレスのメールは Flaxia Mail の暗号化境界の外（proton.me 上で平文として格納される）。プライバシーポリシー等では「Flaxia Mail の暗号化はこの2アドレスには適用されない」と案内すること。
 
@@ -70,10 +87,11 @@ DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール�
 
 ```bash
 # Build and deploy to Cloudflare Pages
-pnpm build && pnpm deploy
+npm run build && npm run deploy
 
 # This runs:
-# CONTENT_ORIGIN=https://sandbox.flaxia.app wrangler pages deploy dist
+# CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app \
+#   wrangler pages deploy dist
 ```
 
 The build output is in `dist/`.
@@ -99,7 +117,7 @@ before deploying.
 
 ## GitHub bug reports (#263)
 
-Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits. The table stores only reservation metadata (a content fingerprint, issue URL, and expiry), never report text, diagnostics, or screenshots; the scheduled backend worker removes expired rows daily.
+Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits. The table stores only reservation metadata (a content fingerprint, issue URL, and expiry), never report text, diagnostics, or screenshots; the scheduled queue worker (`flaxia-ap-delivery`) removes expired rows daily.
 
 The Settings → Other → Report a bug form creates public issues in
 `TeamFlaxia/flaxia`. Configure a GitHub App installed on that repository with
@@ -115,7 +133,8 @@ npx wrangler pages secret put GITHUB_APP_PRIVATE_KEY --project-name flaxia
 The private key may be the PEM downloaded from GitHub. The installation token
 is created server-side for each submission and is never sent to the browser.
 If credentials are missing, the form reports that submission is unavailable.
-Redeploy the backend worker (below) to enable its daily cleanup of expired
+Redeploy the queue worker (`flaxia-ap-delivery`, below) to enable its daily
+cleanup of expired
 reservation rows.
 
 ## Queue Worker (`flaxia-ap-delivery`)
@@ -138,10 +157,10 @@ npx wrangler deploy functions/queue-worker.ts \
 ## Sandbox Worker
 
 ```bash
-pnpm deploy:sandbox
+npm run deploy:sandbox
 
 # This runs:
-# wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
+# npm run build:game-loader && wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
 ```
 
 The sandbox worker serves ZIP/HTML5 content from R2 at the sandbox origin (`sandbox.flaxia.app`).
@@ -227,15 +246,16 @@ wrangler tail --config wrangler.worker.toml
 
 ## Important Notes
 
-- Both `flaxia-backend` and `flaxia` (Pages) must be deployed together for ActivityPub to work
-- The sandbox origin is a separate Worker with its own routes
-- `wrangler.toml` references the backend Worker by script name — ensure the backend Worker is deployed first
+- Both `flaxia-ap-delivery` (queue worker) and `flaxia` (Pages) must be deployed together for ActivityPub to work
+- The sandbox origin is a separate Worker (`flaxia-sandbox`) with its own routes
+- `wrangler.toml` binds `notif-stream` and `multiplayer-worker` by script name, and `AUTH_SERVICE` / `MAIL_SERVICE` by service name — deploy those services first
+- Mail deploys before Pages (Pages only needs `MAIL_SERVICE` plus the HMAC secrets)
 - Environment-specific config is handled via Wrangler secrets/vars, not `.env` files in production
 
 ## ActivityPub delivery dead-letter queue (#141)
 
 The deployment workflow ensures the dead-letter queue exists in the same
-Cloudflare account before deploying `flaxia-backend`. For manual deployment,
+Cloudflare account before deploying `flaxia-ap-delivery`. For manual deployment,
 create it once before deploying with `wrangler.worker.toml`:
 
 ```bash

@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
 import { signRequest } from './signature.ts';
 

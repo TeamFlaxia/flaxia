@@ -28,12 +28,8 @@
     "deploy:sandbox": "npm run build:game-loader && wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml",
     "deploy:do": "wrangler deploy --config do-worker/wrangler.toml",
     "deploy:multiplayer": "wrangler deploy --config multiplayer-worker/wrangler.toml",
-    "deploy:mail": "wrangler deploy --config mail-worker/wrangler.toml",
     "dev:do": "wrangler dev --config do-worker/wrangler.toml --port 8789 --inspector-port 9232",
     "dev:multiplayer": "wrangler dev --config multiplayer-worker/wrangler.toml --port 8790 --inspector-port 9233",
-    "dev:mail": "wrangler dev --config mail-worker/wrangler.toml --port 8791 --inspector-port 9234",
-    "migrate:mail:local": "wrangler d1 migrations apply flaxia-mail --local --config mail-worker/wrangler.toml",
-    "migrate:mail:prod": "wrangler d1 migrations apply flaxia-mail --remote --config mail-worker/wrangler.toml",
     "setup": "npm install && npm run migrate:local",
     "migrate:local": "wrangler d1 migrations apply flaxia --local",
     "migrate:prod": "wrangler d1 migrations apply flaxia --remote",
@@ -120,7 +116,8 @@
     "postal-mime": "^2.7.6",
     "qrcode": "^1.5.4",
     "stripe": "^22.6.0",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "@flaxia/mail-contract": "file:vendor/flaxia-mail-contract-0.1.0.tgz"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",

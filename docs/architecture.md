@@ -59,9 +59,44 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 
 | Binding | Type | Resource | Usage |
 |---|---|---|---|
-| `DB` | D1 database | `flaxia` | All persistent data |
+| `DB` | D1 database | `flaxia` | All persistent SNS data |
 | `BUCKET` | R2 bucket | `flaxia-content` | Post payloads, images, audio, avatars |
+| `CACHE` | KV namespace | `CACHE` | Game/asset cache |
 | `AP_DELIVERY_QUEUE` | Queue | `activitypub-delivery` | ActivityPub inbox delivery |
+| `AUTH_SERVICE` | Service binding | `flaxia-auth` (`FlaxiaBridge`) | Credential authority: sessions, SRP, Vault delegation (`https://auth.flaxia.app`) |
+| `MAIL_SERVICE` | Service binding | `flaxia-mail` | Mailbox API; the Worker has no public `workers.dev` route |
+| `NOTIFICATION_STREAM` | Durable Object | `notif-stream` | Notification fanout |
+| `MULTIPLAYER_ROOM`, `MATCHMAKER` | Durable Object | `multiplayer-worker` | Multiplayer rooms and matchmaking |
+
+## External service boundaries
+
+The two-origin model above stays the security boundary for untrusted content.
+In addition, three services are reached through explicit boundaries rather than
+sharing this repository's data:
+
+```
+flaxia.app (Pages)
+  ├── AUTH_SERVICE ──► flaxia-auth  (FlaxiaBridge, D1 flaxia-auth-prod)
+  ├── MAIL_SERVICE ──► flaxia-mail  (D1 flaxia-mail, R2 flaxia-mail-content)
+  └── HTTPS ─────────► crowd.flaxia.app (flaxia-crowd orchestrator)
+                         └── @flaxia/node + @flaxia/sdk (friedflaxia wasm vendored)
+```
+
+- **Auth** is the production credential authority since 2026-10-30
+  (`AUTH_AUTHORITY_MODE=flaxia-auth`). Flaxia calls it through the
+  `AUTH_SERVICE` binding; it is not reached by a public route from this app.
+- **Mail** is a separate deploy unit. The Pages side keeps
+  `functions/api/routes/mail.ts` (proxy + HMAC), the SPA UI, and the
+  `MAIL_SERVICE` binding. The Worker, its D1/R2/queues, and the mail contract
+  (`@flaxia/mail-contract`) live outside this repo.
+- **Crowd** is an HTTP boundary: Flaxia submits tasks to
+  `https://crowd.flaxia.app` and verifies the signed webhooks it receives back,
+  and serves the pinned browser node bundle at `/api/crowd/*` from
+  `@flaxia/node` 0.9.1 (see `functions/api/crowd/[[route]].ts`). Flaxia does not
+  read or write Crowd's orchestration state.
+
+The full repository/service/secret inventory is in
+[`architecture/service-map.md`](architecture/service-map.md).
 
 ## postMessage Bridge
 

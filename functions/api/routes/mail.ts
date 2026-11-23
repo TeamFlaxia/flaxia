@@ -6,8 +6,9 @@
 // trusts a bare user id from the browser.
 //
 // P1 ships: addresses, keys, quota. Threads/messages/send land in P2/P3.
+
+import { RESERVED_LOCALS } from '@flaxia/mail-contract';
 import { type Context, Hono } from 'hono';
-import { RESERVED_LOCALS } from '../../../shared/mail-address.ts';
 import { getSessionToken } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';

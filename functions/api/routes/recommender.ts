@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { Db } from '../../lib/ports/index.ts';
 
 const DWELL_STATS_CACHE_KEY = 'arcade:dwell:stats:v2';
 const DWELL_STATS_TTL_S = 60;
@@ -7,7 +7,7 @@ const DWELL_STATS_TTL_S = 60;
 // (60s) instead of re-scanning the whole user_game_plays table on every
 // recommended-games request. The scan is also bounded to a recent window.
 async function loadDwellStats(
-  db: D1Database,
+  db: Db,
   cache: KVNamespace | undefined,
 ): Promise<{ dwellStats: Map<string, { avgDwell: number; playCount: number }>; maxAvgDwell: number }> {
   if (cache) {

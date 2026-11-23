@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { actorUrl, noteUrl, profileUrl } from './actor.ts';
 import { activityContext, PUBLIC_COLLECTION } from './context.ts';
 import { extractHashtags, textToHtml } from './text.ts';

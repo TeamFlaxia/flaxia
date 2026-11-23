@@ -136,3 +136,6 @@ public/maplibre-worker.js
 
 # SvelteKit generated files
 .svelte-kit/
+
+# Vendored @flaxia/mail-contract tarball (interim until npm publish)
+!vendor/*.tgz
