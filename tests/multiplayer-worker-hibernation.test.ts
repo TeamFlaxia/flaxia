@@ -151,5 +151,11 @@ describe('MultiplayerRoom hibernation', () => {
     const joined = messages(hostSocket).find((message) => message.type === 'player_joined');
     assert.ok(joined, 'host did not receive player_joined after eviction');
     assert.equal((joined.player as { userId: string }).userId, 'guest-1');
+
+    // The host's lobby count comes from room_state, not player_joined.
+    const hostState = messages(hostSocket).find(
+      (message) => message.type === 'room_state' && (message.players as unknown[]).length === 2,
+    );
+    assert.ok(hostState, 'host did not receive a two-player room_state');
   });
 });
