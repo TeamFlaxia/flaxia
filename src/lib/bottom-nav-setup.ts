@@ -15,6 +15,10 @@ export interface BottomNavDeps {
 }
 
 let bottomNav: BottomNav | null = null;
+// The instance is a singleton mounted on <body>, but its callbacks must follow
+// whichever route/shell is current. Keep the latest deps instead of capturing
+// the first shell's closures forever.
+let currentDeps: BottomNavDeps | null = null;
 
 /** Shared navigation handler for the mobile bottom bar. */
 function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
@@ -34,16 +38,18 @@ function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
 
 /** Create the single global bottom-nav instance once and mount it. */
 export async function ensureBottomNav(deps: BottomNavDeps): Promise<BottomNav> {
+  currentDeps = deps;
   if (!bottomNav) {
+    const latest = (): BottomNavDeps => currentDeps ?? deps;
     bottomNav = await lazyCreateBottomNav({
-      activeItem: deps.getActiveItem?.() || 'home',
-      currentUser: deps.getCurrentUser() || undefined,
-      onNavigate: (item: string) => handleBottomNavNavigate(deps, item),
+      activeItem: latest().getActiveItem?.() || 'home',
+      currentUser: latest().getCurrentUser() || undefined,
+      onNavigate: (item: string) => handleBottomNavNavigate(latest(), item),
       onSignIn: () => {
-        deps.navigate('login');
+        latest().navigate('login');
       },
       onSignUp: () => {
-        deps.navigate('register');
+        latest().navigate('register');
       },
     });
     document.body.appendChild(bottomNav.getElement());

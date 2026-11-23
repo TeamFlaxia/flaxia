@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: TeamFlaxia/flaxia-auth
-          ref: 17d71f417cf3c887f2607f3b94db326332d41d03
+          ref: e3fe0c9512c0cbcbd37a9c115960a403b75a2f01
           path: .integration/flaxia-auth
       - uses: actions/setup-node@v7
         with:

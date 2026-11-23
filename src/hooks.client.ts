@@ -5,18 +5,50 @@
 // "(intermediate value)(...) is not a function".
 //
 // Keep the original error observable without ever assuming console.error is a
-// function.
-export function handleError(input: {
-  error: unknown;
-  status: number;
-  message: string;
-  event: { url: URL | string };
-}): void {
+// function. SvelteKit 3 removed the top-level `message`/`status` properties in
+// production, so read `kind` and `error` (with a legacy fallback) instead.
+import type { HandleClientError } from '@sveltejs/kit/hooks';
+
+function safeStringify(value: unknown): string {
+  try {
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function field(value: object, name: string): unknown {
+  return name in value ? (value as Record<string, unknown>)[name] : undefined;
+}
+
+export const handleError: HandleClientError = (input) => {
+  const source = input as unknown as {
+    kind?: string;
+    error?: unknown;
+    message?: unknown;
+    status?: unknown;
+    event: { url: URL | string };
+  };
+  const error = source.error;
+  const errorObject = error !== null && typeof error === 'object' ? (error as object) : null;
+
+  const message =
+    (errorObject && typeof field(errorObject, 'message') === 'string' ? field(errorObject, 'message') : undefined) ??
+    (source.kind === 'unknown' ? 'Internal Error' : undefined) ??
+    (typeof source.message === 'string' ? source.message : undefined);
+  const status =
+    (errorObject && typeof field(errorObject, 'status') === 'number' ? field(errorObject, 'status') : undefined) ??
+    (source.kind === 'unknown' ? 500 : undefined) ??
+    (typeof source.status === 'number' ? source.status : undefined);
+
   const detail = {
-    message: input.message,
-    status: input.status,
-    url: String(input.event.url),
-    stack: input.error instanceof Error ? input.error.stack : String(input.error),
+    kind: source.kind ?? 'legacy',
+    message,
+    status,
+    url: String(source.event.url),
+    name: error instanceof Error ? error.name : typeof error,
+    stack: error instanceof Error ? error.stack : safeStringify(error),
   };
 
   const scope = globalThis as unknown as { __flaxiaLastError?: typeof detail };
@@ -27,4 +59,4 @@ export function handleError(input: {
   } else if (typeof console.log === 'function') {
     console.log('[flaxia] handleError', detail);
   }
-}
+};

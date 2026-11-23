@@ -60,7 +60,7 @@ test('flaxia packages are consumed from vendor tarballs', () => {
     dependencies?: Record<string, string>;
   };
   const deps = root.dependencies ?? {};
-  for (const name of ['@flaxia/node', '@flaxia/sdk']) {
+  for (const name of ['@flaxia/node', '@flaxia/sdk', '@flaxia/mail-contract']) {
     const spec = deps[name];
     assert.ok(spec, `root package.json is missing dependency ${name}`);
     assert.ok(

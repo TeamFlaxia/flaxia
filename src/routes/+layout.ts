@@ -5,11 +5,13 @@ export const prerender = false;
 // be loaded before any route component mounts.
 export async function load() {
   if (typeof window === 'undefined') return {};
-  const { initShellBootstrap } = await import('../lib/svelte/bootstrap.ts');
-  const { initI18n } = await import('../lib/i18n.ts');
-  const { loadSessionUser } = await import('../lib/svelte/session.ts');
+  const [{ initShellBootstrap }, { initI18n }, { loadSessionUser }] = await Promise.all([
+    import('../lib/svelte/bootstrap.ts'),
+    import('../lib/i18n.ts'),
+    import('../lib/svelte/session.ts'),
+  ]);
+  // Patch fetch first, but the two independent boot requests can run together.
   initShellBootstrap();
-  await initI18n();
-  await loadSessionUser();
+  await Promise.all([initI18n(), loadSessionUser()]);
   return {};
 }

@@ -2904,6 +2904,20 @@
   display: none;
 }
 
+/* The banner is hidden above, so the legacy banner-overlap offset must be
+   removed too: `top:-44px` would pull the avatar under the sticky topbar and
+   shift the bio up, clipping the profile header. */
+.main-container:has(.profile-page) .profile-avatar {
+  top: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-width: 1px;
+}
+
+.main-container:has(.profile-page) .profile-header {
+  padding-top: 16px;
+}
+
 /* Settings is a focused workspace: hide the right rail and let the
    two-pane settings surface breathe. */
 .main-container:has(.settings-page) .right-panel {

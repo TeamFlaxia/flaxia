@@ -22,7 +22,7 @@ interface PlayerSummary {
 
 // Stored on the WebSocket itself so a hibernated room can rebuild its player
 // list after Cloudflare evicts the in-memory Durable Object instance.
-type PlayerAttachment = Omit<PlayerInfo, 'ws'>;
+type PlayerAttachment = Omit<PlayerInfo, 'ws'> & { departed?: boolean };
 
 interface RoomMeta {
   roomId: string;
@@ -439,6 +439,7 @@ export class MultiplayerRoom {
     for (const ws of sockets) {
       const attachment = ws.deserializeAttachment() as PlayerAttachment | null;
       if (!attachment || typeof attachment.userId !== 'string') continue;
+      if (attachment.departed) continue;
       restored.set(attachment.userId, { ...attachment, ws });
     }
     this.players = restored;
@@ -446,6 +447,7 @@ export class MultiplayerRoom {
       for (const player of restored.values()) {
         if (player.isHost) {
           this.hostId = player.userId;
+          this.persistMeta();
           break;
         }
       }
@@ -466,7 +468,24 @@ export class MultiplayerRoom {
   }
 
   private removePlayer(userId: string): void {
+    const departing = this.players.get(userId);
     this.players.delete(userId);
+    // Close the socket as well: restorePlayers() rebuilds the map from live
+    // sockets, so a departed player who keeps the socket open would otherwise
+    // be resurrected by the next handler invocation.
+    if (departing) {
+      try {
+        const { ws: _ws, ...attachment } = departing;
+        departing.ws.serializeAttachment({ ...attachment, departed: true });
+      } catch {
+        // A socket that is already closing cannot persist its attachment.
+      }
+      try {
+        departing.ws.close(1000, 'Left the room');
+      } catch {
+        // The socket may already be closing.
+      }
+    }
 
     if (this.players.size === 0) {
       this.cleanup();
@@ -488,11 +507,13 @@ export class MultiplayerRoom {
       }
     }
 
+    // Promote the terminal status before the room_state broadcast so the last
+    // client never receives a stale `playing` state followed by `game_over`.
+    const finished = this.players.size === 1 && this.status === 'playing';
+    if (finished) this.status = 'finished';
     this.broadcastRoomState();
-
-    if (this.players.size === 1 && this.status === 'playing') {
+    if (finished) {
       const remaining = this.players.values().next().value;
-      this.status = 'finished';
       const result: ServerMessage = {
         type: 'game_over',
         winner: remaining?.userId,
@@ -504,6 +525,12 @@ export class MultiplayerRoom {
 
   private cleanup(): void {
     for (const [, info] of this.players) {
+      try {
+        const { ws: _ws, ...attachment } = info;
+        info.ws.serializeAttachment({ ...attachment, departed: true });
+      } catch {
+        // ignore
+      }
       try {
         info.ws.close(1000, 'Room closed');
       } catch {

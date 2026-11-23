@@ -50,7 +50,7 @@ let loadError = $state('');
 let invalidUsername = $state(false);
 let destroyed = false;
 let unlockHost: HTMLDivElement;
-let unlockInstance: ReturnType<typeof mount> | null = null;
+let unlockInstance: { destroy: () => void } | null = null;
 
 const visible = $derived(
   threads.filter((t) =>
@@ -151,6 +151,7 @@ onMount(() => {
       listAddresses().catch(() => ({ addresses: [] })),
       getMailUnreadCount().catch(() => 0),
     ]);
+    if (destroyed) return;
     unreadTotal = unread;
     const mine = addresses.addresses.find((a) => a.address === address);
     active = mine?.state === 'active';
@@ -159,26 +160,32 @@ onMount(() => {
       return;
     }
     await tryDeviceUnlock();
+    if (destroyed) return;
     locked = !(await import('../vault/session.ts').then((m) => m.isVaultUnlocked()));
+    if (destroyed) return;
     if (locked) {
       loading = false;
       // The unlock host only exists after Svelte renders the locked branch.
       await tick();
+      if (destroyed) return;
       if (unlockHost) {
         unlockInstance = mountVaultUnlock(unlockHost, () => {
+          if (destroyed) return;
           locked = false;
           void loadThreads();
         });
       }
       return;
     }
-    await loadThreads();
+    if (!destroyed) await loadThreads();
   })();
 });
 
 onDestroy(() => {
   destroyed = true;
-  if (unlockInstance) unmount(unlockInstance);
+  // mountVaultUnlock returns a destroy handle, not a Svelte mount instance.
+  unlockInstance?.destroy();
+  unlockInstance = null;
 });
 </script>
 

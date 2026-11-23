@@ -150,9 +150,22 @@ function actionConfig() {
   };
 }
 
-function refreshActions(): void {
-  if (!actionsHost) return;
+let cardDestroyed = false;
+let actionsRefreshQueued = false;
+
+function refreshActionsNow(): void {
+  if (cardDestroyed || !actionsHost) return;
   mountActions(actionsHost, actionConfig() as never);
+}
+
+/** Coalesce the several state updates one toggle causes into one remount. */
+function refreshActions(): void {
+  if (cardDestroyed || actionsRefreshQueued) return;
+  actionsRefreshQueued = true;
+  queueMicrotask(() => {
+    actionsRefreshQueued = false;
+    refreshActionsNow();
+  });
 }
 
 function requireAuth(action: 'reply' | 'post' | 'fresh'): boolean {
@@ -197,9 +210,9 @@ async function toggleFresh(): Promise<void> {
     const res = await fetch(`/api/posts/${props.post.id}/fresh`, { method: 'POST', credentials: 'include' });
     // The counts were already moved optimistically; revert through catch().
     if (!res.ok) throw new Error(`fresh failed: ${res.status}`);
-    const data = (await res.json()) as { fresh_count: number; is_freshed: boolean };
+    const data = (await res.json()) as { fresh_count: number; is_freshed?: boolean; freshed?: boolean };
     freshCount = data.fresh_count;
-    freshed = data.is_freshed;
+    freshed = data.is_freshed ?? data.freshed ?? freshed;
     markRecommendationProfileDirty();
     refreshActions();
     broadcast({ is_freshed: freshed, fresh_count: freshCount });
@@ -213,31 +226,49 @@ async function toggleFresh(): Promise<void> {
 
 async function toggleReload(): Promise<void> {
   if (!requireAuth('fresh')) return;
+  const beforeReloaded = reloaded;
+  const beforeCount = reloadCount;
+  // Federation delivery makes this endpoint slow; reflect the toggle now and
+  // reconcile with the server response (or roll back) later.
+  reloaded = !reloaded;
+  reloadCount = Math.max(0, reloadCount + (reloaded ? 1 : -1));
+  refreshActions();
   try {
     const res = await fetch(`/api/posts/${props.post.id}/reload`, { method: 'POST', credentials: 'include' });
-    if (!res.ok) return;
-    const data = (await res.json()) as { reload_count: number; is_reloaded: boolean };
+    if (!res.ok) throw new Error(`reload failed: ${res.status}`);
+    const data = (await res.json()) as { reload_count: number; is_reloaded?: boolean; reloaded?: boolean };
     reloadCount = data.reload_count;
-    reloaded = data.is_reloaded;
+    reloaded = data.is_reloaded ?? data.reloaded ?? reloaded;
     markRecommendationProfileDirty();
     refreshActions();
     broadcast({ is_reloaded: reloaded, reload_count: reloadCount });
   } catch (e) {
+    reloaded = beforeReloaded;
+    reloadCount = beforeCount;
+    refreshActions();
     console.error('reload failed', e);
   }
 }
 
 async function toggleBookmark(): Promise<void> {
   if (!requireAuth('post')) return;
+  const beforeBookmarked = bookmarked;
+  const beforeCount = bookmarkCount;
+  bookmarked = !bookmarked;
+  bookmarkCount = Math.max(0, bookmarkCount + (bookmarked ? 1 : -1));
+  refreshActions();
   try {
     const res = await fetch(`/api/posts/${props.post.id}/bookmark`, { method: 'POST', credentials: 'include' });
-    if (!res.ok) return;
-    const data = (await res.json()) as { bookmark_count: number; is_bookmarked: boolean };
+    if (!res.ok) throw new Error(`bookmark failed: ${res.status}`);
+    const data = (await res.json()) as { bookmark_count: number; is_bookmarked?: boolean; bookmarked?: boolean };
     bookmarkCount = data.bookmark_count;
-    bookmarked = data.is_bookmarked;
+    bookmarked = data.is_bookmarked ?? data.bookmarked ?? bookmarked;
     refreshActions();
     broadcast({ is_bookmarked: bookmarked, bookmark_count: bookmarkCount });
   } catch (e) {
+    bookmarked = beforeBookmarked;
+    bookmarkCount = beforeCount;
+    refreshActions();
     console.error('bookmark failed', e);
   }
 }
@@ -276,6 +307,18 @@ async function toggleReaction(emoji: string): Promise<void> {
   }
 }
 
+function ensureReplyComposer(): void {
+  if (replyComposer || props.disableReply || props.disableReplyComposer || !replyHost) return;
+  replyComposer = mountReply(replyHost, {
+    postId: props.post.id,
+    sandboxOrigin: props.sandboxOrigin,
+    onReplyCreated: handleReplyCreated,
+    onCancel: () => (replyOpen = false),
+    prefillText: props.postIndex !== undefined ? `>>${props.postIndex} ` : undefined,
+    currentUser: props.currentUser ?? undefined,
+  });
+}
+
 function toggleReply(): void {
   if (props.disableReply) return;
   if (!requireAuth('reply')) return;
@@ -283,7 +326,10 @@ function toggleReply(): void {
   // Thread/timeline shells open their own composer on this bubbling event.
   root?.dispatchEvent(new CustomEvent('replyToggle', { detail: { postId: props.post.id }, bubbles: true }));
   props.onReplyToggle?.(props.post.id);
-  if (replyOpen) queueMicrotask(() => replyComposer?.focus());
+  if (replyOpen) {
+    ensureReplyComposer();
+    queueMicrotask(() => replyComposer?.focus());
+  }
 }
 
 function handleQuote(): void {
@@ -487,7 +533,18 @@ export function updatePost(next: Partial<Post>): void {
   if (next.is_reloaded !== undefined) reloaded = next.is_reloaded;
   if (next.is_bookmarked !== undefined) bookmarked = next.is_bookmarked;
   if (next.reactions !== undefined) reactions = next.reactions;
-  queueMicrotask(refreshActions);
+  const ACTION_KEYS = [
+    'reply_count',
+    'fresh_count',
+    'reload_count',
+    'bookmark_count',
+    'impressions',
+    'is_freshed',
+    'is_reloaded',
+    'is_bookmarked',
+    'reactions',
+  ] as const;
+  if (ACTION_KEYS.some((key) => key in next)) refreshActions();
 }
 
 export function handleReplyTogglePublic(): void {
@@ -512,16 +569,8 @@ onMount(() => {
       sandboxOrigin: props.sandboxOrigin,
       onModeChange: handleStageModeChange,
     });
-  if (!props.disableReply && !props.disableReplyComposer) {
-    replyComposer = mountReply(replyHost, {
-      postId: props.post.id,
-      sandboxOrigin: props.sandboxOrigin,
-      onReplyCreated: handleReplyCreated,
-      onCancel: () => (replyOpen = false),
-      prefillText: props.postIndex !== undefined ? `>>${props.postIndex} ` : undefined,
-      currentUser: props.currentUser ?? undefined,
-    });
-  }
+  // The reply composer is lazy: a feed page used to mount one hidden composer
+  // (and load an avatar) for every card before the user clicked Reply.
   refreshActions();
   mountMenuButton(menuHost, toggleMenu);
 
@@ -563,6 +612,7 @@ onMount(() => {
 });
 
 onDestroy(() => {
+  cardDestroyed = true;
   stage?.destroy();
   replyComposer?.destroy();
   unmountActions(actionsHost);

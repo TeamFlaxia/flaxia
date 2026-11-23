@@ -158,4 +158,54 @@ describe('MultiplayerRoom hibernation', () => {
     );
     assert.ok(hostState, 'host did not receive a two-player room_state');
   });
+
+  it('does not resurrect a player who leaves while the socket stays open', async () => {
+    const state = new FakeState();
+    const params = {
+      userId: 'host-1',
+      username: 'host',
+      gameId: 'game-1',
+      roomId: 'room-1',
+      maxPlayers: '2',
+      hostId: 'host-1',
+    };
+    const room = new MultiplayerRoom(state as never);
+    await state.blocked;
+    await (
+      room as unknown as { handleWebSocketUpgrade: (r: Request, u: URL) => Promise<unknown> }
+    ).handleWebSocketUpgrade(new Request('https://internal/'), socketUrl(params));
+    await (
+      room as unknown as { handleWebSocketUpgrade: (r: Request, u: URL) => Promise<unknown> }
+    ).handleWebSocketUpgrade(
+      new Request('https://internal/'),
+      socketUrl({ ...params, userId: 'guest-1', username: 'guest' }),
+    );
+    await Promise.all(state.pending);
+    assert.equal(state.sockets.length, 2);
+
+    const hostSocket = state.sockets[0];
+    const leave = JSON.stringify({ type: 'leave' });
+    await (room as unknown as { webSocketMessage: (ws: WebSocket, message: string) => Promise<void> }).webSocketMessage(
+      hostSocket as never,
+      leave,
+    );
+    assert.equal(hostSocket.readyState, 3, 'the leaving socket must be closed');
+
+    // Simulate hibernation: a fresh instance must not rebuild the host from
+    // the still-open socket's attachment.
+    const evicted = new MultiplayerRoom(state as never);
+    await state.blocked;
+    const response = await (evicted as unknown as { fetch: (r: Request) => Promise<Response> }).fetch(
+      new Request('https://internal/'),
+    );
+    const body = JSON.parse(String((response as unknown as { body: unknown }).body)) as {
+      playerCount: number;
+      players: Array<{ userId: string }>;
+    };
+    assert.equal(body.playerCount, 1);
+    assert.deepEqual(
+      body.players.map((player) => player.userId),
+      ['guest-1'],
+    );
+  });
 });

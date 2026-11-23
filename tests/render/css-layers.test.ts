@@ -45,4 +45,13 @@ describe('styles/css-entry', () => {
     assert.ok(theme < overrides, 'legacy overrides must follow the token layer');
     assert.ok(overrides < primitives, 'primitives must load last so they can override legacy rules in source order');
   });
+
+  it('neutralizes the legacy avatar overlap when the profile banner is hidden', () => {
+    const pages = read('src/styles/redesign/pages.css');
+    assert.match(pages, /\.main-container:has\(\.profile-page\) \.profile-banner\s*\{\s*display:\s*none/);
+    const avatar = pages.match(/\.main-container:has\(\.profile-page\) \.profile-avatar\s*\{[^}]+\}/);
+    assert.ok(avatar, 'profile avatar needs a banner-hidden offset override');
+    assert.match(avatar[0], /top:\s*0/);
+    assert.match(avatar[0], /margin-bottom:\s*0/);
+  });
 });

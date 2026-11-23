@@ -560,12 +560,52 @@ describe('POST /api/posts/:id/fresh', () => {
       headers: { Cookie: cookie },
     });
     assert.equal(freshRes.status, 200);
+    const freshData = (await freshRes.json()) as {
+      freshed: boolean;
+      is_freshed: boolean;
+      fresh_count: number;
+    };
+    assert.equal(freshData.freshed, true);
+    assert.equal(freshData.is_freshed, true, 'Svelte client reads is_freshed');
+    assert.equal(freshData.fresh_count, 1);
 
     const unfreshRes = await fetch(`${BASE_URL}/api/posts/${postId}/fresh`, {
       method: 'POST',
       headers: { Cookie: cookie },
     });
     assert.equal(unfreshRes.status, 200);
+    const unfreshData = (await unfreshRes.json()) as { freshed: boolean; is_freshed: boolean };
+    assert.equal(unfreshData.freshed, false);
+    assert.equal(unfreshData.is_freshed, false);
+  });
+
+  it('toggles a bookmark with both legacy and canonical response fields', async () => {
+    await seedUserAndLogin('bookmarker');
+    const createRes = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { Cookie: (await seedUserAndLogin('bookmarker-owner')).cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'Bookmark me' }),
+    });
+    const postId = (await createRes.json()).id as string;
+    const cookie = (await seedUserAndLogin('bookmarker')).cookie;
+
+    const first = await fetch(`${BASE_URL}/api/posts/${postId}/bookmark`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(first.status, 200);
+    const firstData = (await first.json()) as { bookmarked: boolean; is_bookmarked: boolean };
+    assert.equal(firstData.bookmarked, true);
+    assert.equal(firstData.is_bookmarked, true);
+
+    const second = await fetch(`${BASE_URL}/api/posts/${postId}/bookmark`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(second.status, 200);
+    const secondData = (await second.json()) as { bookmarked: boolean; is_bookmarked: boolean };
+    assert.equal(secondData.bookmarked, false);
+    assert.equal(secondData.is_bookmarked, false);
   });
 
   it("generates notification for other's post", async () => {

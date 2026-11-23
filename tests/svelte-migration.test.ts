@@ -428,9 +428,30 @@ test('client error hook is safe against patched console methods', async () => {
   const hook = await read('src/hooks.client.ts');
   assert.match(hook, /typeof console\.error === 'function'/);
   assert.match(hook, /__flaxiaLastError/);
+  assert.match(hook, /source\.error/, 'log the real error, not the removed message/status properties');
+  assert.match(hook, /source\.kind/, 'keep the SvelteKit error kind');
   const headers = await read('public/_headers');
-  assert.match(headers, /script-src-elem 'self' 'unsafe-inline'/);
+  assert.doesNotMatch(headers, /script-src-elem[^;]*'unsafe-inline'/);
+  assert.match(headers, /script-src [^;]*'sha256-/);
   assert.match(headers, /static\.cloudflareinsights\.com/);
+});
+
+test('engagement endpoints expose canonical is_* fields for the Svelte cards', async () => {
+  const engagement = await read('functions/api/routes/posts/engagement.ts');
+  for (const field of ['is_freshed', 'is_reloaded', 'is_bookmarked']) {
+    assert.match(engagement, new RegExp(field), `${field} must be in the toggle response`);
+  }
+  const card = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(card, /data\.is_freshed \?\? data\.freshed/);
+  assert.match(card, /data\.is_reloaded \?\? data\.reloaded/);
+  assert.match(card, /data\.is_bookmarked \?\? data\.bookmarked/);
+});
+
+test('mail page tears down its unlock adapter safely on navigation', async () => {
+  const mail = await read('src/lib/svelte/MailPage.svelte');
+  assert.doesNotMatch(mail, /unmount\(unlockInstance\)/, 'mountVaultUnlock returns a destroy handle, not a mount');
+  assert.match(mail, /unlockInstance\?\.destroy\(\)/);
+  assert.match(mail, /if \(destroyed\) return;/, 'async setup must stop after the page is destroyed');
 });
 
 test('legacy main entrypoint is gone', async () => {

@@ -18,7 +18,7 @@ let { view, threadId = '' }: { view: MailViewKind; threadId?: string } = $props(
 let pendingDraftId = view === 'compose' ? takePendingDraftId() || undefined : undefined;
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
-let navProps: Record<string, unknown> = {};
+let navProps = $state<Record<string, unknown>>({});
 
 const currentUser = $derived((getSessionUser() ?? null) as { id: string; username: string } | null);
 

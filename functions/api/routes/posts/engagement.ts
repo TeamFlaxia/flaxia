@@ -62,7 +62,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
       });
     }
 
-    return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 });
+    return c.json({ freshed: false, is_freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
     // Add fresh
     await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id, created_at) VALUES (?, ?, ?)')
@@ -137,7 +137,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
       });
     }
 
-    return c.json({ freshed: true, fresh_count: result?.fresh_count ?? 0 });
+    return c.json({ freshed: true, is_freshed: true, fresh_count: result?.fresh_count ?? 0 });
   }
 });
 
@@ -169,7 +169,7 @@ engagement.post('/posts/:id/bookmark', requireAuth, async (c) => {
       .bind(postId)
       .first<{ bookmark_count: number }>();
 
-    return c.json({ bookmarked: false, bookmark_count: result?.bookmark_count ?? 0 });
+    return c.json({ bookmarked: false, is_bookmarked: false, bookmark_count: result?.bookmark_count ?? 0 });
   } else {
     await c.env.DB.prepare('INSERT INTO bookmarks (post_id, user_id) VALUES (?, ?)').bind(postId, userId).run();
 
@@ -179,7 +179,7 @@ engagement.post('/posts/:id/bookmark', requireAuth, async (c) => {
       .bind(postId)
       .first<{ bookmark_count: number }>();
 
-    return c.json({ bookmarked: true, bookmark_count: result?.bookmark_count ?? 0 });
+    return c.json({ bookmarked: true, is_bookmarked: true, bookmark_count: result?.bookmark_count ?? 0 });
   }
 });
 
@@ -666,7 +666,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
         cc: announce.cc,
       });
 
-      const response = { reloaded: false, reload_count: result?.reload_count ?? 0 };
+      const response = { reloaded: false, is_reloaded: false, reload_count: result?.reload_count ?? 0 };
       return c.json(legacyAlias ? { ...response, shared: false } : response);
     }
 
@@ -738,7 +738,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     };
     await deliverReloadActivity(c, post, currentUser, announce);
 
-    const response = { reloaded: true, reload_count: result?.reload_count ?? 0 };
+    const response = { reloaded: true, is_reloaded: true, reload_count: result?.reload_count ?? 0 };
     return c.json(legacyAlias ? { ...response, shared: true, share_id: reloadId } : response);
   } catch (error: unknown) {
     console.error('Reload error:', error);

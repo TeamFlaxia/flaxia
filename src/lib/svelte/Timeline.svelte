@@ -292,7 +292,8 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 onMount(() => {
-  void Promise.race([loadAdConfig(), new Promise<void>((resolve) => setTimeout(resolve, 1000))]).then(
+  // Ads are optional: never hold the first feed request for a full second.
+  void Promise.race([loadAdConfig(), new Promise<void>((resolve) => setTimeout(resolve, 200))]).then(
     () => void loadInitial(),
   );
 

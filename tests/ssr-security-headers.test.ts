@@ -174,10 +174,10 @@ test('main policy hashes trusted inline scripts and blocks other inline JS', asy
     }
   }
   assert.ok(scriptSrc.includes(hashSource(ADSENSE_INLINE_BOOTSTRAP)), 'AdSense iframe bootstrap must stay allowed');
-  assert.ok(
-    scriptSrc.includes("'sha256-9jpcqwJpr7kicF5b0vRUbAJtyA6CqjotdcnTjIv8i4U='"),
-    'legacy ZIP wrapper bootstrap must stay allowed',
-  );
+  assert.doesNotMatch(csp, /script-src-elem/, 'script elements must stay governed by the hashed script-src');
+  for (const directive of csp.split(';').filter((part) => /^\s*script-/.test(part))) {
+    assert.doesNotMatch(directive, /'unsafe-inline'/, 'script directives must not allow inline code');
+  }
   assert.doesNotMatch(index, /\son[a-z]+\s*=/i, 'static app HTML must not contain inline event handlers');
   assert.doesNotMatch(ssr, /\son[a-z]+\s*=/i, 'SSR shell must not contain inline event handlers');
 
