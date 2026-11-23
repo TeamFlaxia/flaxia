@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "build": "vite build",
-    "dev": "vite build --watch"
+    "dev": "vite build --watch",
+    "prepublishOnly": "node -e \"console.error('npm publishing is disabled; use the GitHub Release tarball'); process.exit(1)\""
   },
   "license": "MIT",
   "devDependencies": {

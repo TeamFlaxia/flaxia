@@ -1,8 +1,8 @@
 /**
- * Pinned `@flaxia/node` version served through the /api/crowd asset proxy.
+ * Pinned `@flaxia/node` version.
  *
- * The SPA, native build preparation, and Pages Functions must agree on this
- * value: the proxy caches by version, so a mismatch between the client URL and
- * the server allowlist would 404 assets.
+ * The SPA, native build preparation, and the Vite build must agree on this
+ * value. The browser bundle is copied to `/crowd/v<version>-0/` in the static
+ * output (same-origin, immutable) and served from node_modules in dev.
  */
 export const CROWD_NODE_VERSION = '0.9.1';

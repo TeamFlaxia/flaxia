@@ -90,10 +90,11 @@ flaxia.app (Pages)
   `MAIL_SERVICE` binding. The Worker, its D1/R2/queues, and the mail contract
   (`@flaxia/mail-contract`) live outside this repo.
 - **Crowd** is an HTTP boundary: Flaxia submits tasks to
-  `https://crowd.flaxia.app` and verifies the signed webhooks it receives back,
-  and serves the pinned browser node bundle at `/api/crowd/*` from
-  `@flaxia/node` 0.9.1 (see `functions/api/crowd/[[route]].ts`). Flaxia does not
-  read or write Crowd's orchestration state.
+  `https://crowd.flaxia.app` and verifies the signed webhooks it receives back.
+  The pinned browser node bundle (`@flaxia/node` 0.9.1, a vendored tarball) is
+  copied into the static output at `/crowd/v0.9.1-0/` by
+  `scripts/postbuild.mjs` and served same-origin. Flaxia does not read or write
+  Crowd's orchestration state.
 
 The full repository/service/secret inventory is in
 [`architecture/service-map.md`](architecture/service-map.md).

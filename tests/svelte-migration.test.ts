@@ -417,10 +417,11 @@ test('image previews always open the fullscreen viewer', async () => {
   assert.match(adapter, /onOpenOverlay: \(\) => \{\s*createImageOverlay/);
 });
 
-test('the dev crowd proxy serves the pinned bundle path', async () => {
+test('the dev crowd node bundle is served same-origin', async () => {
   const config = await read('vite.config.ts');
-  assert.match(config, /split\('\?'\)/);
-  assert.match(config, /replace\(\/\^v\[\^\/\]\+\\\/\/, ''\)/);
+  assert.match(config, /crowd-node-dev/);
+  assert.ok(config.includes('node_modules/@flaxia/node/dist'));
+  assert.doesNotMatch(config, /unpkg\.com/);
 });
 
 test('client error hook is safe against patched console methods', async () => {

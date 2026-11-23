@@ -13,16 +13,12 @@
     "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
     "dev": "vite build --watch",
     "test": "node --test --experimental-strip-types ../../tests/game-sdk.test.ts",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "node -e \"console.error('npm publishing is disabled; use the GitHub Release tarball'); process.exit(1)\""
   },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TeamFlaxia/flaxia.git"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
   },
   "dependencies": {},
   "devDependencies": {

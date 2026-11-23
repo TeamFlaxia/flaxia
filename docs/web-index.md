@@ -56,11 +56,12 @@ Scheduled worker (`wrangler.worker.toml`):
 
 ## Crowd release ordering
 
-The Flaxia node bundle pin intentionally stays at the published version. The
-Crowd release that adds `cc-extract` and `embed-gemma` must be published first;
+The Flaxia node bundle pin intentionally stays at a released version. Release
+`@flaxia/node` first (GitHub Release tarball), vendor it in `flaxia/vendor/`,
 then update `CROWD_NODE_VERSION` and add both capabilities in
-`src/lib/crowd-node.ts`. Deploying Flaxia with an unpublished version would make
-the `/api/crowd` asset proxy return 404 and stop existing nodes from loading.
+`src/lib/crowd-node.ts`. Deploying Flaxia with a version that is not in the
+vendored tarball would make `/crowd/v<version>-0/index.js` 404 and stop
+existing nodes from loading.
 
 ## Tables
 

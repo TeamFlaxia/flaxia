@@ -31,11 +31,44 @@ repo:
 Repo / データ所有 / secret / デプロイ順の全体像は
 `docs/architecture/service-map.md` を参照。
 
+## Package distribution
+
+**No Flaxia package is published to the npm registry.** Packages stay public (no
+`private` flag) so anyone can read them, but a `prepublishOnly` script refuses to
+publish. Distribution is two things only:
+
+1. A committed tarball inside the consumer (`vendor/*.tgz`, referenced as a
+   `file:` dependency in `package.json`).
+2. A GitHub Release asset (the same tarball) on the producer's repo.
+
+| Package | Consumer reference | Release asset |
+|---|---|---|
+| `@flaxia/node` 0.9.1 | `flaxia/vendor/flaxia-node-0.9.1.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/node-v0.9.1/flaxia-node-0.9.1.tgz` |
+| `@flaxia/sdk` 0.7.1 | `flaxia/vendor/flaxia-sdk-0.7.1.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/sdk-v0.7.1/flaxia-sdk-0.7.1.tgz` |
+| `@flaxia/mail-contract` 0.1.1 | `flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` | `https://github.com/TeamFlaxia/flaxia-mail/releases/download/contract-v0.1.1/flaxia-mail-contract-0.1.1.tgz` |
+
+Upgrading a package means bumping the tarball in `vendor/`, updating the `file:`
+path, and re-running the install; there is no semver range to resolve.
+
+The **Game SDK is not distributed at all**: it is served from the sandbox origin
+as `/sdk/game.js` (IIFE, global `FlaxiaGame`) and is part of the sandbox deploy.
+
+### Crowd browser assets
+
+The Crowd node bundle the browser loads is copied from
+`node_modules/@flaxia/node/dist` into the Pages build output at
+`/crowd/v0.9.1-0/`. It is therefore **same-origin** (`flaxia.app`), versioned by
+path, and served with an immutable cache header; it ships with the ordinary Pages
+deploy. There is no unpkg asset proxy — only `/api/crowd/webhook` and
+`/api/crowd/scan-file` remain as Crowd routes. CSP still allows `unpkg.com` for
+Ruffle (the third-party Flash player) and nothing of ours.
+
 ## Flaxia Mail (`docs/mail.md`)
 
 **Mail は独立デプロイ。** Worker・D1・R2・queue は `TeamFlaxia/flaxia-mail` リポジトリが
-所有し、共有契約は `@flaxia/mail-contract`（mail address / WebCrypto・HMAC / ECIES）
-として公開されている。Flaxia 側に残るのは `functions/api/routes/mail.ts` の proxy、
+所有し、共有契約は `@flaxia/mail-contract`（mail address / WebCrypto・HMAC / ECIES）。
+Flaxia 側ではこの契約を npm からではなく `vendor/flaxia-mail-contract-0.1.1.tgz`
+（`file:` 依存）として参照する。Flaxia 側に残るのは `functions/api/routes/mail.ts` の proxy、
 `src/lib/mail/*` と `src/routes/mail/*` の UI、`MAIL_SERVICE` binding、および
 `MAIL_INTERNAL_SECRET` の設定だけ。`MAIL_THREAD_SECRET` は Worker 側で管理する。
 `mail-worker/` と `npm run deploy:mail` は分割完了に伴いこのリポジトリから削除済み。

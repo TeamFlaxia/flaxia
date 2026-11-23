@@ -75,7 +75,8 @@
     "cap:build:ios": "node scripts/patch-native-bridges.mjs && npx cap sync && npx cap copy && node scripts/patch-native-deeplink.mjs",
     "prepare": "husky",
     "build:game-loader": "node scripts/patch-native-bridges.mjs && node scripts/build-game-loader.mjs && node scripts/build-offline-game.mjs",
-    "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs tests/offline-games.browser.mjs"
+    "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs tests/offline-games.browser.mjs",
+    "prepublishOnly": "node -e \"console.error('npm publishing is disabled; use the GitHub Release tarball'); process.exit(1)\""
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
@@ -90,8 +91,8 @@
     "@cloudflare/kv-asset-handler": "^0.5.0",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
-    "@flaxia/node": "0.9.1",
-    "@flaxia/sdk": "^0.7.1",
+    "@flaxia/node": "file:vendor/flaxia-node-0.9.1.tgz",
+    "@flaxia/sdk": "file:vendor/flaxia-sdk-0.7.1.tgz",
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.4.0",
     "@scure/bip39": "^2.4.0",
