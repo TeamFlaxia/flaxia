@@ -1,46 +1,44 @@
-// Legacy-compatible bridge: the preview DOM is owned by ImagePreview.svelte.
-// The fullscreen lightbox (pinch/zoom/pan/gallery) stays here for now; callers
-// only append the returned element, so they keep working unchanged.
 import { mount, unmount } from 'svelte';
 import { GifPreviewProps } from '../../shared/types/post.ts';
-import { createDataSaverPlaceholder } from '../lib/data-saver.js';
-import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
-import { icon } from '../lib/icons.js';
-import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js';
-import { registerModal } from '../lib/modal-state.js';
+import { openImageLightbox } from '../lib/media/image-lightbox.ts';
 import { nativeApiHref } from '../lib/native-api.js';
-import { setOfflineImage } from '../lib/offline-image.js';
 import { isDataSaverEnabled } from '../lib/settings.js';
 import ImagePreview from '../lib/svelte/ImagePreview.svelte';
+import DataSaverPlaceholder from '../lib/svelte/media/DataSaverPlaceholder.svelte';
+import MediaFallback from '../lib/svelte/media/MediaFallback.svelte';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const target = document.createElement('div');
 
   // Data-saver: don't fetch image bytes until the user taps.
   if (!props.src && !props.dataSaverConfirmed && isDataSaverEnabled()) {
-    const placeholder = createDataSaverPlaceholder(t('media.data_saver_load_image'), () => {
-      const real = createImagePreview({ ...props, dataSaverConfirmed: true });
-      target.replaceWith(real);
-    });
     target.className = 'image-preview';
-    target.appendChild(placeholder);
+    const placeholder = mount(DataSaverPlaceholder, {
+      target,
+      props: {
+        label: t('media.data_saver_load_image'),
+        onLoad: () => {
+          const real = createImagePreview({ ...props, dataSaverConfirmed: true });
+          target.replaceWith(real);
+          unmount(placeholder);
+        },
+      },
+    });
     return target;
   }
 
   if (!props.gifKey && !props.src) {
-    const fallback = document.createElement('div');
-    fallback.className = 'image-preview-error';
-    fallback.textContent = t('image_preview.no_preview');
-    target.className = 'image-preview';
-    target.appendChild(fallback);
+    mount(MediaFallback, {
+      target,
+      props: { message: t('image_preview.no_preview') },
+    });
     return target;
   }
 
   const imageUrl =
     props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
-  const baseImageUrl =
-    props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
+  const baseImageUrl = imageUrl;
 
   const instance = mount(ImagePreview, {
     target,
@@ -71,433 +69,12 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   return target;
 }
 
-// Create image overlay modal with pinch-to-zoom and pan.
-// When `gallery` (image attachment keys) has more than one entry, prev/next
-// controls navigate between the post's images.
+/**
+ * Fullscreen lightbox bridge. The zoom/pan/gallery UI lives in
+ * ImageLightbox.svelte; this adapter only owns the exit animation and unmount.
+ */
 function createImageOverlay(imageUrl: string, postId: string, gallery?: string[], galleryIndex = 0): void {
-  const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  const overlay = document.createElement('div');
-  overlay.className = 'fx-lightbox';
-  overlay.setAttribute('role', 'dialog');
-  overlay.setAttribute('aria-modal', 'true');
-  overlay.setAttribute('aria-label', t('image_preview.post_full_size', { id: postId }));
-  overlay.tabIndex = -1;
-
-  const imageContainer = document.createElement('div');
-  imageContainer.className = 'fx-lightbox__stage';
-
-  const zoomWrapper = document.createElement('div');
-  zoomWrapper.className = 'fx-lightbox__zoom';
-
-  const fullImage = document.createElement('img');
-  fullImage.className = 'fx-lightbox__img';
-  fullImage.alt = t('image_preview.post_full_size', { id: postId });
-  fullImage.draggable = false;
-
-  let scale = 1;
-  let translateX = 0;
-  let translateY = 0;
-  let imgW = 0;
-  let imgH = 0;
-  let containerW = 0;
-  let containerH = 0;
-  const MIN_SCALE = 1;
-  const MAX_SCALE = 5;
-
-  function applyTransform(): void {
-    zoomWrapper.style.transform = `translate(${translateX.toFixed(1)}px, ${translateY.toFixed(1)}px) scale(${scale.toFixed(4)})`;
-  }
-
-  function centerImage(): void {
-    translateX = (containerW - imgW) / 2;
-    translateY = (containerH - imgH) / 2;
-    applyTransform();
-  }
-
-  function clampTranslation(): void {
-    if (scale <= 1) {
-      centerImage();
-      return;
-    }
-    const sw = imgW * scale;
-    const sh = imgH * scale;
-    const marginX = Math.max(containerW * 0.15, 40);
-    const marginY = Math.max(containerH * 0.15, 40);
-    const maxPanX = Math.max((sw - containerW) / 2 + marginX, 0);
-    const maxPanY = Math.max((sh - containerH) / 2 + marginY, 0);
-    const targetCx = containerW / 2;
-    const targetCy = containerH / 2;
-    const cx = translateX + sw / 2;
-    const cy = translateY + sh / 2;
-    translateX = Math.max(targetCx - maxPanX, Math.min(targetCx + maxPanX, cx)) - sw / 2;
-    translateY = Math.max(targetCy - maxPanY, Math.min(targetCy + maxPanY, cy)) - sh / 2;
-    applyTransform();
-  }
-
-  function handleZoom(newScale: number, cx: number, cy: number): void {
-    newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
-    const ratio = newScale / scale;
-    translateX = cx - (cx - translateX) * ratio;
-    translateY = cy - (cy - translateY) * ratio;
-    scale = newScale;
-    clampTranslation();
-    applyTransform();
-    zoomWrapper.style.cursor = scale > 1 ? 'grab' : 'default';
-  }
-
-  function initImage(): void {
-    containerW = imageContainer.clientWidth;
-    containerH = imageContainer.clientHeight;
-    if (!fullImage.naturalWidth || !fullImage.naturalHeight || !containerW || !containerH) {
-      return;
-    }
-    const imgAspect = fullImage.naturalWidth / fullImage.naturalHeight;
-    const cAspect = containerW / containerH;
-    if (imgAspect > cAspect) {
-      imgW = containerW;
-      imgH = containerW / imgAspect;
-    } else {
-      imgH = containerH;
-      imgW = containerH * imgAspect;
-    }
-    fullImage.style.width = `${imgW}px`;
-    fullImage.style.height = `${imgH}px`;
-    fullImage.style.visibility = 'visible';
-    centerImage();
-  }
-
-  // Hide and collapse the currently decoded frame so the previous image does
-  // not linger while the next one is being fetched/decoded.
-  function clearImage(): void {
-    imgW = 0;
-    imgH = 0;
-    fullImage.style.visibility = 'hidden';
-    fullImage.style.width = '0px';
-    fullImage.style.height = '0px';
-  }
-
-  fullImage.onload = initImage;
-  fullImage.onerror = clearImage;
-  setOfflineImage(fullImage, imageUrl);
-  if (fullImage.complete && fullImage.naturalWidth > 0) {
-    initImage();
-  } else {
-    clearImage();
-  }
-
-  // Touch event state
-  let touchStartX = 0;
-  let touchStartY = 0;
-  let touchStartTx = 0;
-  let touchStartTy = 0;
-  let isDragging = false;
-  let pinchStartDist = 0;
-  let pinchStartScale = 1;
-  let pinchStartTx = 0;
-  let pinchStartTy = 0;
-  let pinching = false;
-  let lastTapTime = 0;
-  let lastTapX = 0;
-  let lastTapY = 0;
-
-  function touchDist(t1: Touch, t2: Touch): number {
-    return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-  }
-
-  zoomWrapper.addEventListener(
-    'touchstart',
-    (e: TouchEvent) => {
-      e.preventDefault();
-      if (imgW === 0) return;
-      if (e.touches.length === 1) {
-        isDragging = scale > 1;
-        pinching = false;
-        touchStartX = e.touches[0].clientX;
-        touchStartY = e.touches[0].clientY;
-        touchStartTx = translateX;
-        touchStartTy = translateY;
-      } else if (e.touches.length === 2) {
-        isDragging = false;
-        pinching = true;
-        pinchStartDist = touchDist(e.touches[0], e.touches[1]);
-        pinchStartScale = scale;
-        pinchStartTx = translateX;
-        pinchStartTy = translateY;
-      }
-    },
-    { passive: false },
-  );
-
-  zoomWrapper.addEventListener(
-    'touchmove',
-    (e: TouchEvent) => {
-      e.preventDefault();
-      if (imgW === 0) return;
-      if (e.touches.length === 1 && isDragging) {
-        translateX = touchStartTx + (e.touches[0].clientX - touchStartX);
-        translateY = touchStartTy + (e.touches[0].clientY - touchStartY);
-        clampTranslation();
-      } else if (e.touches.length === 2 && pinching && pinchStartDist > 0) {
-        const dist = touchDist(e.touches[0], e.touches[1]);
-        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        const rect = imageContainer.getBoundingClientRect();
-        const cx = midX - rect.left;
-        const cy = midY - rect.top;
-        const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, pinchStartScale * (dist / pinchStartDist)));
-        const ratio = newScale / pinchStartScale;
-        translateX = cx - (cx - pinchStartTx) * ratio;
-        translateY = cy - (cy - pinchStartTy) * ratio;
-        scale = newScale;
-        clampTranslation();
-        zoomWrapper.style.cursor = scale > 1 ? 'grab' : 'default';
-      }
-    },
-    { passive: false },
-  );
-
-  zoomWrapper.addEventListener('touchend', (e: TouchEvent) => {
-    // Double-tap detection
-    if (e.changedTouches.length === 1 && !pinching) {
-      const now = Date.now();
-      const tapX = e.changedTouches[0].clientX;
-      const tapY = e.changedTouches[0].clientY;
-      const dt = now - lastTapTime;
-      const dist = Math.hypot(tapX - lastTapX, tapY - lastTapY);
-      if (dt < 300 && dist < 30 && imgW > 0) {
-        if (scale > 1.5) {
-          handleZoom(1, containerW / 2, containerH / 2);
-        } else {
-          const rect = imageContainer.getBoundingClientRect();
-          handleZoom(2.5, tapX - rect.left, tapY - rect.top);
-        }
-        lastTapTime = 0;
-      } else {
-        lastTapTime = now;
-        lastTapX = tapX;
-        lastTapY = tapY;
-      }
-    }
-    // Handle finger count transitions
-    if (e.touches.length === 0) {
-      isDragging = false;
-      pinching = false;
-    } else if (e.touches.length === 1 && scale > 1) {
-      isDragging = true;
-      pinching = false;
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-      touchStartTx = translateX;
-      touchStartTy = translateY;
-    } else {
-      isDragging = false;
-      pinching = false;
-    }
-    zoomWrapper.style.cursor = scale > 1 ? 'grab' : 'default';
-  });
-
-  zoomWrapper.addEventListener('touchcancel', () => {
-    isDragging = false;
-    pinching = false;
-  });
-
-  // Mouse wheel zoom (desktop)
-  zoomWrapper.addEventListener(
-    'wheel',
-    (e: WheelEvent) => {
-      if (imgW === 0) return;
-      e.preventDefault();
-      const rect = imageContainer.getBoundingClientRect();
-      const cx = e.clientX - rect.left;
-      const cy = e.clientY - rect.top;
-      const factor = e.deltaY > 0 ? 1 / 1.1 : 1.1;
-      handleZoom(scale * factor, cx, cy);
-    },
-    { passive: false },
-  );
-
-  // Mouse drag panning (desktop)
-  let mouseDownX = 0;
-  let mouseDownY = 0;
-  let mouseDownTx = 0;
-  let mouseDownTy = 0;
-  let mouseDragging = false;
-
-  zoomWrapper.addEventListener('mousedown', (e: MouseEvent) => {
-    if (e.button !== 0 || scale <= 1 || imgW === 0) return;
-    e.preventDefault();
-    mouseDragging = true;
-    mouseDownX = e.clientX;
-    mouseDownY = e.clientY;
-    mouseDownTx = translateX;
-    mouseDownTy = translateY;
-    zoomWrapper.style.cursor = 'grabbing';
-  });
-
-  const onMouseMove = (e: MouseEvent) => {
-    if (!mouseDragging) return;
-    translateX = mouseDownTx + (e.clientX - mouseDownX);
-    translateY = mouseDownTy + (e.clientY - mouseDownY);
-    clampTranslation();
-  };
-
-  const onMouseUp = () => {
-    if (mouseDragging) {
-      mouseDragging = false;
-      zoomWrapper.style.cursor = scale > 1 ? 'grab' : 'default';
-    }
-  };
-
-  document.addEventListener('mousemove', onMouseMove);
-  document.addEventListener('mouseup', onMouseUp);
-
-  // Close button (positioned outside the image container)
-  const closeButton = document.createElement('button');
-  closeButton.type = 'button';
-  closeButton.className = 'fx-lightbox__close';
-  closeButton.setAttribute('aria-label', t('common.close'));
-  closeButton.appendChild(icon('close'));
-
-  const unregister = registerModal();
-  let navKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-  let closing = false;
-  const closeOverlay = () => {
-    if (closing) return;
-    closing = true;
-    unregister();
-    document.removeEventListener('mousemove', onMouseMove);
-    document.removeEventListener('mouseup', onMouseUp);
-    document.removeEventListener('keydown', handleEsc);
-    document.removeEventListener('keydown', handleTab);
-    if (navKeyHandler) document.removeEventListener('keydown', navKeyHandler);
-    closeWithAnimation(overlay, () => {
-      safeRemoveFromBody(overlay);
-      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
-    });
-  };
-
-  closeButton.onclick = (e) => {
-    e.stopPropagation();
-    closeOverlay();
-  };
-
-  overlay.onclick = (e) => {
-    if (e.target === overlay) {
-      closeOverlay();
-    }
-  };
-
-  const handleEsc = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      closeOverlay();
-    }
-  };
-  document.addEventListener('keydown', handleEsc);
-
-  const handleTab = (e: KeyboardEvent) => {
-    if (e.key !== 'Tab') return;
-    const tabbables = getTabbableElements(overlay);
-    if (tabbables.length === 0) {
-      e.preventDefault();
-      overlay.focus({ preventScroll: true });
-      return;
-    }
-    const first = tabbables[0];
-    const last = tabbables[tabbables.length - 1];
-    const active = document.activeElement;
-    const activeIndex = active instanceof HTMLElement ? tabbables.indexOf(active) : -1;
-    if (activeIndex === -1) {
-      e.preventDefault();
-      (e.shiftKey ? last : first).focus();
-    } else if (!e.shiftKey && activeIndex === tabbables.length - 1) {
-      e.preventDefault();
-      first.focus();
-    } else if (e.shiftKey && activeIndex === 0) {
-      e.preventDefault();
-      last.focus();
-    }
-  };
-  document.addEventListener('keydown', handleTab);
-
-  // Gallery navigation (multiple image attachments)
-  const hasGallery = !!gallery && gallery.length > 1;
-  let currentIndex = hasGallery ? Math.min(Math.max(galleryIndex, 0), (gallery?.length || 1) - 1) : 0;
-
-  const navButtons: HTMLElement[] = [];
-  const counter = document.createElement('div');
-
-  const updateCounter = () => {
-    counter.textContent = `${currentIndex + 1} / ${gallery?.length || 1}`;
-  };
-
-  const resetZoom = () => {
-    scale = 1;
-    translateX = 0;
-    translateY = 0;
-    zoomWrapper.style.cursor = 'default';
-    applyTransform();
-  };
-
-  const showIndex = (next: number) => {
-    if (!hasGallery || !gallery) return;
-    currentIndex = (next + gallery.length) % gallery.length;
-    resetZoom();
-    clearImage();
-    setOfflineImage(fullImage, nativeApiHref(`/api/images/${gallery[currentIndex]}`));
-    if (fullImage.complete && fullImage.naturalWidth > 0) {
-      initImage();
-    }
-    updateCounter();
-  };
-
-  if (hasGallery) {
-    const makeNav = (dir: -1 | 1) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'fx-lightbox__nav fx-lightbox__nav--' + (dir === -1 ? 'prev' : 'next');
-      btn.textContent = dir === -1 ? '‹' : '›';
-      btn.setAttribute('aria-label', dir === -1 ? 'Previous image' : 'Next image');
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        showIndex(currentIndex + dir);
-      };
-      navButtons.push(btn);
-      return btn;
-    };
-    makeNav(-1);
-    makeNav(1);
-
-    counter.className = 'fx-lightbox__counter';
-    updateCounter();
-
-    const handleNavKeys = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') {
-        e.stopPropagation();
-        showIndex(currentIndex - 1);
-      } else if (e.key === 'ArrowRight') {
-        e.stopPropagation();
-        showIndex(currentIndex + 1);
-      }
-    };
-    document.addEventListener('keydown', handleNavKeys);
-    navKeyHandler = handleNavKeys;
-  }
-
-  // Assemble
-  zoomWrapper.appendChild(fullImage);
-  imageContainer.appendChild(zoomWrapper);
-  overlay.appendChild(imageContainer);
-  overlay.appendChild(closeButton);
-  for (const btn of navButtons) overlay.appendChild(btn);
-  if (hasGallery) overlay.appendChild(counter);
-  document.body.appendChild(overlay);
-  overlay.focus({ preventScroll: true });
-
-  // The image may have finished loading before the overlay was in the DOM
-  // (container size was 0), so size it now that layout is available.
-  if (fullImage.complete && fullImage.naturalWidth > 0) {
-    initImage();
-  }
+  openImageLightbox(imageUrl, postId, gallery, galleryIndex);
 }
 
 // Legacy export for backward compatibility

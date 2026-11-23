@@ -24,6 +24,9 @@ import {
   openShare,
   openVersionHistory,
   type StageHandle,
+  unmountActions,
+  unmountMenu,
+  unmountPostText,
 } from '../post/card-adapters.ts';
 import { openPostModal } from '../post-modal.ts';
 import { getShowNsfw } from '../settings.ts';
@@ -56,6 +59,8 @@ interface Props {
   onTogglePin?: (postId: string) => void;
   /** Notified after the inline reply composer submits successfully. */
   onReplyCreated?: (reply: Post) => void;
+  /** Notified when the reply action is toggled (shells own their composer). */
+  onReplyToggle?: (postId: string) => void;
   /** Reply views hide the leading `>>N` reference from the body. */
   stripLeadingPostRef?: boolean;
 }
@@ -277,6 +282,7 @@ function toggleReply(): void {
   replyOpen = !replyOpen;
   // Thread/timeline shells open their own composer on this bubbling event.
   root?.dispatchEvent(new CustomEvent('replyToggle', { detail: { postId: props.post.id }, bubbles: true }));
+  props.onReplyToggle?.(props.post.id);
   if (replyOpen) queueMicrotask(() => replyComposer?.focus());
 }
 
@@ -356,7 +362,7 @@ function handleReplyCreated(reply: Post): void {
 function toggleMenu(): void {
   if (!menuHost) return;
   if (menuOpen) {
-    menuHost.replaceChildren();
+    unmountMenu(menuHost);
     menuOpen = false;
     mountMenuButton(menuHost, toggleMenu);
     return;
@@ -559,6 +565,9 @@ onMount(() => {
 onDestroy(() => {
   stage?.destroy();
   replyComposer?.destroy();
+  unmountActions(actionsHost);
+  unmountMenu(menuHost);
+  unmountPostText(textHost);
   pauseMediaIn(root);
 });
 </script>
@@ -611,7 +620,7 @@ onDestroy(() => {
   {/if}
   <!-- Kept mounted while editing so Cancel does not drop the rendered text. -->
   <div class="post-text-wrap" hidden={editing}>
-    <div bind:this={textHost} class="post-text">{plainText}</div>
+    <div bind:this={textHost}></div>
   </div>
 
   {#if props.post.poll}

@@ -6,15 +6,15 @@ Flaxia には独自の用語があります。コードを読む前に把握し�
 |------|------|-------------------|
 | **Fresh** | いいね/ライク | `fresh_count`, `is_freshed`, `/api/fresh` |
 | **Freshed** | いいねされた状態 | `Post.is_freshed` |
-| **Arcade** | ゲーム一覧ページ | `ArcadePage.ts` |
+| **Arcade** | ゲーム一覧ページ | `src/lib/svelte/arcade/ArcadePage.svelte` |
 | **Flake** | 投稿で得られるスコア/通貨 | `POST_SCORE` メッセージ |
-| **Stage** | 投稿のインタラクティブ表示エリア | `PostStage.ts` |
+| **Stage** | 投稿のインタラクティブ表示エリア | `src/lib/svelte/media/PostStage.svelte` |
 | **Payload** | ZIP ファイルの添付データ | `Post.payload_key` |
 | **Sandbox** | 信頼できないコードを実行する隔離環境 | `sandbox.flaxia.app` |
 | **Bridge** | サンドボックス↔メインの型安全通信 | `bridge.ts`, `sandbox-bridge.ts` |
 | **WVFS** | Worker Virtual File System | `wvfs-zip-*.ts` |
-| **Timeline** | メインの投稿一覧フィード | `Timeline.ts` |
-| **Thread** | 投稿＋返信ツリーの詳細ページ | `ThreadPage.ts` |
+| **Timeline** | メインの投稿一覧フィード | `Timeline.svelte` |
+| **Thread** | 投稿＋返信ツリーの詳細ページ | `ThreadPage.svelte` |
 | **D1** | Cloudflare の SQLite データベース | バックエンドの DB バインディング |
 | **R2** | Cloudflare のオブジェクトストレージ | 画像/ZIP/SWF の保存先 |
 | **KV** | Cloudflare のキーバリューストア | レート制限など |
@@ -1117,9 +1117,11 @@ PostComposer と似ているが、親投稿への返信として機能。
 
 投稿、ユーザー、アーケードゲームを横断検索。
 
-#### `src/components/ArcadePage.ts` — ゲームアーケード
+#### `src/lib/svelte/arcade/ArcadePage.svelte` — ゲームアーケード
 
 投稿された ZIP/SWF ゲームを一覧表示。ゲームを選んでプレイ可能。
+フィード・プレイヤー・操作・コメントは `src/lib/svelte/arcade/` 配下の
+Svelte コンポーネント、DOM 非依存のロジックは `src/lib/arcade/*.ts` が担当。
 
 #### `src/components/FlashPlayer.ts` — Flash プレイヤー
 
@@ -1169,9 +1171,10 @@ Fresh（いいね）、返信、メンション、フォローなどの通知を
 
 現在トレンドのハッシュタグを表示。
 
-#### `src/components/SkeletonCard.ts` — スケルトンローディング
+#### スケルトンローディング（削除済み）
 
-投稿読み込み中のプレースホルダー。
+`SkeletonCard.ts` / `SkeletonPost` は `UserPostList.svelte` への移行後に
+未使用となったため削除。
 
 #### `src/components/ShareModal.ts` — シェアモーダル
 

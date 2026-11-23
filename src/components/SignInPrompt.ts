@@ -12,23 +12,24 @@ export interface SignInPromptProps {
   onClose?: () => void;
 }
 
+interface Instance {
+  getRoot: () => HTMLElement | undefined;
+}
+
 export function createSignInPrompt(props: SignInPromptProps = {}) {
   const unregister = registerModal();
   const subtitle = props.subtitle || t('auth.sign_up_subtitle');
-  const target = document.createElement('div');
-  document.body.appendChild(target);
 
-  let instance: Parameters<typeof unmount>[0] | null = null;
+  let instance: (Instance & Parameters<typeof unmount>[0]) | null = null;
 
   const destroy = (): void => {
-    if (instance) unmount(instance);
+    if (instance) void unmount(instance);
     instance = null;
     unregister();
-    target.remove();
   };
 
   instance = mount(SignInPrompt, {
-    target,
+    target: document.body,
     props: {
       subtitle,
       onSignIn: () => {
@@ -44,9 +45,9 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
         props.onClose?.();
       },
     },
-  });
+  }) as Instance & Parameters<typeof unmount>[0];
 
-  return { element: target, destroy };
+  return { element: instance.getRoot() as HTMLElement, destroy };
 }
 
 export type SignInPromptAction =

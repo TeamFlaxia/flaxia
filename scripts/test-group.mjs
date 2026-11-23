@@ -62,6 +62,7 @@ const groups = {
     'vault-session',
   ],
   'posts-feeds': [
+    'post-text-helpers',
     'ai-index',
     'chunked-upload',
     'composer-logic',
@@ -92,6 +93,8 @@ const groups = {
     'unique',
   ],
   'media-games': [
+    'arcade-page',
+    'media-stage-migration',
     'arcade-availability',
     'arcade-events',
     'attachments',
@@ -167,6 +170,14 @@ const groups = {
     'signature',
   ],
   'platform-ui': [
+    'modal-logic',
+    'settings/app-update-notice-model',
+    'settings/bottom-nav-model',
+    'settings/category-specs',
+    'settings/private-notes',
+    'settings/svelte-leaves',
+    'settings/user-post-list-model',
+    'settings/vault-unlock-state',
     'admin-analytics',
     'admin-nsfw',
     'android-origin',
@@ -207,10 +218,23 @@ const groups = {
   ],
 };
 
-const testNames = readdirSync(join(root, 'tests'))
-  .filter((name) => name.endsWith('.test.ts'))
-  .map((name) => name.slice(0, -'.test.ts'.length))
-  .sort();
+function collectTestNames(dir, prefix = '') {
+  const names = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      // Nested suites are opt-in; render/integration/federation have their own
+      // runners and must not be swept into the server-backed groups.
+      if (entry.name === 'settings') {
+        names.push(...collectTestNames(join(dir, entry.name), `${prefix}${entry.name}/`));
+      }
+    } else if (entry.name.endsWith('.test.ts')) {
+      names.push(prefix + entry.name.slice(0, -'.test.ts'.length));
+    }
+  }
+  return names;
+}
+
+const testNames = collectTestNames(join(root, 'tests')).sort();
 const known = new Set(testNames);
 const assigned = new Map();
 

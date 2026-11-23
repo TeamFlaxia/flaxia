@@ -5,7 +5,6 @@
 import { toDataURL } from 'qrcode';
 import { onDestroy, onMount, tick } from 'svelte';
 import { encodeB64 } from '../../../shared/vault/primitives.ts';
-import { createPrivateNotesSection as privateNotesSection } from '../../components/PrivateNotesSection.js';
 import { createConfirmDialog as confirmDialog } from '../confirm-dialog.js';
 import { getLocale, t } from '../i18n.ts';
 import { passwordLengthError } from '../password-policy.js';
@@ -37,6 +36,7 @@ import {
   tryDeviceUnlock,
   unlockVault,
 } from '../vault/session.js';
+import PrivateNotesSection from './PrivateNotesSection.svelte';
 
 type View = 'loading' | 'setup' | 'phrase' | 'locked' | 'pairJoin' | 'unlocked' | 'scan';
 
@@ -73,7 +73,6 @@ let scanTimer: number | null = null;
 let scanning = false;
 let pairingSecret: Uint8Array | null = null;
 let pairingPub: Uint8Array | null = null;
-let privateNotesHost = $state<HTMLDivElement>();
 
 const badge = $derived(
   view === 'unlocked' || view === 'scan'
@@ -346,15 +345,6 @@ $effect(() => {
   return () => stopCamera();
 });
 
-$effect(() => {
-  if (view !== 'unlocked' || !privateNotesHost) return;
-  const notes = privateNotesSection();
-  privateNotesHost.appendChild(notes);
-  return () => {
-    notes.remove();
-  };
-});
-
 onMount(() => {
   void (async () => {
     const keys = await fetchVaultKeys();
@@ -540,7 +530,7 @@ onDestroy(() => {
         {t('settings.vault_lock')}
       </button>
     </div>
-    <div bind:this={privateNotesHost}></div>
+    <PrivateNotesSection />
   {:else}
     <h3 class="vault-subtitle">{t('settings.vault_pair_scan_title')}</h3>
     <p class="vault-muted">{t('settings.vault_pair_scan_hint')}</p>

@@ -5,6 +5,7 @@ import { onMount, tick } from 'svelte';
 import { loadSettingsCategories, type SettingsCategory } from '../../components/SettingsPage.ts';
 import { t } from '../i18n.ts';
 import { attachIcons } from '../icons.ts';
+import { groupSettingsCategories } from '../settings/categories.ts';
 
 interface Props {
   currentUser?: Record<string, unknown> | null;
@@ -18,18 +19,7 @@ let active = $state<string | null>(null);
 let content: { categories: SettingsCategory[]; destroy: () => void } | null = null;
 const panels = new Map<string, HTMLElement>();
 
-const groups = $derived.by(() => {
-  const order: Array<{ key: string; items: SettingsCategory[] }> = [];
-  for (const category of categories) {
-    let group = order.find((entry) => entry.key === category.groupKey);
-    if (!group) {
-      group = { key: category.groupKey, items: [] };
-      order.push(group);
-    }
-    group.items.push(category);
-  }
-  return order;
-});
+const groups = $derived(groupSettingsCategories(categories));
 
 function showCategory(id: string, moveFocus = true): void {
   if (!categories.some((category) => category.id === id)) return;

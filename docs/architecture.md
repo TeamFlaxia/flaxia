@@ -117,16 +117,17 @@ fixed file count. Major areas include:
 
 The client is a SvelteKit 5 SPA (`@sveltejs/adapter-static`, `ssr = false`).
 `src/routes/**/+page.svelte` owns route-level layout and session gates;
-`src/lib/svelte/` contains the migrated surfaces. Remaining legacy DOM
-factories live in `src/components/` and are only called from `.ts` adapters
-(never directly from `.svelte`). `LEGACY_ADAPTERS.md` is currently empty and is
-kept as a ratchet (`tests/legacy-adapters.test.ts`).
+`src/lib/svelte/` owns the UI. `src/components/*.ts` now only contain thin
+mount bridges (`mount()`/`unmount()` plus lifecycle) and pure helpers for
+callers that still use a legacy signature; they build no page markup.
+`LEGACY_ADAPTERS.md` is empty and is kept as a ratchet
+(`tests/legacy-adapters.test.ts`).
 
 Routes:
 - `/home` — Global / Following / For You feed (`Timeline.svelte`)
 - `/posts/[id]` — thread detail (`ThreadPage.svelte`)
 - `/profile/[username]`, `/users/[username]` — profiles
-- `/arcade`, `/arcade/[id]` — game browser/player (`ArcadeView` + legacy engine adapter)
+- `/arcade`, `/arcade/[id]` — game browser/player (`ArcadeView` + `src/lib/svelte/arcade/`)
 - `/search`, `/explore`, `/translate`, `/bookmarks`, `/notifications`
 - `/settings`, `/mail/*`, `/admin/[tab]`
 - `/docs/*`, `/download`, `/about`, `/privacy`, `/terms`, `/child-safety`

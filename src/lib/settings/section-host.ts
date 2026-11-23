@@ -2,8 +2,8 @@ import { type Component, mount, unmount } from 'svelte';
 
 /**
  * Mount a Svelte settings section into a `.settings-section` host and return
- * the element plus a disposer. The legacy settings adapter composes these
- * with the sections that have not been rewritten yet.
+ * the element plus a disposer. The settings adapter composes these into
+ * categories; the Svelte shell renders the page chrome.
  */
 export function mountSettingsSection<P extends Record<string, unknown> = Record<string, never>>(
   component: Component<P>,

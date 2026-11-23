@@ -60,15 +60,20 @@ describe('render/media-box-guards', () => {
     assert.match(linkPreview, /imgContainer\.classList\.add\('fx-box'\)/);
     assert.doesNotMatch(linkPreview, /padding-bottom/);
 
-    const carousel = read('src/components/MediaCarousel.ts');
-    assert.match(carousel, /slide\.classList\.add\('fx-box'\)/);
+    const carouselBridge = read('src/components/MediaCarousel.ts');
+    assert.match(carouselBridge, /mount\(MediaCarousel/);
+    const carousel = read('src/lib/svelte/media/MediaCarousel.svelte');
+    assert.match(carousel, /class:fx-box/);
+    assert.match(carousel, /--fx-ratio/);
 
     // The ratio box moved into the Svelte-owned preview in #430.
     const imagePreview = read('src/lib/svelte/ImagePreview.svelte');
     assert.match(imagePreview, /fx-box/);
     assert.match(imagePreview, /--fx-ratio:\s*16\s*\/\s*9/);
 
-    const stage = read('src/components/PostStage.ts');
+    const stageBridge = read('src/components/PostStage.ts');
+    assert.match(stageBridge, /mount\(PostStage/);
+    const stage = read('src/lib/svelte/media/PostStage.svelte');
     assert.match(stage, /--fx-ratio/);
   });
 });
