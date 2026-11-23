@@ -214,23 +214,10 @@ export class MultiplayerRoom {
       isHost,
     };
     this.broadcast({ type: 'player_joined', player: newPlayer }, userId);
-
-    const playerList = this.getPlayerSummaries();
-    const roomMeta: RoomMetadata = {
-      roomId: this.roomId,
-      gameId: this.gameId,
-      hostId: this.hostId,
-      status: this.status,
-      maxPlayers: this.maxPlayers,
-      isPublic: this.isPublic,
-      createdAt: this.createdAt,
-    };
-    const stateMsg: ServerMessage = { type: 'room_state', room: roomMeta, players: playerList };
-    try {
-      server.send(JSON.stringify(stateMsg));
-    } catch {
-      // ignore
-    }
+    // Existing clients keep their player list in sync from room_state, not
+    // from incremental player_joined events. Without this the host stayed at
+    // "1/2" even though the match could start.
+    this.broadcastRoomState();
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -501,6 +488,8 @@ export class MultiplayerRoom {
       }
     }
 
+    this.broadcastRoomState();
+
     if (this.players.size === 1 && this.status === 'playing') {
       const remaining = this.players.values().next().value;
       this.status = 'finished';
@@ -527,6 +516,26 @@ export class MultiplayerRoom {
 
   private setInactivityAlarm(): void {
     this.ctx.storage.setAlarm(Date.now() + INACTIVITY_TIMEOUT_MS);
+  }
+
+  private roomStateMessage(): ServerMessage {
+    return {
+      type: 'room_state',
+      room: {
+        roomId: this.roomId,
+        gameId: this.gameId,
+        hostId: this.hostId,
+        status: this.status,
+        maxPlayers: this.maxPlayers,
+        isPublic: this.isPublic,
+        createdAt: this.createdAt,
+      },
+      players: this.getPlayerSummaries(),
+    };
+  }
+
+  private broadcastRoomState(): void {
+    this.broadcast(this.roomStateMessage());
   }
 
   private getPlayerSummaries(): PlayerSummary[] {
