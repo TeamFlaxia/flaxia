@@ -1,34 +1,36 @@
 <script lang="ts">
+// biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
+// biome-ignore-all lint/correctness/noUnusedImports: Svelte markup reads these
 import { onMount } from 'svelte';
-import { mountArcadePage } from '../../lib/arcade/page.ts';
 import { getBottomNav } from '../../lib/bottom-nav-setup.ts';
 import { navigate } from '../../lib/navigation.ts';
 import { viewToPath } from '../../lib/view-nav.ts';
-// biome-ignore lint/correctness/noUnusedImports: rendered in markup
+import ArcadePage from './arcade/ArcadePage.svelte';
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
 
 let { gameId = '' }: { gameId?: string } = $props();
-let host: HTMLDivElement;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
-let navProps: Record<string, unknown> = {};
+
+type ArcadeUser = {
+  id: string;
+  username: string;
+  display_name?: string;
+  avatar_key?: string;
+  badge_type?: string | null;
+};
+
+// The root layout load resolves the session before the route mounts, so the
+// first feed request already knows whether recommendations are available.
+let currentUser = $state<ArcadeUser | undefined>(getSessionUser() ?? undefined);
+let navProps: Record<string, unknown> = $state({});
 
 onMount(() => {
-  let dispose = () => {};
   void (async () => {
     const { initI18n } = await import('../../lib/i18n.ts');
     const { leftNavCallbacks } = await import('../../lib/left-nav-handlers.ts');
     await initI18n();
-    const user = getSessionUser() as
-      | { id: string; username: string; display_name?: string; avatar_key?: string; badge_type?: string | null }
-      | undefined;
-    const page = mountArcadePage(host, {
-      sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',
-      currentUser: user ?? null,
-      initialGameId: gameId || undefined,
-      onBack: () => void navigate('/home'),
-    });
-    dispose = () => page.destroy();
+    const user = getSessionUser() ?? undefined;
+    currentUser = user;
     getBottomNav()?.setActiveItem('arcade');
     navProps = {
       activeItem: 'arcade',
@@ -39,10 +41,16 @@ onMount(() => {
       }),
     };
   })();
-  return () => dispose();
 });
 </script>
 
 <ShellLayout {navProps} showRightPanel={false}>
-  <div bind:this={host}></div>
+  {#key currentUser?.id ?? 'guest'}
+    <ArcadePage
+      sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}
+      currentUser={currentUser ?? null}
+      initialGameId={gameId || undefined}
+      onBack={() => void navigate('/home')}
+    />
+  {/key}
 </ShellLayout>

@@ -1,5 +1,5 @@
-// Adapter for the legacy vault-unlock form used by the Svelte mail page.
-import { createVaultUnlockForm } from '../../components/VaultUnlockForm.ts';
+// Adapter for the vault-unlock form used by the Svelte mail page.
+import { createVaultUnlockForm } from '../settings/vault-unlock-form.ts';
 
 export function mountVaultUnlock(host: HTMLElement, onUnlocked: () => void): { destroy: () => void } {
   const form = createVaultUnlockForm({ onUnlocked });

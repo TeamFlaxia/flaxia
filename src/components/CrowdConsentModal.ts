@@ -10,15 +10,14 @@ export interface CrowdConsentModalOptions {
 }
 
 export function showCrowdConsentModal(options: CrowdConsentModalOptions): void {
-  const target = document.createElement('div');
-  document.body.appendChild(target);
-  const instance = mount(CrowdConsentModalView as Component, {
-    target,
+  let instance: Parameters<typeof unmount>[0] | null = null;
+  instance = mount(CrowdConsentModalView as Component, {
+    target: document.body,
     props: {
       ...options,
       onDismiss: () => {
-        unmount(instance as never);
-        target.remove();
+        if (instance) void unmount(instance);
+        instance = null;
       },
     },
   });

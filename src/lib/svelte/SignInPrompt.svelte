@@ -17,6 +17,13 @@ let {
   onClose: () => void;
 } = $props();
 
+let root = $state<HTMLDivElement>();
+
+/** The mounted overlay, so the legacy factory can keep returning `element`. */
+export function getRoot(): HTMLElement | undefined {
+  return root;
+}
+
 // biome-ignore lint/correctness/noUnusedVariables: used in markup
 function close(): void {
   onClose();
@@ -26,6 +33,7 @@ function close(): void {
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 <div
   class="signin-prompt-overlay"
+  bind:this={root}
   onclick={(e) => {
     if (e.target === e.currentTarget) close();
   }}

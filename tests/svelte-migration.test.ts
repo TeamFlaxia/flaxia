@@ -165,11 +165,20 @@ test('mailbox list is owned by Svelte', async () => {
   assert.match(adapter, /createVaultUnlockForm/);
 });
 
-test('arcade route mounts the engine through an adapter', async () => {
+test('arcade route renders the Svelte player directly', async () => {
   const view = await read('src/lib/svelte/ArcadeView.svelte');
-  assert.match(view, /mountArcadePage/);
-  const adapter = await read('src/lib/arcade/page.ts');
-  assert.match(adapter, /createArcadePage/);
+  assert.match(view, /ArcadePage\.svelte/);
+  const page = await read('src/lib/svelte/arcade/ArcadePage.svelte');
+  assert.match(page, /ArcadeStage/);
+  assert.match(page, /ArcadeModals/);
+  assert.doesNotMatch(page, /document\.createElement\('div'\)/);
+  const stage = await read('src/lib/svelte/arcade/ArcadeStage.svelte');
+  assert.match(stage, /arcade-game-container/);
+  assert.match(stage, /ArcadeGameViewport/);
+  const viewport = await read('src/lib/svelte/arcade/ArcadeGameViewport.svelte');
+  assert.match(viewport, /mountZipPlayer/);
+  const feed = await read('src/lib/arcade/feed.ts');
+  assert.match(feed, /findAvailableArcadeGame/);
 });
 
 test('admin routes render the standalone admin layout', async () => {
@@ -192,7 +201,7 @@ test('admin routes render the standalone admin layout', async () => {
 
 test('F8 routes use the shell with correct rails', async () => {
   const arcade = await read('src/lib/svelte/ArcadeView.svelte');
-  assert.match(arcade, /mountArcadePage/);
+  assert.match(arcade, /ArcadePage/);
   assert.match(arcade, /initialGameId/);
   for (const route of ['arcade', 'arcade/[id]']) {
     const source = await read(`src/routes/${route}/+page.svelte`);

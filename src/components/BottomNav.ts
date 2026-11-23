@@ -1,7 +1,7 @@
-import { attachPlusBadge } from '../lib/avatar.js';
-import { t } from '../lib/i18n.js';
-import { type IconName, icon } from '../lib/icons.js';
-import { nativeApiHref } from '../lib/native-api.js';
+// Legacy-compatible bridge: the bottom navigation UI is owned by
+// BottomNav.svelte; this keeps the class API used by the shell bootstrap.
+import { type Component, mount, unmount } from 'svelte';
+import BottomNavView from '../lib/svelte/BottomNav.svelte';
 
 export interface BottomNavProps {
   activeItem?: string;
@@ -17,160 +17,40 @@ export interface BottomNavProps {
   onSignUp?: () => void;
 }
 
-/**
- * Mobile-only bottom navigation bar. Rendered as a single global instance and
- * shown only on small screens via CSS. Contains Home / Explore / Arcade /
- * Notifications plus a contextual right-most item: the account avatar (logged in)
- * or a sign-in button (guest).
- */
+interface Instance {
+  setActiveItem: (item: string) => void;
+  updateUser: (user: BottomNavProps['currentUser']) => void;
+  getActiveItem: () => string;
+}
+
+/** Mobile-only bottom navigation bar, rendered as a single global instance. */
 export class BottomNav {
   private element: HTMLElement;
-  private props: BottomNavProps;
-  private activeItem: string;
+  private instance: Instance & Parameters<typeof unmount>[0];
 
   constructor(props: BottomNavProps = {}) {
-    this.props = props;
-    this.activeItem = props.activeItem || 'home';
-    this.element = this.createElement();
-  }
-
-  private createElement(): HTMLElement {
-    const nav = document.createElement('nav');
-    nav.className = 'bottom-nav';
-    nav.appendChild(this.buildItems());
-    return nav;
-  }
-
-  private buildItems(): DocumentFragment {
-    const frag = document.createDocumentFragment();
-
-    const items = [
-      { id: 'home', label: t('nav.home'), icon: 'home' as IconName },
-      { id: 'explore', label: t('nav.explore'), icon: 'search' as IconName },
-      { id: 'arcade', label: t('nav.arcade'), icon: 'game' as IconName },
-      { id: 'notifications', label: t('nav.notifications'), icon: 'notifications' as IconName },
-    ];
-
-    items.forEach((item) => {
-      frag.appendChild(this.createItem(item.id, item.label, item.icon, this.activeItem === item.id));
-    });
-
-    if (this.props.currentUser) {
-      frag.appendChild(this.createAccountItem(this.activeItem === 'account'));
-    } else {
-      frag.appendChild(this.createLoginItem());
-    }
-
-    return frag;
-  }
-
-  private buildIconSpan(name: IconName): HTMLElement {
-    const span = document.createElement('span');
-    span.className = 'bottom-nav-icon';
-    span.appendChild(icon(name));
-    return span;
-  }
-
-  private createItem(id: string, label: string, iconName: IconName, active: boolean): HTMLElement {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
-    btn.setAttribute('data-nav-id', id);
-    btn.setAttribute('aria-current', active ? 'page' : 'false');
-    btn.appendChild(this.buildIconSpan(iconName));
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'bottom-nav-label';
-    labelSpan.textContent = label;
-    btn.appendChild(labelSpan);
-
-    btn.addEventListener('click', () => {
-      if (id === 'notifications' && !this.props.currentUser) {
-        this.props.onSignIn?.();
-        return;
-      }
-      this.setActiveItem(id);
-      this.props.onNavigate?.(id);
-    });
-
-    return btn;
-  }
-
-  private createAccountItem(active: boolean): HTMLElement {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
-    btn.setAttribute('data-nav-id', 'account');
-    btn.setAttribute('aria-current', active ? 'page' : 'false');
-
-    const user = this.props.currentUser!;
-    const avatarKey = user.avatar_key;
-    if (avatarKey && /^avatar\/[A-Za-z0-9_-]{1,128}$/.test(avatarKey)) {
-      const avatar = document.createElement('span');
-      avatar.className = 'bottom-nav-avatar';
-      // avatar_key is server-minted and may be hex (new uploads) or base64url
-      // (legacy uploads), but never trust a stored value inside a style
-      // context: the allowlist above keeps quotes/parens out of `url()`.
-      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${avatarKey}`)})`;
-      btn.appendChild(avatar);
-    } else {
-      const avatar = document.createElement('span');
-      avatar.className = 'bottom-nav-avatar bottom-nav-avatar--initial';
-      // First grapheme as text — innerHTML here would parse `<`/`&` in names.
-      avatar.textContent = Array.from(user.display_name || user.username || '?')[0]!.toUpperCase();
-      btn.appendChild(avatar);
-    }
-
-    const avatarEl = btn.querySelector('.bottom-nav-avatar');
-    if (avatarEl instanceof HTMLElement) {
-      attachPlusBadge(avatarEl, user.badge_type);
-    }
-
-    btn.addEventListener('click', () => {
-      this.setActiveItem('account');
-      this.props.onNavigate?.('account');
-    });
-
-    return btn;
-  }
-
-  private createLoginItem(): HTMLElement {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'bottom-nav-item bottom-nav-login';
-    btn.setAttribute('data-nav-id', 'login');
-    btn.appendChild(this.buildIconSpan('key'));
-    const labelSpan = document.createElement('span');
-    labelSpan.className = 'bottom-nav-label';
-    labelSpan.textContent = t('nav.login');
-    btn.appendChild(labelSpan);
-    btn.addEventListener('click', () => {
-      this.props.onSignIn?.();
-    });
-    return btn;
-  }
-
-  private rebuild(): void {
-    this.element.innerHTML = '';
-    this.element.appendChild(this.buildItems());
+    this.element = document.createElement('div');
+    this.instance = mount(BottomNavView as Component, {
+      target: this.element,
+      props: {
+        activeItem: props.activeItem || 'home',
+        currentUser: props.currentUser ?? null,
+        onNavigate: props.onNavigate,
+        onSignIn: props.onSignIn,
+      },
+    }) as unknown as Instance & Parameters<typeof unmount>[0];
   }
 
   public setActiveItem(item: string): void {
-    this.activeItem = item;
-    this.element.querySelectorAll('.bottom-nav-item').forEach((el) => {
-      const navId = el.getAttribute('data-nav-id');
-      const isActive = navId === item;
-      el.classList.toggle('bottom-nav-item--active', isActive);
-      el.setAttribute('aria-current', isActive ? 'page' : 'false');
-    });
+    this.instance.setActiveItem(item);
   }
 
   public updateUser(user: BottomNavProps['currentUser']): void {
-    this.props.currentUser = user ?? null;
-    this.rebuild();
+    this.instance.updateUser(user ?? null);
   }
 
   public getActiveItem(): string {
-    return this.activeItem;
+    return this.instance.getActiveItem();
   }
 
   public getElement(): HTMLElement {
@@ -178,6 +58,7 @@ export class BottomNav {
   }
 
   public destroy(): void {
+    void unmount(this.instance);
     this.element.remove();
   }
 }

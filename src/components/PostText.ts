@@ -1,14 +1,28 @@
 import type { MarkdownIt } from 'markdown-it';
-import { canUsePostColors } from '../../shared/entitlements.ts';
 import { parsePostColors } from '../../shared/post-colors.ts';
 import { stripMediaCues } from '../../shared/post-cues.ts';
-import { PostTextProps } from '../../shared/types/post.ts';
+import type { PostTextProps } from '../../shared/types/post.ts';
+import {
+  linkifyCustomEmoji,
+  linkifyHashtags,
+  linkifyMentions,
+  linkifyPostRefs,
+  linkifyUrls,
+} from '../lib/post/text-links.ts';
 import {
   type ColorPlaceholderEntry,
   insertColorPlaceholders,
   restoreColorPlaceholders,
-} from '../lib/post-colors-dom.js';
-import { html, mount } from '../lib/render/index.ts';
+} from '../lib/post-colors-dom.ts';
+
+/**
+ * Pure text helpers for post bodies.
+ *
+ * This module owns the Markdown/Markdown-it + KaTeX + sanitizer pipeline and
+ * re-exports the DOM linkifiers from `src/lib/post/text-links.ts`. It contains
+ * no component factories: the Svelte surface (`PostText.svelte`) calls
+ * `applyPostText()` and owns the element.
+ */
 
 // Configure markdown-it with security settings
 let md: MarkdownIt | null = null;
@@ -18,30 +32,6 @@ let katexPromise: Promise<typeof import('katex')> | null = null;
 let markdownitPromise: Promise<typeof import('markdown-it')> | null = null;
 let dompurifyPromise: Promise<typeof import('dompurify')> | null = null;
 let katexLoadingPromise: Promise<void> | null = null;
-
-// Cache for custom emoji stamps
-interface StampCacheEntry {
-  name: string;
-  url: string;
-  user_id: string;
-}
-let stampCachePromise: Promise<Map<string, { url: string; user_id: string }>> | null = null;
-
-async function getStampCache(): Promise<Map<string, { url: string; user_id: string }>> {
-  if (!stampCachePromise) {
-    stampCachePromise = fetch('/api/stamps/all', { credentials: 'include' })
-      .then((r) => r.json() as Promise<{ stamps: StampCacheEntry[] }>)
-      .then((data) => {
-        const map = new Map<string, { url: string; user_id: string }>();
-        for (const s of data.stamps) {
-          map.set(s.name, { url: s.url, user_id: s.user_id });
-        }
-        return map;
-      })
-      .catch(() => new Map<string, { url: string; user_id: string }>());
-  }
-  return stampCachePromise;
-}
 
 async function getMarkdownIt() {
   if (!md) {
@@ -88,51 +78,42 @@ interface MathPlaceholder {
   displayMode: boolean;
 }
 
-export async function createPostText(props: PostTextProps): Promise<HTMLElement> {
-  const host = document.createElement('div');
-  let container!: HTMLElement;
+export interface ApplyPostTextOptions extends Pick<PostTextProps, 'text' | 'mentions' | 'enablePostRefs' | 'authorId'> {
+  /** Post colors are an author-side Flaxia+ entitlement. */
+  enableColors?: boolean;
+}
 
-  // Markdown output already encodes line breaks as <br>; `white-space: pre-wrap`
-  // is only for the plain-text placeholder, otherwise the literal newlines in
-  // markdown-it's HTML double every break.
-  //
-  // The outer node is engine-owned; the body below is sanitized markdown-it
-  // output (not hand-assembled markup), so it is written as one payload.
-  mount(
-    host,
-    () =>
-      html`<div
-        class="post-text post-text--rich"
-        ref=${(element: Element | null) => {
-          if (element) container = element as HTMLElement;
-        }}
-      ></div>`,
-  );
+/**
+ * Render a post body into `container`.
+ *
+ * Colors are restored in the DOM (after sanitization) and math/linkifiers run
+ * against the inserted HTML. `shouldApply` lets a component abort a stale
+ * async render after its element was removed or its props changed.
+ */
+export async function applyPostText(
+  container: HTMLElement,
+  options: ApplyPostTextOptions,
+  shouldApply: () => boolean = () => true,
+): Promise<void> {
+  const { html, colorEntries } = await processTextInternal(options.text, options.enableColors ?? false);
+  if (!shouldApply()) return;
 
-  // Process the text through the unified pipeline. Colors are an author-side
-  // Flaxia+ entitlement; non-members' markers stay literal.
-  const { html: bodyHtml, colorEntries } = await processTextInternal(
-    props.text,
-    canUsePostColors({ badge_type: props.badgeType }),
-  );
-  container.innerHTML = bodyHtml;
+  container.innerHTML = html;
   restoreColorPlaceholders(container, colorEntries);
 
-  // Render math elements after HTML is inserted
+  // Render math elements after HTML is inserted.
   renderMathElements(container);
 
   // Link URLs first so a `#fragment` stays inside the URL anchor, then link
   // hashtags while skipping anchors/code (see isExcludedTextParent).
   linkifyUrls(container);
   linkifyHashtags(container);
-  linkifyMentions(container, props.mentions);
-  if (props.enablePostRefs) {
+  linkifyMentions(container, options.mentions);
+  if (options.enablePostRefs) {
     linkifyPostRefs(container);
   }
 
-  await linkifyCustomEmoji(container, props.authorId);
-
-  return container;
+  await linkifyCustomEmoji(container, options.authorId, shouldApply);
 }
 
 /**
@@ -156,16 +137,15 @@ export async function renderCueInlineHtml(text: string): Promise<string> {
   });
 }
 
-// Export processing functions for reuse
+// Pure DOM linkifiers live in a sibling module so profile bios can reuse them.
 export {
   linkifyCustomEmoji,
   linkifyHashtags,
   linkifyMentions,
   linkifyPostRefs,
   linkifyUrls,
-  processText,
-  renderMathElements,
-};
+  parseMentions,
+} from '../lib/post/text-links.ts';
 
 /**
  * Unified text processing pipeline:
@@ -177,8 +157,8 @@ export {
  * 4. Parse Markdown
  * 5. Sanitize HTML
  * 6. Expand KaTeX placeholders
- * 7. Restore post references as literal text (linkified in createPostText)
- * 8. Restore color placeholders (in the DOM, see createPostText)
+ * 7. Restore post references as literal text (linkified by applyPostText)
+ * 8. Restore color placeholders (in the DOM, see applyPostText)
  */
 async function processTextInternal(
   text: string,
@@ -261,7 +241,7 @@ async function processTextInternal(
     ALLOW_DATA_ATTR: true,
   });
 
-  // Step 7: Restore post references as plain text. createPostText() linkifies
+  // Step 7: Restore post references as plain text. applyPostText() linkifies
   // them later, which keeps `>>N` inside code blocks literal.
   for (const ref of refPlaceholders) {
     const placeholderRegex = new RegExp(`⚡${ref.id}⚡`, 'g');
@@ -273,7 +253,7 @@ async function processTextInternal(
 }
 
 /** HTML with colors disabled, for profile bios and legacy callers. */
-async function processText(text: string): Promise<string> {
+export async function processText(text: string): Promise<string> {
   return (await processTextInternal(text, false)).html;
 }
 
@@ -337,7 +317,6 @@ function restoreMathPlaceholders(html: string, mathPlaceholders: MathPlaceholder
       `<span class="math-placeholder" data-math-content="${escapeHtml(placeholder.content)}" data-math-display="${placeholder.displayMode}"></span>`,
     );
 
-    // Debug: log if replacement happened
     if (before === restoredHtml) {
       console.warn(`Failed to replace math placeholder ${placeholder.id}`, before);
     }
@@ -347,16 +326,9 @@ function restoreMathPlaceholders(html: string, mathPlaceholders: MathPlaceholder
 }
 
 /**
- * Helper to create regex pattern that matches both quoted and &quot; patterns
- */
-function _quotePattern(text: string): string {
-  return `(?:${text}|&quot;${text}&quot;)`;
-}
-
-/**
  * Render all math elements in the container using KaTeX
  */
-function renderMathElements(container: HTMLElement): void {
+export function renderMathElements(container: HTMLElement): void {
   const mathElements = container.querySelectorAll('.math-placeholder');
 
   // Load KaTeX if not already loaded or loading
@@ -403,289 +375,9 @@ function renderMathElement(element: HTMLElement): void {
 }
 
 /**
- * Linkifiers must not rewrite text inside links or code. Markdown links are
- * already anchors, and code blocks/spans are literal source.
- */
-function isExcludedTextParent(parent: Node | null): boolean {
-  const element = parent?.nodeType === 1 ? (parent as Element) : parent?.parentElement;
-  return Boolean(element?.closest('a, code, pre'));
-}
-
-/**
- * Convert hashtags to clickable links
- */
-function linkifyHashtags(container: HTMLElement): void {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Node | null;
-
-  while ((node = walker.nextNode())) {
-    textNodes.push(node as Text);
-  }
-
-  // Process text nodes and replace hashtags with links
-  for (const textNode of textNodes) {
-    const text = textNode.textContent || '';
-    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
-
-    if (!hashtagRegex.test(text)) continue;
-
-    // Reset regex lastIndex
-    hashtagRegex.lastIndex = 0;
-
-    const parent = textNode.parentNode;
-    if (!parent || isExcludedTextParent(parent)) continue;
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = hashtagRegex.exec(text)) !== null) {
-      // Add text before hashtag
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-
-      // Create hashtag link
-      const hashtag = match[1];
-      const span = document.createElement('span');
-      span.className = 'hashtag-link';
-      span.textContent = `#${hashtag}`;
-      span.style.cursor = 'pointer';
-      span.addEventListener('click', (e) => {
-        e.stopPropagation();
-        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(hashtag)}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag: hashtag } }));
-      });
-      fragment.appendChild(span);
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    parent.replaceChild(fragment, textNode);
-  }
-}
-
-/**
- * Convert URLs to clickable links
- */
-function linkifyUrls(container: HTMLElement): void {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Node | null;
-
-  while ((node = walker.nextNode())) {
-    textNodes.push(node as Text);
-  }
-
-  // Process text nodes and replace URLs with links
-  for (const textNode of textNodes) {
-    const text = textNode.textContent || '';
-
-    // Regex to match URLs starting with https:// or www.
-    const urlRegex = /(?:https?:\/\/|www\.)[^\s<>()]+/g;
-
-    if (!urlRegex.test(text)) continue;
-
-    // Reset regex lastIndex
-    urlRegex.lastIndex = 0;
-
-    const parent = textNode.parentNode;
-    if (!parent || isExcludedTextParent(parent)) continue;
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = urlRegex.exec(text)) !== null) {
-      // Add text before URL
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-
-      // Create URL link
-      let url = match[0];
-      const displayUrl = url;
-
-      // Add https:// if URL starts with www.
-      if (url.startsWith('www.')) {
-        url = 'https://' + url;
-      }
-
-      const link = document.createElement('a');
-      link.href = url;
-      link.className = 'url-link';
-      link.textContent = displayUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      fragment.appendChild(link);
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    parent.replaceChild(fragment, textNode);
-  }
-}
-
-async function linkifyCustomEmoji(container: HTMLElement, authorId?: string): Promise<void> {
-  const stampCache = await getStampCache();
-  if (stampCache.size === 0) return;
-
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-  const textNodes: Text[] = [];
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    textNodes.push(node as Text);
-  }
-
-  // Match :name: format
-  const emojiRegex = /:([a-zA-Z0-9_-]+):/g;
-
-  for (const textNode of textNodes) {
-    const text = textNode.textContent || '';
-    if (!emojiRegex.test(text)) continue;
-
-    emojiRegex.lastIndex = 0;
-
-    const parent = textNode.parentNode;
-    if (!parent || isExcludedTextParent(parent)) continue;
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = emojiRegex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-
-      const stampName = match[0]; // e.g. ":hoge:"
-      const stampData = stampCache.get(stampName);
-
-      // For posts/chat: only render if stamp owner matches authorId
-      // For reactions (authorId is undefined): always render
-      if (stampData && (authorId === undefined || stampData.user_id === authorId)) {
-        const img = document.createElement('img');
-        img.src = stampData.url;
-        img.alt = stampName;
-        img.className = 'custom-emoji';
-        img.title = stampName;
-        fragment.appendChild(img);
-      } else {
-        fragment.appendChild(document.createTextNode(match[0]));
-      }
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    parent.replaceChild(fragment, textNode);
-  }
-}
-
-/**
- * Build a map from username → user_id from the mentions JSON string
- */
-function parseMentions(mentions?: string): Map<string, string> {
-  const map = new Map<string, string>();
-  if (!mentions) return map;
-  try {
-    const data = JSON.parse(mentions) as Array<{ username: string; user_id: string }>;
-    for (const m of data) {
-      map.set(m.username.toLowerCase(), m.user_id);
-    }
-  } catch {}
-  return map;
-}
-
-/**
- * Convert @username mentions to clickable links
- */
-function linkifyMentions(container: HTMLElement, mentions?: string): void {
-  const mentionMap = parseMentions(mentions);
-
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Node | null;
-
-  while ((node = walker.nextNode())) {
-    textNodes.push(node as Text);
-  }
-
-  // Process text nodes and replace @mentions with links
-  for (const textNode of textNodes) {
-    const text = textNode.textContent || '';
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-
-    if (!mentionRegex.test(text)) continue;
-
-    // Reset regex lastIndex
-    mentionRegex.lastIndex = 0;
-
-    const parent = textNode.parentNode;
-    if (!parent || isExcludedTextParent(parent)) continue;
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = mentionRegex.exec(text)) !== null) {
-      // Add text before mention
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-
-      // Create mention link only if user exists
-      const username = match[1];
-      const userExists = mentionMap.has(username.toLowerCase());
-      if (userExists) {
-        const span = document.createElement('span');
-        span.className = 'mention-link';
-        span.textContent = `@${username}`;
-        span.style.cursor = 'pointer';
-        span.addEventListener('click', (e) => {
-          e.stopPropagation();
-          window.history.pushState({}, '', `/profile/${encodeURIComponent(username)}`);
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username } }));
-        });
-        fragment.appendChild(span);
-      } else {
-        fragment.appendChild(document.createTextNode(`@${username}`));
-      }
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    parent.replaceChild(fragment, textNode);
-  }
-}
-
-/**
  * Load KaTeX dynamically
  */
 async function loadKaTeX(): Promise<void> {
-  // Check if already loaded
   if (window.katex) {
     return;
   }
@@ -713,54 +405,4 @@ function unescapeHtml(html: string): string {
   const div = document.createElement('div');
   div.innerHTML = html;
   return div.textContent || '';
-}
-
-/**
- * Convert >>(number) references to clickable links
- */
-function linkifyPostRefs(container: HTMLElement): void {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
-
-  const textNodes: Text[] = [];
-  let node: Node | null;
-
-  while ((node = walker.nextNode())) {
-    textNodes.push(node as Text);
-  }
-
-  for (const textNode of textNodes) {
-    const text = textNode.textContent || '';
-    const postRefRegex = />>(\d+)/g;
-
-    if (!postRefRegex.test(text)) continue;
-    postRefRegex.lastIndex = 0;
-
-    const parent = textNode.parentNode;
-    if (!parent || isExcludedTextParent(parent)) continue;
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = postRefRegex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-
-      const link = document.createElement('a');
-      link.href = `#post-${match[1]}`;
-      link.className = 'post-ref-link';
-      link.textContent = `>>${match[1]}`;
-      link.dataset.postIndex = match[1];
-      fragment.appendChild(link);
-
-      lastIndex = match.index + match[0].length;
-    }
-
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    parent.replaceChild(fragment, textNode);
-  }
 }

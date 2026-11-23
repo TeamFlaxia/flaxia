@@ -1,3 +1,7 @@
+// Settings composition root: category metadata lives in
+// `src/lib/settings/categories.ts`; this adapter mounts the Svelte section for
+// each category and exposes the panels the Svelte shell renders.
+import { resolveSettingsCategorySpecs, type SettingsSectionId } from '../lib/settings/categories.ts';
 import { mountSettingsSection } from '../lib/settings/section-host.ts';
 import SettingsAccountSection from '../lib/svelte/SettingsAccountSection.svelte';
 import SettingsBillingSection from '../lib/svelte/SettingsBillingSection.svelte';
@@ -35,163 +39,70 @@ export interface SettingsCategory {
   sections: HTMLElement[];
 }
 
+type SettingsUser = NonNullable<SettingsPageProps['currentUser']>;
+type MountedSection = { element: HTMLElement; destroy: () => void };
+
+function isCapacitorNative(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.Capacitor?.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform()
+  );
+}
+
+/**
+ * Section mount points. Categories only reference ids, so an id that is not
+ * rendered (for example `billing` in the native app) is never mounted.
+ */
+const SECTION_MOUNTS: Record<SettingsSectionId, (currentUser?: SettingsUser) => MountedSection> = {
+  account: (currentUser) => mountSettingsSection(SettingsAccountSection, { currentUser: currentUser as SettingsUser }),
+  email: () => mountSettingsSection(SettingsEmailSection),
+  password: (currentUser) => mountSettingsSection(SettingsPasswordSection, { currentUser: currentUser ?? null }),
+  vault: () => mountSettingsSection(SettingsVaultSection),
+  display: () => mountSettingsSection(SettingsDisplaySection),
+  language: (currentUser) => mountSettingsSection(SettingsLanguageSection, { currentUser: currentUser ?? null }),
+  emoji: () => mountSettingsSection(SettingsEmojiSection),
+  titles: () => mountSettingsSection(SettingsTitlesSection),
+  billing: () => mountSettingsSection(SettingsBillingSection),
+  crowd: () => mountSettingsSection(SettingsCrowdSection),
+  maps: () => mountSettingsSection(SettingsMapsSection),
+  'bug-report': () => mountSettingsSection(SettingsBugReportSection),
+};
+
 /**
  * Build the settings section DOM. The Svelte shell owns the page chrome and
  * navigation; this adapter only produces the category content.
  */
 export function loadSettingsCategories({ currentUser }: SettingsPageProps) {
-  const categories: SettingsCategory[] = [];
-  const addCategory = (category: SettingsCategory) => categories.push(category);
-
-  // Account section (Svelte).
-  const accountMount = currentUser ? mountSettingsSection(SettingsAccountSection, { currentUser }) : null;
-  const accountSection = accountMount?.element;
-
-  // Display section (Svelte): reply style, NSFW, data saver and theme.
-  const displayMount = mountSettingsSection(SettingsDisplaySection);
-  const displaySection = displayMount.element;
-
-  // Crowd section (Svelte): opt in/out of donating browser compute.
-  const crowdMount = mountSettingsSection(SettingsCrowdSection);
-  const crowdSection = crowdMount.element;
-
-  // Language section (Svelte).
-  const languageMount = mountSettingsSection(SettingsLanguageSection, { currentUser });
-  const languageSection = languageMount.element;
-
-  // Email section (Svelte).
-  const emailMount = mountSettingsSection(SettingsEmailSection);
-  const emailSection = emailMount.element;
-
-  // Password section (Svelte).
-  const passwordMount = mountSettingsSection(SettingsPasswordSection, { currentUser });
-  const passwordSection = passwordMount.element;
-
-  // Personal Vault section (Svelte): setup / locked / unlocked and pairing.
-  const vaultMount = currentUser ? mountSettingsSection(SettingsVaultSection) : null;
-  const vaultSection = vaultMount?.element;
-
-  // Titles section (Svelte).
-  const titlesMount = currentUser ? mountSettingsSection(SettingsTitlesSection) : null;
-  const titlesSection = titlesMount?.element;
-
-  // Custom emoji section (Svelte): stamp grid and add/delete flows.
-  const emojiMount = currentUser ? mountSettingsSection(SettingsEmojiSection) : null;
-  const emojiSection = emojiMount?.element;
-
-  // Billing section (Svelte): web-only; Play-distributed builds use Play Billing.
-  const isCapacitorApp =
-    typeof window !== 'undefined' &&
-    typeof window.Capacitor?.isNativePlatform === 'function' &&
-    window.Capacitor.isNativePlatform();
-  const billingMount = currentUser && !isCapacitorApp ? mountSettingsSection(SettingsBillingSection) : null;
-  const billingSection = billingMount?.element;
-
-  // Bug report section (Svelte).
-  const bugReportMount = mountSettingsSection(SettingsBugReportSection);
-  const bugReportSection = bugReportMount.element;
-
-  // Maps section (Svelte): on-device tile cache + city tile packs.
-  const mapsMount = mountSettingsSection(SettingsMapsSection);
-  const mapsSection = mapsMount.element;
-
-  if (accountSection) {
-    addCategory({
-      id: 'account',
-      groupKey: 'settings.group_account',
-      titleKey: 'settings.account',
-      descriptionKey: 'settings.account_description',
-      iconName: 'user',
-      sections: [accountSection, emailSection],
-    });
-  }
-  if (vaultSection) {
-    addCategory({
-      id: 'security',
-      groupKey: 'settings.group_account',
-      titleKey: 'settings.security',
-      descriptionKey: 'settings.security_description',
-      iconName: 'key',
-      sections: [passwordSection, vaultSection],
-    });
-  }
-  addCategory({
-    id: 'appearance',
-    groupKey: 'settings.group_preferences',
-    titleKey: 'settings.appearance',
-    descriptionKey: 'settings.appearance_description',
-    iconName: 'settings',
-    sections: [displaySection, languageSection],
+  const specs = resolveSettingsCategorySpecs({
+    signedIn: Boolean(currentUser),
+    isCapacitorApp: isCapacitorNative(),
   });
-  if (emojiSection) {
-    addCategory({
-      id: 'emoji',
-      groupKey: 'settings.group_preferences',
-      titleKey: 'settings.custom_emoji',
-      descriptionKey: 'settings.emoji_description',
-      iconName: 'emoji',
-      sections: [emojiSection],
-    });
-  }
-  if (titlesSection) {
-    addCategory({
-      id: 'titles',
-      groupKey: 'settings.group_preferences',
-      titleKey: 'settings.titles',
-      descriptionKey: 'settings.titles_description',
-      iconName: 'game',
-      sections: [titlesSection],
-    });
-  }
-  if (billingSection) {
-    addCategory({
-      id: 'billing',
-      groupKey: 'settings.group_more',
-      titleKey: 'settings.billing',
-      descriptionKey: 'settings.billing_description',
-      iconName: 'fresh',
-      sections: [billingSection],
-    });
-  }
-  addCategory({
-    id: 'crowd',
-    groupKey: 'settings.group_more',
-    titleKey: 'settings.crowd',
-    descriptionKey: 'settings.crowd_description',
-    iconName: 'poll',
-    sections: [crowdSection],
-  });
-  addCategory({
-    id: 'maps',
-    groupKey: 'settings.group_preferences',
-    titleKey: 'settings.maps',
-    descriptionKey: 'settings.maps_description',
-    iconName: 'maps',
-    sections: [mapsSection],
-  });
-  addCategory({
-    id: 'bug-report',
-    groupKey: 'settings.group_other',
-    titleKey: 'settings.bug_report',
-    descriptionKey: 'settings.bug_report_description',
-    iconName: 'flag',
-    sections: [bugReportSection],
-  });
+  const mounted = new Map<SettingsSectionId, MountedSection>();
+
+  const sectionFor = (id: SettingsSectionId): HTMLElement => {
+    let section = mounted.get(id);
+    if (!section) {
+      section = SECTION_MOUNTS[id](currentUser);
+      mounted.set(id, section);
+    }
+    return section.element;
+  };
+
+  const categories: SettingsCategory[] = specs.map((spec) => ({
+    id: spec.id,
+    groupKey: spec.groupKey,
+    titleKey: spec.titleKey,
+    descriptionKey: spec.descriptionKey,
+    iconName: spec.iconName,
+    sections: spec.sections.map(sectionFor),
+  }));
+
   return {
     categories,
     destroy: () => {
-      titlesMount?.destroy();
-      emojiMount?.destroy();
-      billingMount?.destroy();
-      vaultMount?.destroy();
-      bugReportMount.destroy();
-      mapsMount.destroy();
-      crowdMount.destroy();
-      accountMount?.destroy();
-      emailMount.destroy();
-      passwordMount.destroy();
-      displayMount.destroy();
-      languageMount.destroy();
+      for (const section of mounted.values()) section.destroy();
+      mounted.clear();
     },
   };
 }

@@ -196,8 +196,8 @@ Implemented:
   async markdown loader writes into the captured article element;
 - `DocsPage` uses the same shell composition and keeps its markdown-it/DOMPurify
   article renderer behind the captured article element;
-- `SkeletonCard` / `SkeletonPost` are rendered with `html`/`mount` while keeping
-  the existing skeleton class contract;
+- `SkeletonCard` / `SkeletonPost` were removed with the Svelte
+  `UserPostList` migration; the old loading-spinner helpers had no callers left;
 - `SearchPage` keeps persistent user/post/arcade/web sections. Each section is a
   keyed list, so a new query or filter change updates items in place instead of
   clearing the content area; the horizontal and grid Arcade variants share the
@@ -208,9 +208,10 @@ Implemented:
 - Arcade's game feed is a single-active swipe viewport, not a grid. Its comments
   list is keyed (`each` + `legacy`) for both flat and tree reply modes, with one
   mount per comment panel and generation-checked fetches;
-- Profile's posts/freshs/bookmarks tabs share `UserPostList`, which now keeps a
-  keyed post list. Initial load, paging, `addPost` and delete all update the
-  signal, so existing cards (and their running stages) are reused;
+- Profile's posts/freshs/bookmarks tabs share
+  `src/lib/svelte/UserPostList.svelte`. It owns the keyed list, cursor paging,
+  the infinite-scroll sentinel and the per-row `UserPostCard.svelte` hosts;
+  `src/components/UserPostList.ts` is only the legacy-compatible mount bridge;
 - ThreadPage keeps its root card single, while the reply area is a keyed list for
   both flat and tree modes. New root replies append to the source list and
   re-render keyed entries; child replies stay in the source list for later tree

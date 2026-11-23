@@ -1,6 +1,7 @@
-// Legacy-compatible bridge: the dropdown UI is owned by PostMenu.svelte.
+// Legacy-compatible bridge: the dropdown UI is owned by PostMenu.svelte and the
+// trigger by MenuButton.svelte.
 import { type Component, mount, unmount } from 'svelte';
-import { t } from '../lib/i18n.js';
+import MenuButton from '../lib/svelte/MenuButton.svelte';
 import PostMenuView from '../lib/svelte/PostMenu.svelte';
 
 export interface PostMenuActions {
@@ -34,15 +35,11 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
 }
 
 export function createMenuButton(onClick: () => void): HTMLElement {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'post-menu-button';
-  button.setAttribute('aria-label', t('post_actions.more_actions'));
-  button.textContent = '⋯';
-  button.addEventListener('click', (event) => {
-    event.stopPropagation();
-    onClick();
-  });
+  const target = document.createElement('div');
+  const instance = mount(MenuButton as Component, { target, props: { onclick: onClick } });
+  const button = target.firstElementChild as HTMLElement;
+  button.remove();
+  (button as HTMLElement & { destroy?: () => void }).destroy = () => unmount(instance as never);
   return button;
 }
 

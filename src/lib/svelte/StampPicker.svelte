@@ -1,6 +1,7 @@
 <script lang="ts">
+// biome-ignore-all lint/correctness/noUnusedImports: types and markup-only helpers
+// biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
 import { onMount } from 'svelte';
-// biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import { t } from '../../lib/i18n.ts';
 
 interface StampItem {
@@ -10,26 +11,27 @@ interface StampItem {
   user_id: string;
 }
 
+const PICKER_WIDTH = 340;
+const PICKER_HEIGHT = 400;
+
 let {
-  // biome-ignore lint/correctness/noUnusedVariables: used in markup
-  top,
-  // biome-ignore lint/correctness/noUnusedVariables: used in markup
-  left,
+  anchor,
   onSelect,
   onClose,
 }: {
-  top: string;
-  left: string;
+  anchor: HTMLElement;
   onSelect: (emoji: string, stampId?: string) => void;
   onClose: () => void;
 } = $props();
 
 type Tab = 'unicode' | 'custom';
-// biome-ignore lint/correctness/noUnusedVariables: used in markup
 let tab = $state<Tab>('unicode');
 let stamps = $state<StampItem[]>([]);
 let customState = $state<'idle' | 'loading' | 'loaded' | 'error'>('idle');
 let emojiHost: HTMLDivElement | undefined = $state();
+let root = $state<HTMLDivElement>();
+let top = $state('0px');
+let left = $state('0px');
 let active = true;
 
 function choose(emoji: string, stampId?: string): void {
@@ -38,7 +40,25 @@ function choose(emoji: string, stampId?: string): void {
   onClose();
 }
 
+// Position below the anchor when it fits; otherwise clamp above/left of the
+// viewport edge (same geometry the legacy popover used).
+$effect(() => {
+  const rect = anchor.getBoundingClientRect();
+  const fitsBelow = rect.bottom + PICKER_HEIGHT + 8 <= window.innerHeight;
+  top = `${fitsBelow ? rect.bottom + 4 : Math.max(8, rect.top - PICKER_HEIGHT)}px`;
+  left = `${Math.max(8, Math.min(rect.left, window.innerWidth - PICKER_WIDTH - 8))}px`;
+});
+
 onMount(() => {
+  const onKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') onClose();
+  };
+  const onOutsideClick = (event: MouseEvent): void => {
+    if (root && !root.contains(event.target as Node)) onClose();
+  };
+  document.addEventListener('keydown', onKeydown);
+  document.addEventListener('click', onOutsideClick);
+
   let picker: HTMLElement | undefined;
   let handler: EventListener | undefined;
 
@@ -61,6 +81,8 @@ onMount(() => {
 
   return () => {
     active = false;
+    document.removeEventListener('keydown', onKeydown);
+    document.removeEventListener('click', onOutsideClick);
     if (picker && handler) picker.removeEventListener('emoji-click', handler);
   };
 });
@@ -87,6 +109,7 @@ function selectTab(next: Tab): void {
 
 <div
   class="stamp-picker"
+  bind:this={root}
   style="position:fixed;z-index:1000;width:340px;max-height:400px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);display:flex;flex-direction:column;overflow:hidden;top:{top};left:{left};"
 >
   <div class="stamp-picker-tabs" style="display:flex;border-bottom:1px solid var(--border);">

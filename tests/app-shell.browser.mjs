@@ -219,6 +219,53 @@ const EDIT_STUBS = {
   '/api/posts/own-post-1': { body: { post: { ...OWN_POST, text: 'edited text' } } },
 };
 
+const REPLY_TREE_ROOT = {
+  ...TIMELINE_POST,
+  id: 'thread-root',
+  text: 'Thread root for the reply tree smoke test.',
+  hashtags: '',
+  mentions: '[]',
+  quoted_post_id: null,
+  quoted_post: null,
+  reactions: [],
+  depth: 0,
+  reply_count: 2,
+};
+
+const REPLY_TREE_PARENT = {
+  ...REPLY_TREE_ROOT,
+  id: 'reply-1',
+  username: 'replier',
+  display_name: 'Replier',
+  text: 'First reply',
+  parent_id: 'thread-root',
+  root_id: 'thread-root',
+  depth: 1,
+  reply_count: 1,
+};
+
+const REPLY_TREE_CHILD = {
+  ...REPLY_TREE_ROOT,
+  id: 'reply-2',
+  username: 'nested',
+  display_name: 'Nested',
+  text: 'Nested reply',
+  parent_id: 'reply-1',
+  root_id: 'thread-root',
+  depth: 2,
+  reply_count: 0,
+};
+
+// The thread page renders ReplyNode.svelte when the Twitter-style reply tree is
+// selected; the default 2ch setting flattens replies through PostCard.
+const REPLY_TREE_STUBS = {
+  ...SIGNED_IN_STUBS,
+  '/api/posts/thread-root/thread': {
+    body: { root: REPLY_TREE_ROOT, replies: [REPLY_TREE_PARENT, REPLY_TREE_CHILD] },
+  },
+  '/api/posts/thread-root': { body: { post: REPLY_TREE_ROOT } },
+};
+
 const ZIP_POST = {
   ...TIMELINE_POST,
   id: 'zip-post',
@@ -1014,6 +1061,53 @@ test('the right panel renders trending, games and routes every click', {
   });
 });
 
+test('/arcade renders the Svelte player chrome and deep-links a game', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const game = {
+      id: 'g1',
+      postId: 'g1',
+      title: 'Deep Link Game',
+      username: 'bob',
+      displayName: 'Bob',
+      type: 'html5',
+      freshCount: 7,
+      replyCount: 0,
+      bookmarkCount: 2,
+      impressions: 10,
+      createdAt: new Date().toISOString(),
+    };
+    const stubs = {
+      ...SIGNED_IN_STUBS,
+      '/api/games': { body: { games: [game], hasMore: false } },
+      '/api/posts/g1/thread': { body: { root: { ...TIMELINE_POST, id: 'g1' }, replies: [] } },
+    };
+    const { page, pageErrors } = await openApp(browser, `${origin}/arcade/g1`, stubs);
+
+    await page.waitForSelector('.arcade-page', { timeout: 30_000 });
+    await page.waitForSelector('.arcade-header-title-text', { timeout: 10_000 });
+    assert.match((await page.locator('.arcade-header-title-text').textContent()) ?? '', /Arcade/);
+
+    // The first visit opens the tour; close it before interacting with the HUD.
+    await page.waitForSelector('.arcade-tutorial-card', { timeout: 10_000 });
+    await page.locator('.arcade-tutorial-close').click();
+    await page.waitForSelector('.arcade-tutorial-card', { state: 'detached', timeout: 10_000 });
+
+    await page.waitForSelector('.arcade-game-area iframe', { timeout: 20_000 });
+    assert.equal(await page.locator('.arcade-action-btn').count(), 6);
+    assert.match((await page.locator('.arcade-game-area iframe').getAttribute('src')) ?? '', /\/api\/games\/html5\/g1/);
+    assert.match((await page.locator('.arcade-game-title').textContent()) ?? '', /Deep Link Game/);
+
+    await page.locator('[data-action="comments"]').click();
+    await page.waitForSelector('.arcade-comments-dialog', { timeout: 10_000 });
+    assert.match((await page.locator('#arcade-comments-title').textContent()) ?? '', /(Thread|投稿)/);
+    await page.locator('.arcade-comments-close').click();
+    await page.waitForSelector('.arcade-comments-dialog', { state: 'detached', timeout: 10_000 });
+
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
 test('surface pages use the 600px centre without a right rail', { timeout: 90_000 }, async () => {
   await withServer(async ({ browser, origin }) => {
     const stubs = SIGNED_IN_STUBS;
@@ -1101,6 +1195,36 @@ test('the post modal keeps the composer open while a confirm dialog is on top', 
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
     assert.equal(await page.$('.post-modal-overlay'), null, 'Escape closes the composer once it is the top layer');
+    assert.deepEqual(pageErrors, []);
+    await page.close();
+  });
+});
+
+test('the share modal mounts, traps focus and closes with Escape', {
+  timeout: 90_000,
+}, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/`, SIGNED_IN_STUBS);
+    await page.waitForSelector('.post-card', { timeout: 30_000 });
+
+    await page.click('.post-card .action-button--reload');
+    await page.waitForSelector('.post-action-dropdown-item');
+    await page.locator('.post-action-dropdown-item').nth(2).click();
+
+    await page.waitForSelector('.fx-share-overlay', { timeout: 10_000 });
+    assert.ok(await page.$('.fx-share-modal'), 'the share dialog renders');
+    assert.match((await page.inputValue('.fx-share__link')) ?? '', /\/thread\/p1$/);
+    assert.equal(await page.locator('.fx-share__grid .share-icon').count(), 6, 'every platform tile is present');
+    assert.equal(
+      await page.evaluate(() => Boolean(document.activeElement?.closest('.fx-share-modal'))),
+      true,
+      'focus starts inside the dialog',
+    );
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    assert.equal(await page.$('.fx-share-overlay'), null, 'Escape closes the share dialog');
+    assert.equal(await page.evaluate(() => document.body.style.position), '', 'closing unlocks body scroll');
     assert.deepEqual(pageErrors, []);
     await page.close();
   });
@@ -1270,6 +1394,30 @@ test('a signed-in reply composer mounts, counts characters and suggests mentions
     assert.equal(draft, 'Hi @quoted ');
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+  });
+});
+
+test('the thread page renders nested Svelte reply nodes and expands branches', { timeout: 90_000 }, async () => {
+  await withServer(async ({ browser, origin }) => {
+    const { page, pageErrors } = await openApp(browser, `${origin}/thread/thread-root`, REPLY_TREE_STUBS);
+    // ReplyNode is the Twitter-style tree; the default setting is flat.
+    await page.evaluate(() => localStorage.setItem('flaxia_reply_style', 'twitter'));
+    await page.reload({ waitUntil: 'load' });
+
+    await page.waitForSelector('.reply-node', { timeout: 30_000 });
+    assert.equal(await page.locator('.reply-node').count(), 2, 'parent and nested reply should both render');
+    assert.equal(await page.locator('.reply-node .reply-expand-button').count(), 1);
+
+    const children = page.locator('.reply-node .reply-children').first();
+    assert.equal(await children.isVisible(), false, 'nested replies start collapsed');
+    await page.locator('.reply-node .reply-expand-button').first().click();
+    assert.equal(await children.isVisible(), true, 'expanding reveals the nested reply');
+
+    const text = await page.evaluate(() => document.querySelector('.reply-node .post-text')?.textContent?.trim() ?? '');
+    assert.match(text, /First reply/);
+    assert.ok(await page.locator('.reply-node .post-actions .action-button--reply').first().isVisible());
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(' | ')}`);
+    await page.close();
   });
 });
 

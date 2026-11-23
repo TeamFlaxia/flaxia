@@ -16,7 +16,6 @@
   "functions/lib/render-html.ts": 780,
   "functions/lib/web-index.ts": 566,
   "functions/lib/wvfs-zip-server.ts": 1088,
-  "src/components/ArcadePage.ts": 3148,
   "src/components/ImagePreview.ts": 507,
   "src/components/PostCard.ts": 1764,
   "src/components/PostStage.ts": 566,

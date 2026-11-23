@@ -1,246 +1,43 @@
-import { Post } from '../../shared/types/post.ts';
-import { navigate as spaNavigate } from '../lib/navigation.ts';
-import { PostNode } from '../lib/thread.js';
-import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
-import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
-import { showSignInPrompt } from './SignInPrompt.js';
+// Legacy-compatible bridge: the reply-tree UI lives in
+// src/lib/svelte/ReplyNode.svelte; callers keep the old factory API.
+import { type Component, mount, unmount } from 'svelte';
+import type { Post } from '../../shared/types/post.ts';
+import ReplyNodeView from '../lib/svelte/ReplyNode.svelte';
+import type { PostNode } from '../lib/thread.ts';
 
 export interface ReplyNodeProps {
   node: PostNode;
   sandboxOrigin: string;
   onReplyCreated: (newReply: Post) => void;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
   postIndexMap?: Map<string, number>;
 }
 
 export class ReplyNode {
   private element: HTMLElement;
-  private props: ReplyNodeProps;
-  private postCard?: PostCardClass;
-  private replyComposer?: ReplyComposer;
-  private childReplyNodes: ReplyNode[] = [];
-  private isReplyComposerOpen: boolean = false;
-  private globalReplyListener?: (e: Event) => void;
-  private isExpanded: boolean = false;
-  private expandButton?: HTMLButtonElement;
-  private childrenContainer?: HTMLElement;
+  private instance: ReturnType<typeof mount> | null = null;
 
   constructor(props: ReplyNodeProps) {
-    this.props = props;
-    this.element = this.createElement();
-    this.setupEventListeners();
-  }
-
-  private createElement(): HTMLElement {
-    const container = document.createElement('div');
-    container.className = `reply-node${this.props.node.post.depth > 0 ? ' reply-node--nested' : ''}`;
-
-    const nodeIndex = this.props.postIndexMap?.get(this.props.node.post.id);
-
-    // Post card for this reply
-    this.postCard = createPostCard({
-      post: this.props.node.post,
-      sandboxOrigin: this.props.sandboxOrigin,
-      currentUser: this.props.currentUser || undefined,
-      onDelete: () => {},
-      disableReplyComposer: true,
-      depth: this.props.node.post.depth,
-      postIndex: nodeIndex,
-      enablePostRefs: true,
-      stripLeadingPostRef: true,
+    this.element = document.createElement('div');
+    this.instance = mount(ReplyNodeView as Component, {
+      target: this.element,
+      props: props as never,
     });
-
-    // Create wrapper for post card and expand button
-    const postWrapper = document.createElement('div');
-    postWrapper.className = 'reply-node-row';
-    postWrapper.appendChild(this.postCard.getElement());
-
-    // Add expand button if this reply has children and depth > 0
-    if (this.props.node.children.length > 0 && this.props.node.post.depth > 0) {
-      this.expandButton = document.createElement('button');
-      this.expandButton.type = 'button';
-      this.expandButton.className = 'reply-expand-button';
-      this.expandButton.textContent = '▶';
-      this.expandButton.setAttribute('aria-expanded', 'false');
-      this.expandButton.addEventListener('click', () => this.toggleExpanded());
-      postWrapper.insertBefore(this.expandButton, postWrapper.firstChild);
-    }
-
-    container.appendChild(postWrapper);
-
-    // Reply composer (hidden by default)
-    const prefill = nodeIndex !== undefined ? `>>${nodeIndex} ` : undefined;
-    this.replyComposer = createReplyComposer({
-      postId: this.props.node.post.id,
-      sandboxOrigin: this.props.sandboxOrigin,
-      onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
-      onCancel: () => this.hideReplyComposer(),
-      prefillText: prefill,
-      currentUser: this.props.currentUser,
-    });
-    this.replyComposer.getElement().style.display = 'none';
-    container.appendChild(this.replyComposer.getElement());
-
-    // Children replies (hidden by default for depth >= 1)
-    if (this.props.node.children.length > 0) {
-      this.childrenContainer = document.createElement('div');
-      this.childrenContainer.className = 'reply-children';
-      this.childrenContainer.style.display = this.props.node.post.depth > 0 ? 'none' : 'block';
-
-      this.props.node.children.forEach((childNode) => {
-        const childReplyNode = new ReplyNode({
-          node: childNode,
-          sandboxOrigin: this.props.sandboxOrigin,
-          currentUser: this.props.currentUser,
-          onReplyCreated: (newReply) => this.props.onReplyCreated(newReply),
-          postIndexMap: this.props.postIndexMap,
-        });
-        this.childReplyNodes.push(childReplyNode);
-        this.childrenContainer!.appendChild(childReplyNode.getElement());
-      });
-
-      container.appendChild(this.childrenContainer);
-    }
-
-    return container;
   }
 
-  private setupEventListeners(): void {
-    if (this.postCard) {
-      // Listen for reply toggle events on the post card
-      this.postCard.getElement().addEventListener('replyToggle', ((e: Event) => {
-        const ce = e as CustomEvent;
-        if (ce.detail.postId === this.props.node.post.id) {
-          this.toggleReplyComposer();
-        }
-      }) as EventListener);
-    }
-
-    // Listen for global reply composer open events to close other composers
-    this.globalReplyListener = ((e: Event) => {
-      const ce = e as CustomEvent;
-      if (ce.detail.postId !== this.props.node.post.id && this.isReplyComposerOpen) {
-        this.hideReplyComposer();
-      }
-    }) as EventListener;
-    document.addEventListener('replyComposerOpen', this.globalReplyListener);
-  }
-
-  private toggleReplyComposer(): void {
-    if (this.isReplyComposerOpen) {
-      this.hideReplyComposer();
-    } else {
-      this.showReplyComposer();
-    }
-  }
-
-  private showReplyComposer(): void {
-    if (!this.props.currentUser) {
-      showSignInPrompt(
-        'reply',
-        () => {
-          void spaNavigate('/login');
-        },
-        () => {
-          void spaNavigate('/register');
-        },
-      );
-      return;
-    }
-    if (this.replyComposer) {
-      // Dispatch global event to close other reply composers
-      document.dispatchEvent(
-        new CustomEvent('replyComposerOpen', {
-          detail: { postId: this.props.node.post.id },
-        }),
-      );
-
-      this.replyComposer.getElement().style.display = 'block';
-      this.isReplyComposerOpen = true;
-    }
-  }
-
-  private hideReplyComposer(): void {
-    if (this.replyComposer) {
-      this.replyComposer.getElement().style.display = 'none';
-      this.isReplyComposerOpen = false;
-    }
-  }
-
-  private toggleExpanded(): void {
-    this.isExpanded = !this.isExpanded;
-    if (this.expandButton) {
-      this.expandButton.classList.toggle('is-expanded', this.isExpanded);
-      this.expandButton.setAttribute('aria-expanded', String(this.isExpanded));
-    }
-    if (this.childrenContainer) {
-      this.childrenContainer.style.display = this.isExpanded ? 'block' : 'none';
-    }
-  }
-
-  private handleReplyCreated(newReply: Post): void {
-    this.hideReplyComposer();
-
-    // Create child container if not exists
-    if (!this.childrenContainer) {
-      this.childrenContainer = document.createElement('div');
-      this.childrenContainer.className = 'reply-children';
-      this.childrenContainer.style.display = 'block';
-      this.element.appendChild(this.childrenContainer);
-    } else {
-      this.childrenContainer.style.display = 'block';
-    }
-
-    // Create ReplyNode for the new reply
-    const childNode: PostNode = { post: newReply, children: [] };
-    const childReplyNode = new ReplyNode({
-      node: childNode,
-      sandboxOrigin: this.props.sandboxOrigin,
-      currentUser: this.props.currentUser,
-      onReplyCreated: (reply) => this.props.onReplyCreated(reply),
-      postIndexMap: this.props.postIndexMap,
-    });
-    this.childReplyNodes.push(childReplyNode);
-    this.childrenContainer.appendChild(childReplyNode.getElement());
-
-    // Update this post's reply count
-    if (this.postCard) {
-      this.postCard.updatePost({
-        reply_count: (this.props.node.post.reply_count || 0) + 1,
-      });
-    }
-
-    // Notify parent
-    this.props.onReplyCreated(newReply);
-  }
-
-  public getElement(): HTMLElement {
+  getElement(): HTMLElement {
     return this.element;
   }
 
-  public destroy(): void {
-    // Cleanup global event listener
-    if (this.globalReplyListener) {
-      document.removeEventListener('replyComposerOpen', this.globalReplyListener);
-      this.globalReplyListener = undefined;
-    }
-
-    // Cleanup child reply nodes
-    this.childReplyNodes.forEach((node) => void node.destroy());
-    this.childReplyNodes = [];
-
-    // Cleanup post card
-    if (this.postCard) {
-      this.postCard.destroy();
-      this.postCard = undefined;
-    }
-
-    // Cleanup reply composer
-    if (this.replyComposer) {
-      this.replyComposer.destroy();
-      this.replyComposer = undefined;
-    }
-
+  destroy(): void {
+    if (this.instance) unmount(this.instance);
+    this.instance = null;
     this.element.remove();
   }
 }
