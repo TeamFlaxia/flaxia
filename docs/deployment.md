@@ -48,7 +48,10 @@ publish. Distribution is two things only:
 | `@flaxia/mail-contract` 0.1.1 | `flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` | `https://github.com/TeamFlaxia/flaxia-mail/releases/download/contract-v0.1.1/flaxia-mail-contract-0.1.1.tgz` |
 
 Upgrading a package means bumping the tarball in `vendor/`, updating the `file:`
-path, and re-running the install; there is no semver range to resolve.
+path, and re-running the install; there is no semver range to resolve. For
+`@flaxia/node`, also bump `CROWD_NODE_VERSION` in `shared/crowd-node.ts` and the
+entry-path test, then re-run `npm run build` so `/crowd/v<version>-0/` and the
+generated CSP hashes are refreshed (see `docs/web-index.md`).
 
 The **Game SDK is not distributed at all**: it is served from the sandbox origin
 as `/sdk/game.js` (IIFE, global `FlaxiaGame`) and is part of the sandbox deploy.

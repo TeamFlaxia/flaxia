@@ -13,7 +13,7 @@
   Cross-Origin-Embedder-Policy: require-corp
 
 # Pinned Crowd browser-node bundle (copied by the Vite build). Path contains
-# the version (v0.9.1-0), so it is safe to cache forever.
+# the version (v0.10.0-0), so it is safe to cache forever.
 /crowd/*
   Cache-Control: public, max-age=31536000, immutable
   X-Content-Type-Options: nosniff
