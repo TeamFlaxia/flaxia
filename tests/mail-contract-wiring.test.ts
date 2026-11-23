@@ -19,10 +19,16 @@ describe('mail contract wiring', () => {
   });
 
   it('keeps the app-local shims thin', () => {
-    for (const path of ['../shared/mail-address.ts', '../shared/webcrypto.ts', '../src/lib/mail/crypto.ts']) {
+    for (const path of [
+      '../shared/mail-address.ts',
+      '../shared/webcrypto.ts',
+      '../src/lib/mail/crypto.ts',
+      '../src/lib/mail/seal.ts',
+    ]) {
       const shim = source(path);
       assert.match(shim, /@flaxia\/mail-contract/, `${path} must delegate to the contract`);
       assert.ok(!shim.includes('function hmacHex'), `${path} must not carry an implementation`);
+      assert.ok(!shim.includes('function sealEnvelope'), `${path} must not carry an implementation`);
     }
   });
 

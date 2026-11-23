@@ -171,7 +171,7 @@ rather than being copied: mail-address normalization, WebCrypto/HMAC protocol
 helpers, and the ECIES mail crypto. Flaxia depends on a pinned version of the
 package instead of keeping a second copy in `shared/mail-address.ts`. Until the
 package is published to npm, the pin is the packed tarball
-`flaxia/vendor/flaxia-mail-contract-0.1.0.tgz` (see the `flaxia-mail` README);
+`flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` (see the `flaxia-mail` README);
 switch to the registry semver range after the first publish. Keep the client and
 server E2EE primitives byte-compatible and cover them with known-answer tests.
 
@@ -196,6 +196,13 @@ Binding and the Email Routing handler are reachable. Internal requests carry
 the authenticated user id and an HMAC; the signature binds the user, timestamp,
 method, path+query, and a body hash, and the Worker validates all of it even
 though Service Bindings are already trusted.
+
+Every internal request also carries `x-flaxia-contract` (the contract
+`MAIL_CONTRACT_VERSION`). When the header is present and differs from the
+deployed Worker's version, the Worker returns `409 mail_contract_mismatch`
+before authentication, so a Pages deploy cannot keep signing with an older
+address/HMAC/crypto contract than the Worker. The header is optional during a
+rolling upgrade; `GET /health` reports the Worker's version.
 
 ---
 

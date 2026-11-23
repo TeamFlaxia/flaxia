@@ -4,6 +4,8 @@
 // error codes surface as thrown Errors carrying the stable code from the
 // server (mail_vault_required, mail_rate_limited, mail_quota_exceeded, ...).
 
+import type { SendEnvelopeInput } from '@flaxia/mail-contract';
+
 export type MailSecurity = 'e2ee' | 'at_rest' | 'tls';
 
 export type MailFolder = 'inbox' | 'sent' | 'drafts' | 'archive' | 'spam' | 'trash';
@@ -271,40 +273,11 @@ export function applyMessageAction(action: string, ids: string[]): Promise<unkno
   });
 }
 
-export interface SendAttachmentInput {
-  /** Logical attachment id (also the HKDF info input). */
-  id: string;
-  iv: string;
-  ciphertext: string;
-  filename_enc: string;
-  content_type: string;
-  size_bytes: number;
-}
-
-export interface SendKeyInput {
-  address: string;
-  key_version: number;
-  ephemeral_public_key: string;
-  iv: string;
-  wrapped_content_key: string;
-}
-
-/** Client-sealed envelope for POST /api/mail/messages and drafts (§9.2). */
-export interface SendEnvelopeInput {
-  message_id: string;
-  thread_id?: string;
-  in_reply_to_hash?: string;
-  from: string;
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject_enc: string;
-  from_name_enc: string;
-  meta_enc: string;
-  payload: { iv: string; ciphertext: string };
-  attachments?: SendAttachmentInput[];
-  keys: SendKeyInput[];
-}
+export type {
+  SendAttachmentInput,
+  SendEnvelopeInput,
+  SendKeyInput,
+} from '@flaxia/mail-contract';
 
 export interface MailDraftRow {
   id: string;
