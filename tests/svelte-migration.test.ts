@@ -447,6 +447,14 @@ test('engagement endpoints expose canonical is_* fields for the Svelte cards', a
   assert.match(card, /data\.is_bookmarked \?\? data\.bookmarked/);
 });
 
+test('post card edits use the server PUT endpoint', async () => {
+  const card = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(card, /fetch\(`\/api\/posts\/\$\{props\.post\.id\}`[\s\S]{0,160}?method: 'PUT'/);
+  assert.doesNotMatch(card, /method: 'PATCH'/, 'there is no PATCH /api/posts/:id route');
+  const route = await read('functions/api/routes/posts/manage.ts');
+  assert.match(route, /manage\.put\('\/posts\/:id'/);
+});
+
 test('trending tags are fetched through one shared loader', async () => {
   for (const file of [
     'src/lib/svelte/LeftNav.svelte',

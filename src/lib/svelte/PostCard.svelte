@@ -467,12 +467,15 @@ async function saveEdit(): Promise<void> {
   saving = true;
   try {
     const res = await fetch(`/api/posts/${props.post.id}`, {
-      method: 'PATCH',
+      method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text }),
     });
-    if (!res.ok) throw new Error('save failed');
+    if (!res.ok) {
+      const failure = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(failure.error || 'save failed');
+    }
     const data = (await res.json()) as { post?: Post };
     const updated = data.post;
     editing = false;
@@ -482,8 +485,9 @@ async function saveEdit(): Promise<void> {
     } else {
       updatePost({ text });
     }
-  } catch {
-    showToast(t('post.edit_failed'), true);
+  } catch (error) {
+    const detail = error instanceof Error && error.message !== 'save failed' ? error.message : '';
+    showToast(detail || t('post.edit_failed'), true);
   } finally {
     saving = false;
   }
