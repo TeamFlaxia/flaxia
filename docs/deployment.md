@@ -43,12 +43,15 @@ publish. Distribution is two things only:
 
 | Package | Consumer reference | Release asset |
 |---|---|---|
-| `@flaxia/node` 0.9.1 | `flaxia/vendor/flaxia-node-0.9.1.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/node-v0.9.1/flaxia-node-0.9.1.tgz` |
-| `@flaxia/sdk` 0.7.1 | `flaxia/vendor/flaxia-sdk-0.7.1.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/sdk-v0.7.1/flaxia-sdk-0.7.1.tgz` |
+| `@flaxia/node` 0.10.0 | `flaxia/vendor/flaxia-node-0.10.0.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/node-v0.10.0/flaxia-node-0.10.0.tgz` |
+| `@flaxia/sdk` 0.8.0 | `flaxia/vendor/flaxia-sdk-0.8.0.tgz` | `https://github.com/TeamFlaxia/flaxia-crowd/releases/download/sdk-v0.8.0/flaxia-sdk-0.8.0.tgz` |
 | `@flaxia/mail-contract` 0.1.1 | `flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` | `https://github.com/TeamFlaxia/flaxia-mail/releases/download/contract-v0.1.1/flaxia-mail-contract-0.1.1.tgz` |
 
 Upgrading a package means bumping the tarball in `vendor/`, updating the `file:`
-path, and re-running the install; there is no semver range to resolve.
+path, and re-running the install; there is no semver range to resolve. For
+`@flaxia/node`, also bump `CROWD_NODE_VERSION` in `shared/crowd-node.ts` and the
+entry-path test, then re-run `npm run build` so `/crowd/v<version>-0/` and the
+generated CSP hashes are refreshed (see `docs/web-index.md`).
 
 The **Game SDK is not distributed at all**: it is served from the sandbox origin
 as `/sdk/game.js` (IIFE, global `FlaxiaGame`) and is part of the sandbox deploy.
@@ -57,7 +60,7 @@ as `/sdk/game.js` (IIFE, global `FlaxiaGame`) and is part of the sandbox deploy.
 
 The Crowd node bundle the browser loads is copied from
 `node_modules/@flaxia/node/dist` into the Pages build output at
-`/crowd/v0.9.1-0/`. It is therefore **same-origin** (`flaxia.app`), versioned by
+`/crowd/v0.10.0-0/`. It is therefore **same-origin** (`flaxia.app`), versioned by
 path, and served with an immutable cache header; it ships with the ordinary Pages
 deploy. There is no unpkg asset proxy — only `/api/crowd/webhook` and
 `/api/crowd/scan-file` remain as Crowd routes. CSP still allows `unpkg.com` for
