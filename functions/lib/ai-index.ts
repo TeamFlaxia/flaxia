@@ -1,4 +1,5 @@
 import { stripPostColors } from '../../shared/post-colors.ts';
+import type { Db } from './ports/index.ts';
 
 /** SHA-256 of the exact text sent for embedding, also signed into the callback URL. */
 export async function postTextSha(text: string): Promise<string> {
@@ -7,7 +8,7 @@ export async function postTextSha(text: string): Promise<string> {
 }
 
 /** Enrich all post types, including text-only and image posts, with actual indexing completion. */
-export async function enrichPostsWithAiIndex<T extends { id: string }>(posts: T[], db: D1Database): Promise<void> {
+export async function enrichPostsWithAiIndex<T extends { id: string }>(posts: T[], db: Db): Promise<void> {
   for (const post of posts) (post as Record<string, unknown>).ai_indexed = false;
   if (!posts.length) return;
   try {

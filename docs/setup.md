@@ -115,7 +115,7 @@ See `local-test-accounts.md` for how to create a local test account (no shared p
 | File | Purpose |
 |---|---|
 | `wrangler.toml` | Main Pages project config (D1, R2, KV, Queue bindings) |
-| `wrangler.worker.toml` | Backend Worker config (flaxia-backend) |
+| `wrangler.worker.toml` | Queue Worker config (`flaxia-ap-delivery`, `functions/queue-worker.ts`) |
 | `wrangler.sandbox.toml` | Sandbox Worker config |
 | `vite.config.ts` | Vite build configuration |
 | `tsconfig.json` | TypeScript strict mode config |

@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { buildAcceptActivity } from './activities.ts';
 import { actorUrl, localProfileUsername, noteUrl } from './actor.ts';
 import { storeRemoteAttachments } from './attachments.ts';

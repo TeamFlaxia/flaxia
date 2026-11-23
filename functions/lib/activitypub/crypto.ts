@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 /**
  * Decode the base64 content of a PEM block.
  *

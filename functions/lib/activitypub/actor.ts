@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { AS2_CONTEXT, SECURITY_CONTEXT } from './context.ts';
 
 /**

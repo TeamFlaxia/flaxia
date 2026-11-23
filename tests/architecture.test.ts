@@ -25,7 +25,6 @@ const ALLOWED_PREFIXES = [
   'functions/api/[[route]].ts',
   'functions/queue-worker.ts',
   'src/sandbox-worker.ts',
-  'mail-worker/',
   'do-worker/',
   'multiplayer-worker/',
 ];

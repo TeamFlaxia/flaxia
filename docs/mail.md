@@ -1,6 +1,6 @@
 # Flaxia Mail
 
-**Status:** P1 foundation + P2 receive/read implemented in code (inbound stays disabled until the P2 cutover).
+**Status:** P1 foundation + P2 receive/read implemented; the Worker is deployed and inbound is live (apex cutover 2026-11-07). The Worker lives in the separate `flaxia-mail` repo and its contract is published as `@flaxia/mail-contract`.
 
 Flaxia Mail is a real mailbox on `@flaxia.app`: it receives mail from the
 public SMTP network, sends mail to external recipients, and exposes a webmail
@@ -10,7 +10,7 @@ UI inside Flaxia. It is not a revival of the removed Lounge/DM feature
 This document is the implementation contract. Code that contradicts it is a
 bug, the same rule `docs/e2ee.md` uses for the Personal Vault.
 
-Last updated: 2026-11-06.
+Last updated: 2026-11-23.
 
 ---
 
@@ -60,7 +60,7 @@ end-to-end encrypted anywhere in the UI or docs.
 | Auth identity | Auth is the authoritative credential source (see `docs/auth-authority-transition.md`); username-first (`/^[A-Za-z0-9_]{1,20}$/`, case-insensitive), email optional and unverified. |
 | Username changes | No rename endpoint exists today. Mail addresses therefore remain stable; if rename is added later, old addresses must stay as aliases. |
 | E2EE | Personal Vault exists (`docs/e2ee.md`); reuse its VK, device approval, and vault-item storage. |
-| API/UI | Hono router in `functions/api/[[route]].ts`; SPA routes in `src/lib/router.ts`; left nav in `src/components/LeftNav.ts`. |
+| API/UI | Hono router in `functions/api/[[route]].ts`; SPA routes in `src/routes/*` (SvelteKit); left nav in `src/lib/svelte/LeftNav.svelte`. |
 
 ### Hard platform constraints
 
@@ -135,30 +135,45 @@ SPA (vanilla TypeScript)
 - A separate R2 bucket gives independent retention, lifecycle, and deletion.
 - Mail can be disabled or rate-limited without redeploying the main app.
 
-### Planned layout
+### Repository layout
+
+The Worker is a separate deploy unit in the `flaxia-mail` repo. Flaxia keeps
+only the Pages-side proxy and the SPA.
 
 ```
-mail-worker/
-  wrangler.toml
-  src/index.ts          fetch(), email(), queue() exports
-  src/ingest.ts         inbound pipeline
-  src/parse.ts          MIME parsing and header normalization
-  src/send.ts           outbound pipeline and MIME builder
-  src/storage.ts        D1/R2 helpers
-  src/crypto.ts         ECIES content-key wrapping (server side)
-  src/render.ts         HTML sanitization helpers shared with tests
-functions/api/routes/mail.ts   authenticated proxy to MAIL_SERVICE
-src/components/Mail*.ts        webmail UI
-src/lib/mail/*                 client crypto, search, address helpers
-migrations/mail/               MAIL_DB migrations
-tests/mail-*.test.ts           unit/integration tests
-tests/fixtures/mail/*.eml      inbound fixtures
+flaxia-mail/                     # separate repo (TeamFlaxia/flaxia-mail)
+  src/index.ts                   @flaxia/mail-contract (published package)
+  dist/                          committed build output for git/offline installs
+  tests/                         contract tests (address, HMAC, ECIES, seal)
+  worker/
+    wrangler.toml
+    src/index.ts                 fetch(), email(), queue() exports
+    src/ingest.ts                inbound pipeline
+    src/parse.ts                 MIME parsing and header normalization
+    src/send.ts                  outbound pipeline and MIME builder
+    src/http.ts                  internal API and D1/R2 helpers
+    migrations/                  MAIL_DB migrations
+    tests/                       Worker + in-memory D1 integration tests
+
+@flaxia/mail-contract            # published package, pinned by both sides
+  mail-address helpers and the reserved-local list
+  WebCrypto / HMAC protocol helpers (signMailInternal / verifyMailInternal)
+  ECIES mail crypto and the client-sealed send envelope
+
+flaxia/                          # this repo: proxy + UI only
+  functions/api/routes/mail.ts   authenticated proxy to MAIL_SERVICE
+  src/routes/mail/*              webmail routes (list / thread / compose / settings)
+  src/lib/mail/*                 client crypto, search, address helpers, rendering
 ```
 
-Shared pure modules (address normalization, MIME header encoding, date
-formatting) should live in one place consumed by both the Worker and the SPA,
-rather than being copied. Keep the client and server E2EE primitives
-byte-compatible and cover them with known-answer tests.
+Pure code shared by the Worker and the SPA lives in `@flaxia/mail-contract`
+rather than being copied: mail-address normalization, WebCrypto/HMAC protocol
+helpers, and the ECIES mail crypto. Flaxia depends on a pinned version of the
+package instead of keeping a second copy in `shared/mail-address.ts`. Until the
+package is published to npm, the pin is the packed tarball
+`flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` (see the `flaxia-mail` README);
+switch to the registry semver range after the first publish. Keep the client and
+server E2EE primitives byte-compatible and cover them with known-answer tests.
 
 ### Bindings
 
@@ -173,7 +188,7 @@ byte-compatible and cover them with known-answer tests.
 | `MAIL_INTERNAL_SECRET` | Secret | Signature for trusted Pages → Worker calls |
 | `MAIL_THREAD_SECRET` | Secret | HMAC for subject-based thread fallback |
 | `MAIL_DOMAIN` | Var | `flaxia.app` (apex, D6 approved) |
-| `MAIL_INBOUND_ENABLED` | Var | `"0"` during P1 (rejects live mail); set `"1"` only at the P2 cutover. |
+| `MAIL_INBOUND_ENABLED` | Var | `"1"` (live since the 2026-11-07 apex cutover); set `"0"` only to disable receiving during an incident. |
 | `MAIL_FALLBACK_FORWARD` | — | Removed. Human forwarding is deleted; unknown recipients get 550 from the Worker (no catch-all forward). |
 
 The Mail Worker must not expose a public `workers.dev` route. Only the Service
@@ -181,6 +196,13 @@ Binding and the Email Routing handler are reachable. Internal requests carry
 the authenticated user id and an HMAC; the signature binds the user, timestamp,
 method, path+query, and a body hash, and the Worker validates all of it even
 though Service Bindings are already trusted.
+
+Every internal request also carries `x-flaxia-contract` (the contract
+`MAIL_CONTRACT_VERSION`). When the header is present and differs from the
+deployed Worker's version, the Worker returns `409 mail_contract_mismatch`
+before authentication, so a Pages deploy cannot keep signing with an older
+address/HMAC/crypto contract than the Worker. The header is optional during a
+rolling upgrade; `GET /health` reports the Worker's version.
 
 ---
 
@@ -626,7 +648,7 @@ own one-message thread. They are listed, reopened, updated, and deleted through
 
 ### Routes
 
-Add these views to `src/lib/router.ts`:
+These views live in the SvelteKit mail routes:
 
 - `/mail` — three-pane mailbox
 - `/mail/thread/:id` — thread view
@@ -634,7 +656,7 @@ Add these views to `src/lib/router.ts`:
 - `/mail/settings` — addresses, signature, notifications, quota
 
 Mobile collapses to a list/detail pair. Add a Mail item and unread badge to
-`src/components/LeftNav.ts` next to Notifications.
+`src/lib/svelte/LeftNav.svelte` next to Notifications.
 
 ### Mailbox
 

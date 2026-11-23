@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 /**
  * JSON-LD context and media type constants for ActivityPub.
  *

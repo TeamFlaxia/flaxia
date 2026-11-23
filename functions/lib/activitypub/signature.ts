@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { importPublicKey } from './crypto.ts';
 
 /**

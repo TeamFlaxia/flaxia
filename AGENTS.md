@@ -145,4 +145,4 @@ npm run test:billing  # in another shell
 ```
 
 ## Detailed Specifications
-See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The client renderer, template rules, ownership model, and reserved layout boxes are specified in `docs/rendering.md`. The Flaxia Mail design (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md` — design only until implementation starts.
+See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The client renderer, template rules, ownership model, and reserved layout boxes are specified in `docs/rendering.md`. Flaxia Mail (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md`; mail is live, the Worker lives in the `flaxia-mail` repo, and the shared contract is published as `@flaxia/mail-contract`. The service/repo topology is in `docs/architecture/service-map.md`.

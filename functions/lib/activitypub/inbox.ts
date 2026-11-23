@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { checkRateLimit, getClientIp } from '../rate-limit.ts';
 import { localActorUsername } from './actor.ts';
 import { type FetchOptions, resolveActorPublicKey } from './fetch.ts';

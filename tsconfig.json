@@ -26,6 +26,6 @@
     "types": ["@cloudflare/workers-types"],
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*", "functions/**/*", "shared/**/*", "status-worker/src/transition.ts", "mail-worker/src/**/*"],
+  "include": ["src/**/*", "functions/**/*", "shared/**/*", "status-worker/src/transition.ts"],
   "exclude": ["node_modules", "dist", "sandbox"]
 }

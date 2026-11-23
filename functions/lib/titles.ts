@@ -1,4 +1,4 @@
-import type { D1Database } from '@cloudflare/workers-types';
+import type { Db } from './ports/index.ts';
 
 /** Awarded to every account on registration and on later logins. */
 export const NEWCOMER_TITLE_ID = 'flaxian_newcomer';
@@ -36,7 +36,7 @@ export interface UserTitleRow extends TitleRow {
  * title only once. Future achievement systems (Arcade clears, etc.) should call
  * this helper instead of writing to `user_titles` directly.
  */
-export async function awardTitle(db: D1Database, userId: string, titleId: string): Promise<boolean> {
+export async function awardTitle(db: Db, userId: string, titleId: string): Promise<boolean> {
   const title = await db.prepare('SELECT 1 FROM titles WHERE id = ?').bind(titleId).first();
   if (!title) return false;
 
@@ -49,7 +49,7 @@ export async function awardTitle(db: D1Database, userId: string, titleId: string
  * accounts created before the title existed receive it on their next sign-in.
  * Best-effort: a missing catalog row must never block authentication.
  */
-export async function ensureNewcomerTitle(db: D1Database, userId: string): Promise<void> {
+export async function ensureNewcomerTitle(db: Db, userId: string): Promise<void> {
   try {
     const awarded = await awardTitle(db, userId, NEWCOMER_TITLE_ID);
     if (!awarded) console.warn(`Newcomer title ${NEWCOMER_TITLE_ID} is not seeded`);
@@ -99,7 +99,7 @@ export function isGameTitleIcon(icon: string): boolean {
  * first writer fixes the display text, and a title id that already belongs to
  * another game (or to the platform) is a conflict rather than a takeover.
  */
-export async function createGameTitle(db: D1Database, input: GameTitleInput): Promise<GameTitleCreation> {
+export async function createGameTitle(db: Db, input: GameTitleInput): Promise<GameTitleCreation> {
   const existing = await db
     .prepare('SELECT game_post_id FROM titles WHERE id = ?')
     .bind(input.titleId)
@@ -145,12 +145,7 @@ export async function createGameTitle(db: D1Database, input: GameTitleInput): Pr
  * another game (or the platform) is `conflict`. Creating a definition is a
  * separate, author-only operation (`createGameTitle`).
  */
-export async function awardGameTitle(
-  db: D1Database,
-  userId: string,
-  postId: string,
-  titleId: string,
-): Promise<GameTitleAward> {
+export async function awardGameTitle(db: Db, userId: string, postId: string, titleId: string): Promise<GameTitleAward> {
   const title = await db
     .prepare('SELECT game_post_id FROM titles WHERE id = ?')
     .bind(titleId)
@@ -167,7 +162,7 @@ export async function awardGameTitle(
  * equipped reference. Called when a game post (and its replies) are deleted so
  * the public catalog cannot keep orphaned achievements.
  */
-export async function deleteGameTitlesForPosts(db: D1Database, postIds: string[]): Promise<void> {
+export async function deleteGameTitlesForPosts(db: Db, postIds: string[]): Promise<void> {
   if (postIds.length === 0) return;
   for (let i = 0; i < postIds.length; i += 400) {
     const ids = postIds.slice(i, i + 400);
@@ -212,10 +207,7 @@ export const NULL_EQUIPPED_TITLE: EquippedTitleFields = {
  * carry `equipped_title_id` (for example `/api/me`). Returns all-null fields
  * when no title is equipped or the catalog row is missing.
  */
-export async function equippedTitleFields(
-  db: D1Database,
-  titleId: string | null | undefined,
-): Promise<EquippedTitleFields> {
+export async function equippedTitleFields(db: Db, titleId: string | null | undefined): Promise<EquippedTitleFields> {
   if (!titleId) return NULL_EQUIPPED_TITLE;
   const row = await db
     .prepare(
@@ -241,7 +233,7 @@ export async function equippedTitleFields(
  * Sets (or clears) the title shown after the user's username. A user can only
  * equip a title they own; `null` removes the title.
  */
-export async function equipTitle(db: D1Database, userId: string, titleId: string | null): Promise<boolean> {
+export async function equipTitle(db: Db, userId: string, titleId: string | null): Promise<boolean> {
   if (titleId !== null) {
     const owned = await db
       .prepare('SELECT 1 FROM user_titles WHERE user_id = ? AND title_id = ?')

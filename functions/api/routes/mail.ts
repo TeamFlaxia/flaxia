@@ -6,8 +6,9 @@
 // trusts a bare user id from the browser.
 //
 // P1 ships: addresses, keys, quota. Threads/messages/send land in P2/P3.
+
+import { primaryAddressForUsername as primaryAddressFor } from '@flaxia/mail-contract';
 import { type Context, Hono } from 'hono';
-import { RESERVED_LOCALS } from '../../../shared/mail-address.ts';
 import { getSessionToken } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
@@ -133,13 +134,6 @@ async function hasEnabledVault(c: MailContext, userId: string): Promise<boolean>
 
   const row = await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?').bind(userId).first();
   return Boolean(row);
-}
-
-export function primaryAddressFor(username: string, domain = 'flaxia.app'): string {
-  const local = username.trim().toLowerCase();
-  if (!/^[A-Za-z0-9_]{1,20}$/.test(local)) throw new Error('mail_invalid_username');
-  if (RESERVED_LOCALS.has(local)) throw new Error('mail_reserved');
-  return `${local}@${domain}`;
 }
 
 mail.get('/addresses', async (c) => {

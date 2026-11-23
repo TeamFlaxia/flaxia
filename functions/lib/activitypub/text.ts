@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 /**
  * Text helpers shared by the ActivityPub builders.
  *

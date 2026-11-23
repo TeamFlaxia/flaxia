@@ -1,5 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-
 import { checkUrlForSsrf, SsrfError } from '../url-guard.ts';
 import { importPrivateKey } from './crypto.ts';
 

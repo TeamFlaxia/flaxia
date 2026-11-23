@@ -1,15 +1,13 @@
 // Routing invariants for postmaster/abuse forwarding (docs/mail.md §11.1.3).
 //
 // The Email Routing forwarding itself is configured in the Cloudflare
-// dashboard and cannot be tested from the repo. This suite guards the repo
-// side of the contract so a future edit cannot silently break the exception:
-//   - the destination is the TeamFlaxia contact already published in legal docs
-//   - postmaster/abuse stay reserved (not provisionable as user addresses)
-//   - docs/deployment.md records the forwarding steps for the operator
+// dashboard and cannot be tested from the repo. The Worker-side source guards
+// live in the flaxia-mail repo; this suite protects the operator-facing
+// documentation that ships with the Flaxia app.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { isReservedLocal } from '../shared/mail-address.ts';
+import { isReservedLocal } from '@flaxia/mail-contract';
 
 const DESTINATION = 'teamflaxia@proton.me';
 
@@ -40,11 +38,5 @@ describe('mail postmaster/abuse forwarding', () => {
       deploy.includes('Destination') && deploy.includes('Custom address'),
       'deployment.md must describe destination + custom address steps',
     );
-  });
-
-  it('does not forward user mail (catch-all stays on the Worker)', () => {
-    const worker = readFileSync(new URL('../mail-worker/src/index.ts', import.meta.url), 'utf8');
-    assert.ok(!worker.includes(DESTINATION), 'the Mail Worker must never see proton.me traffic');
-    assert.ok(!worker.includes('MAIL_FALLBACK_FORWARD'), 'the fallback forward must stay removed');
   });
 });

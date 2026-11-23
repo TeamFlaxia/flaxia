@@ -1,8 +1,8 @@
-/// <reference types="@cloudflare/workers-types" />
 import { webfingerResponse } from '../lib/activitypub/webfinger';
+import type { Db } from '../lib/ports/index.ts';
 
 interface Env {
-  DB: D1Database;
+  DB: Db;
   BASE_URL: string;
 }
 
