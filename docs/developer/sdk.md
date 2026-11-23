@@ -1,6 +1,6 @@
 # Flaxia Game SDK
 
-`@flaxia/game-sdk` は、Flaxia サンドボックスで動くゲームのための薄いラッパーです。
+Flaxia Game SDK は、Flaxia サンドボックスで動くゲームのための薄いラッパーです。
 `postMessage` の型付きフレームを隠し、マルチプレイ・スコア・フルスクリーン・
 Fresh を数行で使えるようにします。
 
@@ -10,34 +10,22 @@ Fresh を数行で使えるようにします。
 
 ## 読み込み方
 
-### A. サンドボックスの IIFE を読み込む（推奨・ simplest）
+サンドボックスの IIFE を `<script>` で読み込むのが**唯一の配布形態**です。
+npm パッケージは存在しません（`@flaxia/game-sdk` はレジストリに公開されていません）。
 
 HTML の先頭に **1行** 追加します。
 
 ```html
 <script src="/sdk/game.js"></script>
 <script>
-  const { FlaxiaGame } = FlaxiaGame;
+  const { FlaxiaGame } = window.FlaxiaGame;
   const game = new FlaxiaGame({ gameId: 'my-game' });
 </script>
 ```
 
-`FlaxiaGame` グローバルから `FlaxiaGame` / `MultiplayerClient` / 型が使えます。
-スクリプトは `sandbox.flaxia.app` から配信されます。
-
-### B. npm パッケージとして使う
-
-```bash
-npm install @flaxia/game-sdk
-```
-
-```typescript
-import { FlaxiaGame } from '@flaxia/game-sdk';
-
-const game = new FlaxiaGame({ gameId: 'my-game' });
-```
-
-バンドラが `window` を参照するため、ブラウザ環境でのみ動作します。
+`window.FlaxiaGame` グローバルから `FlaxiaGame` / `MultiplayerClient` が使えます
+（IIFE の名前空間オブジェクトに両方が載っています）。スクリプトはサンドボックス
+オリジン（`sandbox.flaxia.app`）から配信されます。
 
 ---
 
@@ -189,24 +177,12 @@ onP2PState(event)        onPeerData(event)
 
 ## 型定義
 
-```typescript
-import type {
-  FlaxiaGameOptions,
-  FlaxiaGameEventMap,
-  ScoreSubmittedEvent,
-  GameTitleDefinition,
-  TitleErrorEvent,
-  PlayerIdentity,
-  EquippedTitle,
-  GameToParentMessage,
-  ParentToGameMessage,
-  CaptureFrame,
-  PlayerInfo,
-  RoomInfo,
-  RoomState,
-  MultiplayerClientOptions,
-} from '@flaxia/game-sdk';
-```
+型は npm から import するものではなく、各ドキュメントの `interface` 定義が正です。
+`FlaxiaGameOptions` / `FlaxiaGameEventMap` / `GameTitleDefinition` は本文中、
+マルチプレイの `PlayerInfo` / `RoomInfo` / `RoomState` などは
+[../multiplayer.md](../multiplayer.md)、`PlayerIdentity` などは
+[Game API](game-api.md) にあります。TypeScript で書く場合はプロジェクト側で
+`declare global` するか、これらの型をそのままコピーしてください。
 
 ---
 
@@ -227,13 +203,14 @@ const game = new FlaxiaGame({
 
 ## `@flaxia/multiplayer` からの移行
 
-`@flaxia/multiplayer` は非推奨のエイリアスです。`@flaxia/game-sdk` に統合されました。
+`@flaxia/multiplayer` は非推奨のエイリアスで、`@flaxia/game-sdk`（= `/sdk/game.js`
+の IIFE）に統合されました。どちらも npm では配布されていません。
 
 ```diff
 - import { MultiplayerClient } from '@flaxia/multiplayer';
-+ import { FlaxiaGame } from '@flaxia/game-sdk';
-
 - const client = new MultiplayerClient({ gameId: 'my-game' });
++ <script src="/sdk/game.js"></script>
++ const { FlaxiaGame } = window.FlaxiaGame;
 + const game = new FlaxiaGame({ gameId: 'my-game' });
 + const client = game.multiplayer;
 ```

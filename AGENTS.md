@@ -52,7 +52,7 @@ CI run with npm).
 │   ├── lib/                   # Utilities (i18n, bridge, zip, settings, ...)
 │   └── types/                 # TypeScript type definitions
 ├── public/                    # Static assets + locales/{en,ja}.json
-├── packages/                  # Publishable SDKs built with Vite
+├── packages/                  # In-app SDK bundles built with Vite (no npm publish)
 │   ├── flaxia-render/          # flaxia-render — fine-grained UI renderer
 │   ├── game-sdk/              # @flaxia/game-sdk — Flaxia Game API wrapper (canonical)
 │   ├── multiplayer/           # @flaxia/multiplayer — deprecated alias of game-sdk
@@ -145,4 +145,4 @@ npm run test:billing  # in another shell
 ```
 
 ## Detailed Specifications
-See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The client renderer, template rules, ownership model, and reserved layout boxes are specified in `docs/rendering.md`. Flaxia Mail (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md`; mail is live, the Worker lives in the `flaxia-mail` repo, and the shared contract is published as `@flaxia/mail-contract`. The service/repo topology is in `docs/architecture/service-map.md`.
+See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The client renderer, template rules, ownership model, and reserved layout boxes are specified in `docs/rendering.md`. Flaxia Mail (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md`; mail is live, the Worker lives in the `flaxia-mail` repo, and the shared `@flaxia/mail-contract` is vendored as `vendor/flaxia-mail-contract-0.1.1.tgz` (never uploaded to npm). Nothing Flaxia ships is published to npm: distribution is committed `vendor/*.tgz` plus GitHub Release tarball assets, and the Game SDK is served in-sandbox at `/sdk/game.js`. The service/repo topology is in `docs/architecture/service-map.md`.

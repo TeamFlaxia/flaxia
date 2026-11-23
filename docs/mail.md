@@ -1,6 +1,6 @@
 # Flaxia Mail
 
-**Status:** P1 foundation + P2 receive/read implemented; the Worker is deployed and inbound is live (apex cutover 2026-11-07). The Worker lives in the separate `flaxia-mail` repo and its contract is published as `@flaxia/mail-contract`.
+**Status:** P1 foundation + P2 receive/read implemented; the Worker is deployed and inbound is live (apex cutover 2026-11-07). The Worker lives in the separate `flaxia-mail` repo and its contract `@flaxia/mail-contract` is vendored as a tarball (never uploaded to npm).
 
 Flaxia Mail is a real mailbox on `@flaxia.app`: it receives mail from the
 public SMTP network, sends mail to external recipients, and exposes a webmail
@@ -142,7 +142,7 @@ only the Pages-side proxy and the SPA.
 
 ```
 flaxia-mail/                     # separate repo (TeamFlaxia/flaxia-mail)
-  src/index.ts                   @flaxia/mail-contract (published package)
+  src/index.ts                   @flaxia/mail-contract (vendored tarball)
   dist/                          committed build output for git/offline installs
   tests/                         contract tests (address, HMAC, ECIES, seal)
   worker/
@@ -155,7 +155,7 @@ flaxia-mail/                     # separate repo (TeamFlaxia/flaxia-mail)
     migrations/                  MAIL_DB migrations
     tests/                       Worker + in-memory D1 integration tests
 
-@flaxia/mail-contract            # published package, pinned by both sides
+@flaxia/mail-contract            # vendored tarball, pinned by both sides
   mail-address helpers and the reserved-local list
   WebCrypto / HMAC protocol helpers (signMailInternal / verifyMailInternal)
   ECIES mail crypto and the client-sealed send envelope
@@ -168,11 +168,15 @@ flaxia/                          # this repo: proxy + UI only
 
 Pure code shared by the Worker and the SPA lives in `@flaxia/mail-contract`
 rather than being copied: mail-address normalization, WebCrypto/HMAC protocol
-helpers, and the ECIES mail crypto. Flaxia depends on a pinned version of the
-package instead of keeping a second copy in `shared/mail-address.ts`. Until the
-package is published to npm, the pin is the packed tarball
-`flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` (see the `flaxia-mail` README);
-switch to the registry semver range after the first publish. Keep the client and
+helpers, and the ECIES mail crypto. Flaxia depends on a vendored version of the
+package instead of keeping a second copy in `shared/mail-address.ts`. The
+contract is not published to npm: the pin is the committed tarball
+`flaxia/vendor/flaxia-mail-contract-0.1.1.tgz` (a `file:` dependency), and the
+same tarball is attached to the `contract-v0.1.1` GitHub Release in
+`TeamFlaxia/flaxia-mail`
+(`https://github.com/TeamFlaxia/flaxia-mail/releases/download/contract-v0.1.1/flaxia-mail-contract-0.1.1.tgz`).
+To upgrade, replace the vendored tarball, update the `file:` path, and re-install;
+there is no registry semver range. Keep the client and
 server E2EE primitives byte-compatible and cover them with known-answer tests.
 
 ### Bindings

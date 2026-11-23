@@ -28,7 +28,7 @@ test('desktop Crowd imports resolve to bundled modules on every native origin', 
     configurable: true,
     value: { location: new URL('https://flaxia.app/') },
   });
-  assert.equal(crowdNodeEntry(), `/api/crowd/v${CROWD_NODE_VERSION}-0/index.js`);
+  assert.equal(crowdNodeEntry(), `/crowd/v${CROWD_NODE_VERSION}-0/index.js`);
 });
 
 test('desktop build copies the pinned module graph and worker assets and rejects version drift', (t) => {

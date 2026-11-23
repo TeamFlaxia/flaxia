@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
@@ -17,7 +17,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
-      external: (id) => id.startsWith('/api/crowd/'),
+      external: (id) => id.startsWith('/crowd/'),
       output: {
         manualChunks(id) {
           if (!id.includes('/node_modules/')) return;
@@ -42,17 +42,6 @@ export default defineConfig({
       ignored: ['**/src-tauri/target/**'],
     },
     proxy: {
-      '/api/crowd': {
-        target: `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist`,
-        changeOrigin: true,
-        // Vite appends `?import` to the dynamic import in dev; unpkg 404s on
-        // that query, so forward only the asset path.
-        rewrite: (path) =>
-          path
-            .split('?')[0]
-            .replace(/^\/api\/crowd\//, '')
-            .replace(/^v[^/]+\//, ''),
-      },
       '/api': {
         target: process.env.VITE_API_TARGET || 'http://localhost:8787',
         changeOrigin: true,
@@ -120,30 +109,35 @@ export default defineConfig({
       },
     },
     {
-      name: 'copy-crowd-assets',
-      writeBundle() {
-        const crowdSrc = 'node_modules/@flaxia/node/dist/assets';
-        const crowdDest = 'dist/assets';
-        if (existsSync(crowdSrc)) {
-          mkdirSync(crowdDest, { recursive: true });
-          const entries = readdirSync(crowdSrc, { withFileTypes: true });
-          for (const entry of entries) {
-            // FriedFlaxia's wasm glue is 2.5 MB per copy and is served by the
-            // versioned /api/crowd proxy (or native-crowd bundle). Copying it
-            // into the SPA dist duplicates the runtime and breaks the bundle
-            // budget.
-            const excluded = entry.name.startsWith('friedflaxia_wasm');
-            if (excluded) continue;
-            copyFileSync(join(crowdSrc, entry.name), join(crowdDest, entry.name));
-          }
-          console.log('Copied @flaxia/node assets (excluding the FriedFlaxia wasm glue)');
-
-          // #129: no runtime CDN rewrites. A previous revision replaced the
-          // transformers import with an SRI-less jsdelivr URL; the pattern no
-          // longer matches anything and must never come back — remote code
-          // without integrity is a supply-chain hole. If the 61MB web bundle
-          // is ever needed in-browser, vendor it same-origin instead.
-        }
+      // Dev has no static copy step: serve the same versioned path directly
+      // from node_modules so the runtime import resolves in `npm run dev`.
+      name: 'crowd-node-dev',
+      apply: 'serve',
+      configureServer(server) {
+        const crowdRoot = 'node_modules/@flaxia/node/dist';
+        const prefix = `/crowd/v${CROWD_NODE_VERSION}-0/`;
+        const types: Record<string, string> = {
+          js: 'application/javascript',
+          mjs: 'application/javascript',
+          wasm: 'application/wasm',
+          json: 'application/json',
+          map: 'application/json',
+          css: 'text/css',
+          html: 'text/html',
+          png: 'image/png',
+          svg: 'image/svg+xml',
+        };
+        server.middlewares.use((req, res, next) => {
+          const pathname = (req.url ?? '').split('?')[0];
+          if (!pathname.startsWith(prefix)) return next();
+          const relative = pathname.slice(prefix.length);
+          if (!relative || relative.includes('..')) return next();
+          const file = join(crowdRoot, relative);
+          if (!existsSync(file) || !statSync(file).isFile()) return next();
+          res.setHeader('Content-Type', types[relative.split('.').pop() ?? ''] ?? 'application/octet-stream');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(readFileSync(file));
+        });
       },
     },
     {

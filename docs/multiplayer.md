@@ -6,7 +6,7 @@ Flaxia のマルチプレイヤーシステムは、サンドボックス内の 
 
 ```
  [Game Iframe]              [Game Iframe]
-   @flaxia/multiplayer        @flaxia/multiplayer
+   /sdk/game.js (IIFE)      /sdk/game.js (IIFE)
      |  postMessage ↑↓            ↑↓ postMessage
      v                            v
  [Flaxia Parent]              [Flaxia Parent]
@@ -26,14 +26,15 @@ Flaxia のマルチプレイヤーシステムは、サンドボックス内の 
 
 ## クイックスタート
 
-### npm パッケージとして使用
+### サンドボックスの `/sdk/game.js` を読み込む
 
-```bash
-npm install @flaxia/multiplayer
-```
+マルチプレイヤーは Game SDK（`/sdk/game.js` の IIFE）に同梱されています。
+npm パッケージはありません。サンドボックスゲームからは script タグで読み込みます:
 
-```typescript
-import { MultiplayerClient } from '@flaxia/multiplayer';
+```html
+<script src="/sdk/game.js"></script>
+<script>
+const { MultiplayerClient } = window.FlaxiaGame;
 
 const client = new MultiplayerClient({
   gameId: 'my-game',
@@ -47,21 +48,11 @@ client.on('onRoomState', (state) => {
 client.on('onError', (error) => {
   console.error('Multiplayer error:', error.code, error.message);
 });
-```
-
-### IIFE (サンドボックスワーカー経由)
-
-サンドボックスゲームからは sandbox オリジンのスクリプトとして読み込みます:
-
-```html
-<script src="/sdk/multiplayer.js"></script>
-<script>
-const client = new FlaxiaMultiplayer.MultiplayerClient({
-  gameId: 'my-game',
-  autoConnect: true,
-});
 </script>
 ```
+
+`FlaxiaGame` クラス経由でも同じクライアントを使えます
+(`const game = new FlaxiaGame.FlaxiaGame({ gameId }); game.multiplayer`)。
 
 ---
 
@@ -320,8 +311,10 @@ P2P 接続が確立できない場合や切断された場合、`sendPeerData()`
 
 ### 最小構成 (ターン制ゲーム)
 
-```typescript
-import { MultiplayerClient } from '@flaxia/multiplayer';
+```html
+<script src="/sdk/game.js"></script>
+<script>
+const { MultiplayerClient } = window.FlaxiaGame;
 
 const client = new MultiplayerClient({ gameId: 'tic-tac-toe' });
 
@@ -331,17 +324,19 @@ client.on('onRoomState', (state) => {
 
 client.on('onPeerData', (event) => {
   // 相手の着手を受信
-  applyMove(event.data as { x: number; y: number });
+  applyMove(event.data);
 });
 
 function onCellClick(x: number, y: number) {
   client.sendPeerData({ x, y });
 }
+</script>
 ```
 
 ### リアルタイムアクションゲーム
 
 ```typescript
+// window.FlaxiaGame から読み込んだ後
 const client = new MultiplayerClient({ gameId: 'space-shooter' });
 
 // 毎フレーム入力送信
@@ -359,35 +354,36 @@ client.on('onPlayerInput', (event) => {
 
 ### 完全なサンプル: じゃんけん
 
-```typescript
-import { MultiplayerClient, RoomState, GameOverEvent } from '@flaxia/multiplayer';
+```html
+<script src="/sdk/game.js"></script>
+<script>
+const { MultiplayerClient } = window.FlaxiaGame;
 
 const client = new MultiplayerClient({ gameId: 'rps', autoConnect: true });
 
-client.on('onRoomState', (state: RoomState) => {
-  document.getElementById('status')!.textContent =
+client.on('onRoomState', (state) => {
+  document.getElementById('status').textContent =
     `Room: ${state.room.roomId} | Players: ${state.players.length}/${state.room.maxPlayers}`;
 });
 
 client.on('onGameStart', () => {
-  document.getElementById('choices')!.style.display = 'block';
+  document.getElementById('choices').style.display = 'block';
 });
 
 client.on('onPeerData', (event) => {
-  const data = event.data as { move: string };
-  showOpponentMove(data.move);
+  showOpponentMove(event.data.move);
 });
 
-client.on('onGameOver', (event: GameOverEvent) => {
+client.on('onGameOver', (event) => {
   const result = event.winner
     ? event.winner === client.currentRoomId ? 'You win!' : 'You lose!'
     : 'Draw!';
-  document.getElementById('result')!.textContent = result;
+  document.getElementById('result').textContent = result;
 });
 
-function choose(move: string) {
+function choose(move) {
   client.sendPeerData({ move });
-  document.getElementById('choices')!.style.display = 'none';
+  document.getElementById('choices').style.display = 'none';
 }
 
 // 2人揃ったらホストがゲーム開始
@@ -396,6 +392,7 @@ client.on('onPlayerJoined', () => {
     client.startGame();
   }
 });
+</script>
 ```
 
 ---
@@ -404,7 +401,7 @@ client.on('onPlayerJoined', () => {
 
 ```
 [Game Iframe]
-  @flaxia/multiplayer SDK
+  Game SDK（/sdk/game.js の IIFE）
     |
     | postMessage
     v
@@ -428,7 +425,7 @@ client.on('onPlayerJoined', () => {
 ```
 
 **主要コンポーネント:**
-- **SDK (`@flaxia/multiplayer`)**: サンドボックスゲームに組み込むライブラリ。`postMessage` で親フレームと通信。
+- **SDK (`/sdk/game.js`)**: サンドボックスゲームに組み込む IIFE ライブラリ。`postMessage` で親フレームと通信。npm パッケージはない。
 - **SandboxFrame.ts**: ゲーム iframe のライフサイクル管理 + REST API 呼び出し。
 - **MultiplayerManager**: 親フレームで動作。WebSocket ↔ WebRTC ↔ postMessage の中継ハブ。
 - **MultiplayerRoom DO**: サーバー権威型ゲームルーム。Durable Object 上で動作。
@@ -441,4 +438,4 @@ client.on('onPlayerJoined', () => {
 - 現在の最大プレイヤー数: **2人** (将来的に拡張予定)
 - P2P は Google STUN のみ (`stun:stun.l.google.com:19302`)、TURN 未サポート
 - P2P が NAT を超えられない場合は DO リレー (サーバー中継) にフォールバック
-- SDK は ESM モジュールとして提供。IIFE ビルドは sandbox worker 経由で配信
+- SDK は IIFE として `/sdk/game.js` から配信される（npm パッケージはない）

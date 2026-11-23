@@ -19,6 +19,8 @@ const groups = {
     'tailwind-tokens',
     'media-upload-ports',
     'mail-contract-wiring',
+    'no-npm-publish',
+    'crowd-node-entry',
     'upload-limits',
   ],
   'auth-vault': [

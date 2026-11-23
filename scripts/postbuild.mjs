@@ -1,10 +1,23 @@
 // Post-SvelteKit build steps: the adapter owns dist/, so these run after it.
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const dist = 'dist';
 const index = join(dist, 'index.html');
 if (!existsSync(index)) throw new Error('dist/index.html missing — did vite build run?');
+
+// The adapter owns dist/ and may clear it after Vite's closeBundle, so the
+// pinned Crowd node bundle is copied here. It is loaded with a runtime dynamic
+// import (/crowd/v<version>-0/index.js), never bundled.
+const { CROWD_NODE_VERSION } = await import('../shared/crowd-node.ts');
+const crowdSrc = 'node_modules/@flaxia/node/dist';
+if (!existsSync(crowdSrc)) throw new Error('@flaxia/node is not installed; run npm install');
+const crowdDest = join(dist, `crowd/v${CROWD_NODE_VERSION}-0`);
+cpSync(crowdSrc, crowdDest, {
+  recursive: true,
+  filter: (src) => !/(^|[\\/])__tests__([\\/]|$)/.test(src) && !/\.d\.ts(\.map)?$/.test(src) && !/\.map$/.test(src),
+});
+console.log(`Post-build: copied Crowd node ${CROWD_NODE_VERSION} to ${crowdDest}`);
 
 if (existsSync('export-popup.html')) copyFileSync('export-popup.html', join(dist, 'export-popup.html'));
 

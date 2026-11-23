@@ -13,7 +13,7 @@ Flaxia の API を一か所にまとめ、用途別に辿れるようにして�
 | ドキュメント | 対象 | 内容 |
 |---|---|---|
 | [Game API](game-api.md) | ゲーム作者 | サンドボックスゲームが実装する**契約**。フレームプロトコル、ケーパビリティ、制約 |
-| [Game SDK](sdk.md) | ゲーム作者 | `@flaxia/game-sdk` の使い方。マルチプレイ・スコア・フルスクリーンを数行で |
+| [Game SDK](sdk.md) | ゲーム作者 | `/sdk/game.js` の使い方。マルチプレイ・スコア・フルスクリーンを数行で |
 | [REST API](rest-api.md) | 連携アプリ開発者 | `flaxia.app` の全 REST エンドポイント |
 | [ゲームの公開](publishing.md) | ゲーム作者 | ZIP 仕様、アップロードフロー、審査・スキャン |
 
@@ -43,7 +43,7 @@ flaxia.app（メイン）                sandbox.flaxia.app（サンドボック
 ## ゲーム作者はここから
 
 1. [Game API](game-api.md) を読んで、ゲームが使えるケーパビリティと契約を理解する
-2. [Game SDK](sdk.md) を読んで、`/sdk/game.js` を1行読み込んで動かす
+2. [Game SDK](sdk.md) を読んで、`/sdk/game.js` を1行読み込んで動かす（npm パッケージはありません）
 3. [ゲームの公開](publishing.md) を読んで、ZIP を投稿できる状態にする
 
 ## 連携アプリ開発者・コントリビュータはここから

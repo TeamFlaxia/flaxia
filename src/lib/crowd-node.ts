@@ -102,7 +102,7 @@ export interface FlaxiaNodeModule {
  * {@link CROWD_NODE_VERSION} invalidates the immutable proxy cache.
  */
 export function crowdNodeEntry(version: string = CROWD_NODE_VERSION): string {
-  const root = isTauriNativePlatform() ? '/native-crowd' : '/api/crowd';
+  const root = isTauriNativePlatform() ? '/native-crowd' : '/crowd';
   return `${root}/v${version}-0/index.js`;
 }
 

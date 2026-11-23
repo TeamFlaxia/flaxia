@@ -14,10 +14,10 @@ Everything else—WebSocket, WebRTC, reconnection, fallback—the platform handl
 Add this **one line** to your HTML:
 
 ```html
-<script src="/sdk/multiplayer.js"></script>
+<script src="/sdk/game.js"></script>
 ```
 
-That's it. Now `window.FlaxiaMultiplayer.MultiplayerClient` is available.
+That's it. Now `window.FlaxiaGame.MultiplayerClient` is available.
 
 ---
 
@@ -26,9 +26,9 @@ That's it. Now `window.FlaxiaMultiplayer.MultiplayerClient` is available.
 You can copy-paste this and it works:
 
 ```html
-<script src="/sdk/multiplayer.js"></script>
+<script src="/sdk/game.js"></script>
 <script>
-const { MultiplayerClient } = FlaxiaMultiplayer;
+const { MultiplayerClient } = window.FlaxiaGame;
 
 const client = new MultiplayerClient({ gameId: 'my-game' });
 
