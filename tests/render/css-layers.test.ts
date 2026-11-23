@@ -33,6 +33,7 @@ describe('styles/css-entry', () => {
     assert.match(entry, /@import ['"]\.\/legacy\/theme\.css['"];/);
     assert.match(entry, /@import ['"]\.\/legacy\/overrides\.css['"];/);
     assert.match(entry, /@import ['"]\.\/render\/primitives\.css['"];/);
+    assert.doesNotMatch(entry, /redesign\/(mail|maps)\.css/, 'route-only CSS must stay out of the global entry');
 
     const foundation = entry.indexOf('./redesign/foundation.css');
     const main = entry.indexOf('./main.css');
@@ -44,6 +45,11 @@ describe('styles/css-entry', () => {
     assert.ok(main < theme, 'legacy tokens must load after main.css');
     assert.ok(theme < overrides, 'legacy overrides must follow the token layer');
     assert.ok(overrides < primitives, 'primitives must load last so they can override legacy rules in source order');
+  });
+
+  it('loads route-only stylesheets from their route components', () => {
+    assert.match(read('src/lib/svelte/MailView.svelte'), /import ['"]\.\.\/\.\.\/styles\/redesign\/mail\.css['"]/);
+    assert.match(read('src/lib/svelte/MapsPage.svelte'), /import ['"]\.\.\/\.\.\/styles\/redesign\/maps\.css['"]/);
   });
 
   it('neutralizes the legacy avatar overlap when the profile banner is hidden', () => {

@@ -11,6 +11,7 @@ import { openPostModal } from '../post-modal.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
 import { appendUniqueBy, uniqueBy } from '../unique.ts';
+import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
 
 interface ExploreUser {
   id: string;
@@ -33,11 +34,6 @@ interface ArcadeGame {
   replyCount: number;
   impressions: number;
   isFreshed: boolean;
-}
-interface TrendingTag {
-  tag: string;
-  count: number;
-  percentage?: number;
 }
 interface Suggestion {
   type: 'tag' | 'user';
@@ -154,14 +150,8 @@ async function loadContent(): Promise<void> {
       users = uniqueBy(data.users ?? [], (u) => u.id);
       hasMore = false;
     } else {
-      const [tagsRes, postsRes] = await Promise.all([
-        fetch('/api/tags/trending'),
-        fetch('/api/posts/trending?limit=10'),
-      ]);
-      if (tagsRes.ok) {
-        const data = (await tagsRes.json()) as { tags?: TrendingTag[] };
-        if (gen === generation) trending = data.tags ?? [];
-      }
+      const [trendingTags, postsRes] = await Promise.all([loadTrendingTags(), fetch('/api/posts/trending?limit=10')]);
+      if (gen === generation) trending = trendingTags;
       if (postsRes.ok) {
         const data = (await postsRes.json()) as { posts?: Post[] };
         if (gen === generation) applyPosts(data.posts ?? []);

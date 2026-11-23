@@ -10,6 +10,7 @@ import MailThreadPage from './MailThreadPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
 import { getSessionUser } from './session.ts';
+import '../../styles/redesign/mail.css';
 
 type MailViewKind = 'mail' | 'settings' | 'thread' | 'compose';
 let { view, threadId = '' }: { view: MailViewKind; threadId?: string } = $props();

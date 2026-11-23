@@ -5,6 +5,7 @@ import { onMount } from 'svelte';
 import { handleTileFetch, rewriteTileUrl, unwrapTileUrl } from '../maps/cache.js';
 import { updateMetaTags } from '../seo-meta.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import '../../styles/redesign/maps.css';
 
 interface City {
   id: string;

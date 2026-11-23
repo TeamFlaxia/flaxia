@@ -97,6 +97,7 @@ let stage: StageHandle | null = null;
 let stageMode = $state<PostCardMode>(props.initialMode ?? PostCardMode.PREVIEW);
 let replyComposer: { getElement: () => HTMLElement; focus: () => void; destroy: () => void } | null = null;
 let impressionSent = false;
+let linkPreviewLoaded = false;
 
 const hasMedia = Boolean(
   props.post.gif_key ||
@@ -519,7 +520,10 @@ export function updatePost(next: Partial<Post>): void {
         enablePostRefs: props.enablePostRefs,
         badgeType: props.post.badge_type,
       });
-      if (props.currentUser) mountLinkPreview(linkHost, currentText);
+      if (props.currentUser) {
+        linkPreviewLoaded = true;
+        mountLinkPreview(linkHost, currentText);
+      }
     });
   } else if (next.hashtags !== undefined) {
     currentHashtags = parseHashtags(next.hashtags);
@@ -558,7 +562,6 @@ onMount(() => {
     enablePostRefs: props.enablePostRefs,
     badgeType: props.post.badge_type,
   });
-  if (props.currentUser) void mountLinkPreview(linkHost, props.post.text);
   if (props.post.poll) {
     /* PollWidget renders from props below */
   }
@@ -596,18 +599,34 @@ onMount(() => {
   window.addEventListener('postUpdated', onPostUpdated);
   onDestroy(() => window.removeEventListener('postUpdated', onPostUpdated));
 
-  if (!props.disableNavigation && 'IntersectionObserver' in window) {
+  // Both the impression and the (network-backed) link preview are deferred
+  // until the card is actually visible. A feed page used to scrape one OG URL
+  // per post before the user scrolled anywhere near it.
+  const needsImpression = !props.disableNavigation;
+  const needsLinkPreview = Boolean(props.currentUser);
+  if ((needsImpression || needsLinkPreview) && 'IntersectionObserver' in window) {
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && !impressionSent) {
+        if (!entries[0]?.isIntersecting) return;
+        if (needsImpression && !impressionSent) {
           impressionSent = true;
           impressionTracker.trackImpression(props.post.id);
+        }
+        if (needsLinkPreview && !linkPreviewLoaded) {
+          linkPreviewLoaded = true;
+          mountLinkPreview(linkHost, currentText);
+        }
+        if ((!needsImpression || impressionSent) && (!needsLinkPreview || linkPreviewLoaded)) {
+          observer.disconnect();
         }
       },
       { threshold: 0.5 },
     );
     observer.observe(root);
     onDestroy(() => observer.disconnect());
+  } else if (needsLinkPreview) {
+    linkPreviewLoaded = true;
+    mountLinkPreview(linkHost, currentText);
   }
 });
 

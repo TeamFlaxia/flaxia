@@ -13,6 +13,7 @@ import { isNativeApp, nativeApiHref } from '../native-api.ts';
 import { navItemsFor } from '../nav-items.ts';
 import { navigate } from '../navigation.ts';
 import { iconHtml } from '../post/icon-html.ts';
+import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
 
 interface LeftNavUser {
   id: string;
@@ -31,11 +32,6 @@ interface LeftNavProps {
   onSignIn?: () => void;
   onSignUp?: () => void;
   currentUser?: LeftNavUser | null;
-}
-
-interface TrendingTag {
-  tag: string;
-  count: number;
 }
 
 let { props = {} }: { props?: LeftNavProps } = $props();
@@ -113,14 +109,9 @@ onMount(() => {
   window.addEventListener('resize', updateModalVisibility);
 
   void (async () => {
-    try {
-      const response = await fetch('/api/tags/trending');
-      if (!response.ok) return;
-      const data = (await response.json()) as { tags?: TrendingTag[] };
-      tags = (data.tags ?? []).slice(0, 5);
-    } catch {
-      // Tags are a progressive enhancement.
-    }
+    // Tags are a progressive enhancement; the shared loader never throws.
+    const trending = await loadTrendingTags();
+    tags = trending.slice(0, 5);
   })();
 
   return () => {

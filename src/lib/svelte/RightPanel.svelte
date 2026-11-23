@@ -7,12 +7,7 @@ import { navigate } from '../navigation.ts';
 import { iconHtml } from '../post/icon-html.ts';
 import { commandShortcutLabel } from '../shortcut-label.ts';
 import { openShortcutSheet } from '../shortcut-sheet.ts';
-
-interface TrendingTag {
-  tag: string;
-  count: number;
-  percentage: number;
-}
+import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
 
 interface PopularGame {
   id: string;
@@ -55,18 +50,9 @@ function trendingLabel(percentage: number, count: number): string {
   )}`;
 }
 
-async function loadTrendingTags(): Promise<void> {
-  try {
-    const response = await fetch('/api/tags/trending');
-    if (!response.ok) throw new Error('Failed to load trending tags');
-    const data = (await response.json()) as { tags?: TrendingTag[] };
-    tags = data.tags ?? [];
-  } catch (error) {
-    console.error('Failed to load trending tags:', error);
-    tags = [];
-  } finally {
-    tagsLoading = false;
-  }
+async function refreshTrendingTags(): Promise<void> {
+  tags = await loadTrendingTags();
+  tagsLoading = false;
 }
 
 async function loadPopularGames(): Promise<void> {
@@ -86,7 +72,7 @@ async function loadPopularGames(): Promise<void> {
 }
 
 onMount(() => {
-  void loadTrendingTags();
+  void refreshTrendingTags();
   void loadPopularGames();
 });
 </script>

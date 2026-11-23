@@ -447,6 +447,18 @@ test('engagement endpoints expose canonical is_* fields for the Svelte cards', a
   assert.match(card, /data\.is_bookmarked \?\? data\.bookmarked/);
 });
 
+test('trending tags are fetched through one shared loader', async () => {
+  for (const file of [
+    'src/lib/svelte/LeftNav.svelte',
+    'src/lib/svelte/RightPanel.svelte',
+    'src/lib/svelte/ExplorePage.svelte',
+  ]) {
+    assert.doesNotMatch(await read(file), /fetch\('\/api\/tags\/trending'\)/, `${file} must use the shared loader`);
+  }
+  const loader = await read('src/lib/tags/trending.ts');
+  assert.match(loader, /pending/, 'concurrent mounts must share an in-flight request');
+});
+
 test('mail page tears down its unlock adapter safely on navigation', async () => {
   const mail = await read('src/lib/svelte/MailPage.svelte');
   assert.doesNotMatch(mail, /unmount\(unlockInstance\)/, 'mountVaultUnlock returns a destroy handle, not a mount');

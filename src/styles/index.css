@@ -8,6 +8,9 @@
  * Surfaces that the redesign targets with higher-specificity selectors are
  * restored in `legacy/overrides.css`.
  *
+ * Route-only stylesheets (`redesign/mail.css`, `redesign/maps.css`) are
+ * imported by their route components instead so they are loaded on demand.
+ *
  * Do NOT wrap these in `@layer`: the critical CSS inlined in `index.html` is
  * unlayered, and unlayered declarations always beat layered ones regardless of
  * order, which silently reverted the whole skin.
@@ -18,8 +21,6 @@
 @import "./redesign/composer.css";
 @import "./redesign/overlays.css";
 @import "./redesign/pages.css";
-@import "./redesign/maps.css";
-@import "./redesign/mail.css";
 @import "./redesign/rail.css";
 @import "./redesign/motion.css";
 @import "./main.css";
