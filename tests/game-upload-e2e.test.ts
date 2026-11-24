@@ -120,10 +120,11 @@ describe('Flaxia+ game uploads above 25MB', () => {
     const small = prepareGame(cookie);
     const smallPrepared = await small;
 
+    const smallZip = zipSync({ 'index.html': strToU8('<html>small</html>') }, { level: 0 });
     const smallUpload = await fetch(smallPrepared.zipUploadUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/zip', Cookie: cookie },
-      body: zipSync({ 'index.html': strToU8('<html>small</html>') }, { level: 0 }),
+      body: smallZip,
     });
     assert.equal(smallUpload.status, 200, await smallUpload.text());
     const smallCommit = await fetch(`${BASE_URL}/api/posts/commit`, {
@@ -147,6 +148,20 @@ describe('Flaxia+ game uploads above 25MB', () => {
       body: JSON.stringify({ versionId: version.versionId, changelog: 'larger build' }),
     });
     assert.equal(commit.status, 200, await commit.text());
+
+    // The ZIP endpoint must honour ?v= instead of always serving the original.
+    const original = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}`);
+    assert.equal(original.status, 200);
+    assert.equal(original.headers.get('content-length'), String(smallZip.byteLength));
+    assert.equal((await original.arrayBuffer()).byteLength, smallZip.byteLength);
+
+    const versioned = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}?v=${version.versionId}`);
+    assert.equal(versioned.status, 200, await versioned.clone().text());
+    assert.equal(versioned.headers.get('content-length'), String(bytes.byteLength));
+    assert.equal((await versioned.arrayBuffer()).byteLength, bytes.byteLength);
+
+    const missingVersion = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}?v=does-not-exist`);
+    assert.equal(missingVersion.status, 404);
 
     const list = (await (
       await fetch(`${BASE_URL}/api/posts/${smallPrepared.postId}/versions`, { headers: { Cookie: cookie } })

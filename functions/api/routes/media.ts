@@ -353,7 +353,9 @@ media.get('/documents/*', async (c) => {
   }
 });
 
-// GET /api/zip/:postId - serve ZIP files from R2 (supports zip/ and dm/ prefixes)
+// GET /api/zip/:postId - serve ZIP files from R2.
+// An optional ?v=<versionId> selects the archived release from game_versions
+// instead of the original payload (zip-executor and its SW send that query).
 media.get('/zip/:postId', async (c) => {
   try {
     const postId = c.req.param('postId');
@@ -372,9 +374,24 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    const publicKey = `zip/${postId}.zip`;
+    const requestedVersion = c.req.query('v');
+    let objectKey = `zip/${postId}.zip`;
+    if (requestedVersion) {
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestedVersion)) {
+        return c.json({ error: 'ZIP not found' }, 404);
+      }
+      if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+      // The version id is only a lookup key; never build an R2 path from it.
+      const version = await c.env.DB.prepare('SELECT payload_key FROM game_versions WHERE post_id = ? AND id = ?')
+        .bind(postId, requestedVersion)
+        .first<{ payload_key: string }>();
+      if (!version || typeof version.payload_key !== 'string') {
+        return c.json({ error: 'ZIP not found' }, 404);
+      }
+      objectKey = version.payload_key;
+    }
 
-    if (!(await canAccessMediaKey(c, publicKey))) {
+    if (!(await canAccessMediaKey(c, objectKey))) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
@@ -382,7 +399,7 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
-    const object = await c.env.BUCKET.get(publicKey);
+    const object = await c.env.BUCKET.get(objectKey);
 
     if (!object) {
       return c.json({ error: 'ZIP not found' }, 404);
