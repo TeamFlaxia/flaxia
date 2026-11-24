@@ -84,7 +84,6 @@
   "functions/lib/web-index.ts": ["D1Database", "R2Bucket", "Vectorize"],
   "functions/lib/wvfs-zip-server.ts": ["R2Bucket", "R2Object"],
   "functions/sitemap.xml.ts": ["D1Database", "ExecutionContext", "R2Bucket", "c.env"],
-  "src/lib/server/ssr-data.ts": ["ExecutionContext"],
   "src/routes/api/[...path]/+server.ts": ["ExecutionContext"],
   "src/lib/game-loader-routes.ts": ["c.env"]
 }
