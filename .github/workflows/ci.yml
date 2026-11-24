@@ -84,7 +84,7 @@ jobs:
 
   render-browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -100,10 +100,13 @@ jobs:
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
           RENDER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
-      - run: npm run test:styles:browser
+      # Both browser suites read the static SPA build; build it once here
+      # instead of letting each npm script rebuild it.
+      - run: npm run build:native
+      - run: node --test tests/styles.browser.mjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
-      - run: npm run test:app:browser
+      - run: node --test tests/app-shell.browser.mjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
 
