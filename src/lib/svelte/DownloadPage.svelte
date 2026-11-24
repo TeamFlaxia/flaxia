@@ -11,7 +11,7 @@ import {
 } from '../../lib/app-download.ts';
 import { detectDevicePlatform } from '../../lib/device-platform.ts';
 import { t } from '../../lib/i18n.ts';
-import { type IconName, icon } from '../../lib/icons.ts';
+import { type IconName, iconMarkup } from '../../lib/icons.ts';
 
 const PLATFORM_ICONS: Record<AppPlatform, IconName> = {
   android: 'smartphone',
@@ -25,7 +25,7 @@ const PLATFORM_LABEL_KEYS: Record<AppPlatform, string> = {
 };
 
 function iconHtml(name: IconName, size = 16): string {
-  return icon(name, { width: String(size), height: String(size) }).outerHTML;
+  return iconMarkup(name, { width: String(size), height: String(size) });
 }
 
 const device = detectDevicePlatform();

@@ -191,14 +191,14 @@ describe('security guards', () => {
   });
 
   it('sets hardening response headers', () => {
-    const headers = readFileSync(join(ROOT, 'public/_headers'), 'utf8');
-    for (const header of [
-      'Strict-Transport-Security',
-      'X-Content-Type-Options: nosniff',
-      "object-src 'none'",
-      "base-uri 'self'",
-    ]) {
+    const headers = readFileSync(join(ROOT, '_headers'), 'utf8');
+    for (const header of ['Strict-Transport-Security', 'X-Content-Type-Options: nosniff', 'X-Frame-Options: DENY']) {
       assert.ok(headers.includes(header), `_headers missing ${header}`);
+    }
+    // SvelteKit emits the CSP per request; the directives live in vite.config.ts.
+    const config = readFileSync(join(ROOT, 'vite.config.ts'), 'utf8');
+    for (const directive of ["object-src': ['none'", "base-uri': ['self'"]) {
+      assert.ok(config.includes(directive), `vite.config.ts missing ${directive}`);
     }
   });
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { getSession, getSessionToken, User } from '../lib/auth';
+import { getSession, getSessionToken, type User } from '../lib/auth';
 import { resolveMultiplayerTicket } from '../lib/multiplayer-ticket.ts';
 import { allowedOrigins, authMiddleware, csrfProtection, getBaseOrigin } from './helpers';
 import activitypubRouter from './routes/activitypub';
@@ -31,7 +31,7 @@ import translateRouter from './routes/translate';
 import usersRouter from './routes/users';
 import vaultRouter from './routes/vault';
 
-type Bindings = {
+export type Bindings = {
   DB: D1Database;
   DB_TEST: D1Database;
   BUCKET: R2Bucket;
@@ -171,10 +171,7 @@ app.route('/api/mail', mailRouter);
 // Public translation (extracted to routes/translate.ts) — Light Inference backend path
 app.route('/api', translateRouter);
 
-export async function onRequest(context: Record<string, unknown>) {
-  const request = context.request as Request;
-  const env = context.env as Bindings;
-
+export async function handleApi(request: Request, env: Bindings, context: ExecutionContext): Promise<Response> {
   // WebSocket 通知ストリーム — デスクトップアプリからの接続を受け付ける
   const url = new URL(request.url);
   if (url.pathname === '/api/ws/notifications' && request.headers.get('Upgrade') === 'websocket') {
@@ -245,5 +242,13 @@ export async function onRequest(context: Record<string, unknown>) {
     return stub.fetch(forwardReq);
   }
 
-  return app.fetch(request, env as unknown as Record<string, unknown>, context as unknown as ExecutionContext);
+  return app.fetch(request, env as unknown as Record<string, unknown>, context);
+}
+
+// Pages Functions entrypoint kept for local tooling and the legacy deploy path.
+export async function onRequest(context: Record<string, unknown>): Promise<Response> {
+  const request = context.request as Request;
+  const env = context.env as Bindings;
+  const execution = (context.executionCtx ?? context) as ExecutionContext;
+  return handleApi(request, env, execution);
 }

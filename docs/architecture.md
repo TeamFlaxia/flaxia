@@ -8,7 +8,7 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 ┌─────────────────────────────────────┐
 │          flaxia.app                  │  Cloudflare Pages
 │  ┌─────────────────────────────────┐│
-│  │  SvelteKit SPA                   ││
+│  │  SvelteKit SSR                   ││
 │  │  ├── routes/* (+page.svelte)     ││
 │  │  ├── src/lib/svelte/*            ││
 │  │  └── legacy DOM behind .ts       ││
@@ -16,7 +16,7 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 │  └──────────┬──────────────────────┘│
 │             │ HTTP                  │
 │  ┌──────────▼──────────────────────┐│
-│  │  Hono API (Pages Functions)     ││
+│  │  Hono API (+server.ts bridge)   ││
 │  │  ├── POST /api/posts            ││
 │  │  ├── GET /api/posts             ││
 │  │  ├── Auth (sessions)            ││
@@ -149,19 +149,37 @@ fixed file count. Major areas include:
   Note (Create), Delete, Update, Block, Move
 - The specification of the implementation is `docs/activitypub.md`
 
-## SvelteKit SPA
+## SvelteKit SSR
 
-The client is a SvelteKit 5 SPA (`@sveltejs/adapter-static`, `ssr = false`).
+The app is a SvelteKit 5 server-rendered application
+(`@sveltejs/adapter-cloudflare`). The adapter compiles the app into a single
+`_worker.js` deployed to the same Cloudflare Pages project, so the Pages project,
+custom domain and bindings stay unchanged.
+
+- `ssr = true` (`src/routes/+layout.ts`): the first response contains real HTML
+  (posts, profiles, game lists), so clients without JavaScript can read it.
+- `src/hooks.server.ts` applies the security headers, bootstraps the SSR locale,
+  and handles the parameterised ActivityPub redirects that `_redirects` cannot
+  express.
+- `src/routes/**/+page.server.ts` loads data through the in-process Hono app
+  (`src/lib/server/ssr-data.ts`) so SSR and client fetches share one shape.
+- `src/lib/svelte/SsrOnly.svelte` / `SsrPostList.svelte` render the fallback
+  content server-side and hand the page over to the interactive components after
+  hydration.
+- Static headers/redirects live in the project-root `_headers` and `_redirects`
+  (adapter-cloudflare requires them outside `public/`).
+- CSP is generated per request by SvelteKit (`csp.mode = 'auto'` in
+  `vite.config.ts`) and sent as an HTTP header with a nonce.
+
 `src/routes/**/+page.svelte` owns route-level layout and session gates;
-`src/lib/svelte/` owns the UI. `src/components/*.ts` now only contain thin
-mount bridges (`mount()`/`unmount()` plus lifecycle) and pure helpers for
-callers that still use a legacy signature; they build no page markup.
-`LEGACY_ADAPTERS.md` is empty and is kept as a ratchet
+`src/lib/svelte/` owns the UI. `src/components/*.ts` contain thin mount bridges
+(`mount()`/`unmount()` plus lifecycle) and pure helpers; they build no page
+markup. `LEGACY_ADAPTERS.md` is empty and is kept as a ratchet
 (`tests/legacy-adapters.test.ts`).
 
 Routes:
 - `/home` — Global / Following / For You feed (`Timeline.svelte`)
-- `/posts/[id]` — thread detail (`ThreadPage.svelte`)
+- `/thread/[id]` — thread detail (`ThreadPage.svelte`)
 - `/profile/[username]`, `/users/[username]` — profiles
 - `/arcade`, `/arcade/[id]` — game browser/player (`ArcadeView` + `src/lib/svelte/arcade/`)
 - `/search`, `/explore`, `/translate`, `/bookmarks`, `/notifications`

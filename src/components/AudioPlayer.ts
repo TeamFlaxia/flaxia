@@ -2,7 +2,7 @@
 // AudioPlayer.svelte. This module keeps the data-saver/error fallbacks and the
 // media-cue overlay so existing callers keep working unchanged.
 import { mount, unmount } from 'svelte';
-import { GifPreviewProps } from '../../shared/types/post.ts';
+import type { GifPreviewProps } from '../../shared/types/post.ts';
 import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';

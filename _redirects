@@ -1,0 +1,5 @@
+# Static redirects only. Parameterised ActivityPub redirects (`/actors/:username`,
+# `/notes/:noteId`, `/users/:username/inbox`) are handled in `src/hooks.server.ts`
+# because @sveltejs/adapter-cloudflare cannot express them in _routes.json.
+/whitepaper /docs/whitepaper 308
+/ /home 301

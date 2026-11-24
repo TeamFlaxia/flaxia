@@ -1,6 +1,6 @@
-import { executeSwZip, SwZipExecutorHandle } from './sw-zip-executor.js';
-import { executeWvfsZip, WvfsZipExecutorHandle } from './wvfs-zip-client.js';
-import { executeZip, ZipExecutorHandle } from './zip-executor.js';
+import { executeSwZip, type SwZipExecutorHandle } from './sw-zip-executor.js';
+import { executeWvfsZip, type WvfsZipExecutorHandle } from './wvfs-zip-client.js';
+import { executeZip, type ZipExecutorHandle } from './zip-executor.js';
 
 export type ZipExecutionMode = 'sw' | 'wvfs' | 'legacy';
 

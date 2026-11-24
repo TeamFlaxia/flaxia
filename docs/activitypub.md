@@ -44,7 +44,7 @@ with a message.
 ## Endpoints
 
 All paths below are served under `/api`. The canonical paths at the root
-(`/…`) redirect to them, see `public/_redirects`.
+(`/…`) redirect to them, see `_redirects` and `src/hooks.server.ts`.
 
 | Endpoint | Purpose |
 |---|---|

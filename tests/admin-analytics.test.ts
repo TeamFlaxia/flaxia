@@ -269,13 +269,7 @@ test('database failures do not expose query details to administrators', async ()
 });
 
 test('GA4 tag and reporting hooks are absent from application entry points', () => {
-  for (const file of [
-    'index.html',
-    'src/lib/performance.ts',
-    'src/types/global.d.ts',
-    'public/_headers',
-    'functions/lib/ssr-security-headers.ts',
-  ]) {
+  for (const file of ['index.html', 'src/lib/performance.ts', 'src/types/global.d.ts', '_headers', 'vite.config.ts']) {
     assert.doesNotMatch(
       readFileSync(new URL(`../${file}`, import.meta.url), 'utf8'),
       /gtag|googletagmanager|google-analytics\.com|G-JZWZ08QFCW/,

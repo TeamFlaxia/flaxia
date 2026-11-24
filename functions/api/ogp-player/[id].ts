@@ -54,6 +54,13 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// These documents are framed by the arcade page; only same-origin framing is
+// allowed and no other script may run in the ZIP wrapper.
+const ZIP_PLAYER_CSP =
+  "default-src 'none'; frame-src https://sandbox.flaxia.app; style-src 'unsafe-inline'; frame-ancestors 'self'";
+const SWF_PLAYER_CSP =
+  "default-src 'none'; script-src https://unpkg.com; object-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'";
+
 function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
   const safeGameUrl = escapeHtml(createWvfsGameUrl(sandboxOrigin, postId));
   const html = `<!DOCTYPE html>
@@ -80,6 +87,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
       'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': ZIP_PLAYER_CSP,
     },
   });
 }
@@ -110,6 +118,7 @@ function serveSwfPlayer(postId: string, baseUrl: string): Response {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
       'X-Frame-Options': 'SAMEORIGIN',
+      'Content-Security-Policy': SWF_PLAYER_CSP,
     },
   });
 }

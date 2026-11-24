@@ -41,7 +41,7 @@ jobs:
           set -o pipefail
           # The peer runs on the host network, so it reaches the instance and
           # the other way round.
-          npx wrangler pages dev dist \
+          npx wrangler pages dev .svelte-kit/cloudflare \
             --binding ADMIN_USERNAMES=remydrescarlet \
             --d1=DB_TEST \
             --port 8788 \

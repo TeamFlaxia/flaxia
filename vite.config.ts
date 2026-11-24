@@ -1,17 +1,29 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import adapter from '@sveltejs/adapter-static';
+import adapterCloudflare from '@sveltejs/adapter-cloudflare';
+import adapterStatic from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
+import { appHtmlInlineScriptHashes } from './scripts/app-html-hashes.mjs';
 import { CROWD_NODE_VERSION } from './shared/crowd-node.ts';
+import { ADSENSE_INLINE_BOOTSTRAP } from './src/lib/adsense-bootstrap.ts';
+import { FLASH_PLAYER_BOOTSTRAP } from './src/lib/flash-player-document.ts';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './src/lib/pdf-viewer-page';
 import { docsManifestPlugin } from './vite-docs-manifest';
+
+// Inline scripts that run inside sandboxed/blob iframes inherit this page's
+// CSP, so their stable bodies must stay in the allowlist.
+const inlineScriptHash = (body: string) => `'sha256-${createHash('sha256').update(body).digest('base64')}'`;
 
 const packageVersion = (
   JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 ).version;
 const gitCommit = (process.env.GITHUB_SHA || process.env.CF_PAGES_COMMIT_SHA || 'unknown').slice(0, 40);
+// Native shells (Tauri/Capacitor) cannot run a Worker, so they get the static
+// SPA build. The web deploy always uses adapter-cloudflare.
+const nativeBuild = process.env.BUILD_TARGET === 'native';
 
 export default defineConfig({
   build: {
@@ -65,6 +77,7 @@ export default defineConfig({
     ),
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageVersion),
     'import.meta.env.VITE_GIT_COMMIT': JSON.stringify(gitCommit),
+    'import.meta.env.BUILD_TARGET': JSON.stringify(process.env.BUILD_TARGET ?? 'web'),
   },
   ssr: {
     noExternal: ['hono'],
@@ -72,9 +85,56 @@ export default defineConfig({
   plugins: [
     tailwindcss(),
     sveltekit({
-      adapter: adapter({ pages: 'dist', assets: 'dist', fallback: 'index.html' }),
+      // Every mutation is a /api/* request guarded by the Hono `csrfProtection`
+      // middleware (and per-endpoint origin checks). SvelteKit's built-in check
+      // rejects non-browser clients that omit Origin (mobile app, ActivityPub
+      // peers), so trust every origin and keep the API as the single gate.
+      csrf: { trustedOrigins: ['*'] },
+      adapter: nativeBuild
+        ? adapterStatic({ pages: 'dist', assets: 'dist', fallback: 'index.html' })
+        : adapterCloudflare(),
       files: { assets: 'public' },
-      version: { name: 'f1-static-shell' },
+      version: { name: 'f1-ssr' },
+      // Hash mode works for SSR and the prerendered native fallback. SvelteKit
+      // hashes its own scripts; app.html scripts are hashed by the build helper.
+      csp: {
+        mode: 'hash',
+        directives: {
+          'default-src': ['self'],
+          'object-src': ['none'],
+          'base-uri': ['self'],
+          'worker-src': ['self', 'blob:', 'https://flaxia.app'],
+          'connect-src': ['self', 'https:', 'wss:', 'blob:', 'data:'],
+          'img-src': ['*', 'blob:', 'data:'],
+          'style-src': ['self', "'unsafe-inline'", 'https://fonts.googleapis.com', 'blob:'],
+          'script-src': [
+            'self',
+            "'wasm-unsafe-eval'",
+            'blob:',
+            inlineScriptHash(ADSENSE_INLINE_BOOTSTRAP),
+            inlineScriptHash(FLASH_PLAYER_BOOTSTRAP),
+            ...appHtmlInlineScriptHashes(),
+            'https://cdn.jsdelivr.net',
+            'https://unpkg.com',
+            'https://static.cloudflareinsights.com',
+            'https://pagead2.googlesyndication.com',
+            'https://googleads.g.doubleclick.net',
+            'https://www.google.com',
+          ],
+          'script-src-attr': ['none'],
+          'media-src': ['self', 'https:', 'blob:'],
+          'frame-src': [
+            'self',
+            'blob:',
+            'https://*.flaxia.app',
+            'https://googleads.g.doubleclick.net',
+            'https://www.youtube.com',
+            'https://ep2.adtrafficquality.google',
+            'https://www.google.com',
+          ],
+          'frame-ancestors': ['self'],
+        },
+      },
     }),
     docsManifestPlugin(),
     {
@@ -138,19 +198,6 @@ export default defineConfig({
           res.setHeader('Cache-Control', 'no-store');
           res.end(readFileSync(file));
         });
-      },
-    },
-    {
-      // The export popup is a legacy standalone HTML entry kept outside the
-      // SvelteKit router; copy it into the static output unchanged.
-      name: 'copy-export-popup',
-      apply: 'build',
-      enforce: 'post',
-      writeBundle() {
-        if (existsSync('export-popup.html')) {
-          mkdirSync('dist', { recursive: true });
-          copyFileSync('export-popup.html', 'dist/export-popup.html');
-        }
       },
     },
   ],

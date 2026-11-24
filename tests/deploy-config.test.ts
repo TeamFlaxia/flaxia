@@ -70,26 +70,32 @@ test('setup docs point the migration steps at the npm scripts', async () => {
 });
 
 test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', async () => {
-  const headers = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
-  const csp = headers.split('\n').find((line) => line.includes('Content-Security-Policy'));
-  assert.ok(csp, 'public/_headers must define a Content-Security-Policy');
-  const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? '';
-  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be hash-authorized');
+  // SvelteKit generates the policy per request; the directives live in the
+  // `csp` block of vite.config.ts.
+  const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  const cspBlock = config.slice(config.indexOf('csp: {'), config.indexOf('}),', config.indexOf('csp: {')));
+  assert.ok(cspBlock, 'vite.config.ts must configure SvelteKit CSP');
+  assert.match(cspBlock, /mode: 'hash'/);
+  const scriptSrc = cspBlock.slice(
+    cspBlock.indexOf("'script-src': ["),
+    cspBlock.indexOf('],', cspBlock.indexOf("'script-src': [")),
+  );
+  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be nonce/hash-authorized');
   assert.doesNotMatch(scriptSrc, /'unsafe-eval'/, 'eval-compiled scripts must not run in the app origin');
-  assert.match(scriptSrc, /'sha256-[A-Za-z0-9+/]+=*'/, 'fixed inline scripts need hash sources');
+  assert.match(scriptSrc, /inlineScriptHash\(/, 'fixed iframe bootstrap scripts need hash sources');
   assert.ok(scriptSrc.includes("'wasm-unsafe-eval'"), 'Ruffle needs WebAssembly compilation');
   assert.ok(scriptSrc.includes('blob:'), 'game assets may load from sandboxed blob URLs');
   assert.doesNotMatch(
     scriptSrc,
-    /(?:^|\s)https:(?:\s|;|$)/,
+    /(?:^|\s)https:(?:\s|,|$)/,
     'a bare https: scheme lets any host run scripts — allowlist hosts instead',
   );
-  assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
-  const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
-  assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
+  assert.match(cspBlock, /'script-src-attr': \['none'\]/, 'inline event handler attributes must be blocked');
   for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com', 'https://static.cloudflareinsights.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
+  const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
+  assert.doesNotMatch(headers, /^\s*Content-Security-Policy:/m, 'a static CSP would intersect the nonce policy');
 });
 
 test('bundles stay within budget (initial entry + total JS)', async () => {

@@ -1,22 +1,18 @@
 // Profile route + redirect guards.
 //
-// `public/_redirects` used to contain `/users/:splat /api/users/:splat 308`.
-// That rule shadowed the SPA fallback: `functions/users/[username].ts` calls
-// `context.next()` for non-crawler browsers so the SPA can render the profile,
-// and `next()` then hit the redirect, so a browser opening /users/:username got
-// a 308 to the raw JSON API instead of the profile page. The rule is gone;
-// these assertions pin the redirect table and the function's fallthrough so it
-// cannot come back silently. Static-file assertions are enough here: the
-// function module uses extensionless imports, so importing it from node:test
-// is not practical.
+// `_redirects` must never rewrite `/users/:username` to the JSON API: that URL
+// is a SvelteKit page. Parameterised ActivityPub redirects (`/actors/:name`,
+// `/notes/:id`, `/users/:name/inbox`) moved into `src/hooks.server.ts` because
+// adapter-cloudflare cannot express `/:param` rules in `_routes.json`.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { legacyRedirect } from '../src/hooks.server.ts';
 
-const REDIRECTS_URL = new URL('../public/_redirects', import.meta.url);
-const PROFILE_FUNCTION_URL = new URL('../functions/users/[username].ts', import.meta.url);
+const REDIRECTS_URL = new URL('../_redirects', import.meta.url);
+const HOOKS_URL = new URL('../src/hooks.server.ts', import.meta.url);
 
-/** Rule lines of public/_redirects as [from, to, status]; comments and blanks removed. */
+/** Rule lines of _redirects as [from, to, status]; comments and blanks removed. */
 function rules(source: string): string[][] {
   return source
     .split('\n')
@@ -27,50 +23,35 @@ function rules(source: string): string[][] {
 
 test('/users/:username is not redirected to the JSON API', async () => {
   const source = await readFile(REDIRECTS_URL, 'utf8');
-  const profileRules = rules(source).filter(([from]) => from === '/users/:splat');
-  assert.deepEqual(
-    profileRules,
-    [],
-    '/users/:username must fall through to the SPA (browsers) / SSR function (crawlers), not redirect to /api/users/*',
-  );
-
   const apiRules = rules(source).filter(
     ([from, to]) => from.startsWith('/users/') && to.startsWith('/api/users/') && !to.endsWith('/inbox'),
   );
   assert.deepEqual(apiRules, [], 'profile URLs must never be rewritten to the raw JSON API');
+  assert.equal(legacyRedirect('/users/alice'), null, '/users/:username is a SvelteKit page, not a redirect');
 });
 
-test('the ActivityPub inbox redirect is preserved', async () => {
+test('the ActivityPub inbox redirect is preserved in the handle hook', async () => {
+  assert.deepEqual(legacyRedirect('/users/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
+  const source = await readFile(HOOKS_URL, 'utf8');
+  assert.match(source, /users/);
+  assert.match(source, /inbox/);
+  assert.match(source, /308/);
+});
+
+test('_redirects keeps only static rules the adapter can exclude', async () => {
   const source = await readFile(REDIRECTS_URL, 'utf8');
-  const inbox = rules(source).filter(([from]) => from === '/users/:username/inbox');
-  assert.equal(inbox.length, 1, 'expected exactly one /users/:username/inbox rule');
-  const rule = inbox[0];
-  assert.ok(rule, 'inbox rule must exist');
-  // The inbox of an actor lives under its actor URL: the address a peer
-  // learns from the actor document.
-  assert.equal(rule[1], '/api/actors/:username/inbox');
-  assert.equal(rule[2], '308');
+  for (const [from] of rules(source)) {
+    assert.doesNotMatch(from, /\/:/, `${from} must move to hooks.server.ts (adapter-cloudflare rejects :params)`);
+  }
+  const byFrom = new Map(rules(source).map((rule) => [rule[0], rule]));
+  assert.deepEqual(byFrom.get('/'), ['/', '/home', '301']);
+  assert.deepEqual(byFrom.get('/whitepaper'), ['/whitepaper', '/docs/whitepaper', '308']);
 });
 
-test('public/_redirects documents why the profile route is not redirected', async () => {
-  const source = await readFile(REDIRECTS_URL, 'utf8');
-  assert.match(
-    source,
-    /^#[^\n]*\/users\/:username[^\n]*SPA/m,
-    'keep a comment next to the rules explaining that /users/:username is served by the SPA for browsers',
-  );
-});
-
-test('the profile function still hands non-crawler browsers to the SPA', async () => {
-  const source = await readFile(PROFILE_FUNCTION_URL, 'utf8');
-  assert.match(source, /if \(!isCrawler\(userAgent\)\)/);
-  assert.match(source, /return await context\.next\(\);/);
-});
-
-test('ActivityPub discovery is served by root functions, not redirects', async () => {
+test('ActivityPub discovery is served by SvelteKit routes, not redirects', async () => {
   const source = await readFile(REDIRECTS_URL, 'utf8');
   const byFrom = new Map(rules(source).map((rule) => [rule[0], rule]));
-  for (const from of ['/.well-known/webfinger', '/.well-known/nodeinfo', '/host-meta']) {
-    assert.equal(byFrom.has(from), false, `${from} must be handled by functions/, not public/_redirects`);
+  for (const from of ['/.well-known/webfinger', '/.well-known/nodeinfo', '/host-meta', '/sitemap.xml']) {
+    assert.equal(byFrom.has(from), false, `${from} must be handled by +server.ts, not _redirects`);
   }
 });

@@ -19,7 +19,7 @@ repo:
 
 | Component | Config | Deployment Command |
 |---|---|---|
-| Main Pages (SPA + API) | `wrangler.toml` | `npm run deploy` |
+| Main Pages (SvelteKit SSR + API) | `wrangler.toml` | `npm run deploy` |
 | Auth Worker (`flaxia-auth`, separate repo) | `../flaxia-auth/wrangler.jsonc` | run from the `TeamFlaxia/flaxia-auth` repo |
 | Mail Worker (`flaxia-mail`, separate repo; no `workers.dev` route) | `../flaxia-mail/worker/wrangler.toml` | deploy from the `TeamFlaxia/flaxia-mail` repo |
 | Queue Worker (ActivityPub delivery, `flaxia-ap-delivery`) | `wrangler.worker.toml`, `functions/queue-worker.ts` | GitHub Actions `deploy-queue` |

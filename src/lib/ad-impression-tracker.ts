@@ -6,6 +6,8 @@ class AdImpressionTracker {
   private readonly MAX_BATCH_SIZE = 20;
 
   constructor() {
+    // SSR imports this module; only the browser has an unload event.
+    if (typeof window === 'undefined') return;
     // Process any pending impressions when page unloads
     window.addEventListener('beforeunload', () => {
       this.flush();

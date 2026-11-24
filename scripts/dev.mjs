@@ -225,12 +225,18 @@ async function main() {
     shutdown(1);
     return;
   }
+  // Copy the Crowd bundle and inject platform env/context into the worker.
+  if ((await run('node', ['--experimental-strip-types', 'scripts/postbuild.mjs'])) !== 0) {
+    console.error('[dev] Flaxia post-build failed.');
+    shutdown(1);
+    return;
+  }
 
   const pagesArgs = [
     'wrangler',
     'pages',
     'dev',
-    'dist',
+    '.svelte-kit/cloudflare',
     '--port',
     String(flaxiaPort),
     '--inspector-port',

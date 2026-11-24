@@ -23,9 +23,10 @@
     "isolatedModules": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["@cloudflare/workers-types"],
-    "verbatimModuleSyntax": false
+    "types": ["@cloudflare/workers-types", "$app/types"],
+    "verbatimModuleSyntax": true
   },
   "include": ["src/**/*", "functions/**/*", "shared/**/*", "status-worker/src/transition.ts"],
-  "exclude": ["node_modules", "dist", "sandbox"]
+  "exclude": ["node_modules", "dist", "sandbox"],
+  "extends": "$app/tsconfig"
 }

@@ -6,7 +6,7 @@ Flaxia is an SNS where posts are living, interactive applications. Concept: "Twi
 ## Tech Stack
 - **Runtime**: Cloudflare Pages + Workers (edge-first)
 - **API**: Hono (`functions/api/[[route]].ts` mounts `functions/api/routes/*`)
-- **Frontend**: SvelteKit 5 in SPA mode (`@sveltejs/adapter-static`, `ssr = false`), TypeScript
+- **Frontend**: SvelteKit 5 with SSR (`@sveltejs/adapter-cloudflare`), TypeScript
 - **Styling**: legacy CSS skin (`src/styles/main.css` + `legacy/`) with Svelte scoped styles for migrated components. Tailwind v4 is installed and `src/app.css` mirrors the tokens, but it is **not imported** (the app CSS must stay unlayered; see `tests/app-shell.browser.mjs`).
 - **Database**: Cloudflare D1 (SQLite)
 - **Storage**: Cloudflare R2 (post payloads, images, audio, avatars)
@@ -27,7 +27,7 @@ Flaxia is an SNS where posts are living, interactive applications. Concept: "Twi
 
 ## Project Structure
 ```
-src/routes/                 # SvelteKit routes (SPA)
+src/routes/                 # SvelteKit routes (SSR pages + +server.ts endpoints)
 src/lib/svelte/             # Migrated Svelte surfaces (ShellLayout, Timeline, Settings, Admin, Mail, ...)
 src/components/             # Remaining legacy DOM factories (Arcade engine, PostText, modals, ...)
 src/lib/                    # Client utilities (i18n, navigation, upload, vault, recommendation, ...)

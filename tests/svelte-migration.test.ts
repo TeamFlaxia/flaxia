@@ -274,7 +274,8 @@ test('billing result keeps its legacy classes and copy in Svelte', async () => {
 test('SvelteKit body renders inside #app so legacy CSS selectors apply', async () => {
   const app = await read('src/app.html');
   assert.match(app, /<div id="app">[\s\S]*%sveltekit\.body%[\s\S]*<\/div>/);
-  assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
+  // SSR sends real content, so the client-only spinner/skeleton must be gone.
+  assert.doesNotMatch(app, /id="initial-loader"|id="initial-feed-skeleton"/);
 });
 
 test('legacy entry points use the unified navigation function', async () => {
@@ -392,10 +393,8 @@ test('avatars and action states stay visible without coloured halos', async () =
 });
 
 test('Crowd can fetch its data: WASM while the centre column grows without a rail', async () => {
-  const headers = await read('public/_headers');
-  assert.match(headers, /connect-src [^;]*data:/);
-  const ssr = await read('functions/lib/ssr-security-headers.ts');
-  assert.match(ssr, /connect-src [^;]*data:/);
+  const config = await read('vite.config.ts');
+  assert.match(config, /'connect-src': \['self', 'https:', 'wss:', 'blob:', 'data:'\]/);
   const overrides = await read('src/styles/legacy/overrides.css');
   assert.match(overrides, /#app \.main-content \{[^}]*max-width: 600px/);
   assert.match(overrides, /#app \.right-panel \{[^}]*width: 350px/);
@@ -421,7 +420,8 @@ test('the dev crowd node bundle is served same-origin', async () => {
   const config = await read('vite.config.ts');
   assert.match(config, /crowd-node-dev/);
   assert.ok(config.includes('node_modules/@flaxia/node/dist'));
-  assert.doesNotMatch(config, /unpkg\.com/);
+  const devPlugin = config.slice(config.indexOf('crowd-node-dev'));
+  assert.doesNotMatch(devPlugin, /unpkg\.com/, 'the crowd node must load from node_modules, not a CDN');
 });
 
 test('client error hook is safe against patched console methods', async () => {
@@ -430,10 +430,10 @@ test('client error hook is safe against patched console methods', async () => {
   assert.match(hook, /__flaxiaLastError/);
   assert.match(hook, /source\.error/, 'log the real error, not the removed message/status properties');
   assert.match(hook, /source\.kind/, 'keep the SvelteKit error kind');
-  const headers = await read('public/_headers');
-  assert.doesNotMatch(headers, /script-src-elem[^;]*'unsafe-inline'/);
-  assert.match(headers, /script-src [^;]*'sha256-/);
-  assert.match(headers, /static\.cloudflareinsights\.com/);
+  const config = await read('vite.config.ts');
+  assert.doesNotMatch(config, /script-src-elem/);
+  assert.match(config, /inlineScriptHash\(/);
+  assert.match(config, /static\.cloudflareinsights\.com/);
 });
 
 test('engagement endpoints expose canonical is_* fields for the Svelte cards', async () => {

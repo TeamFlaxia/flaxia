@@ -26,11 +26,12 @@ let {
 } = $props();
 
 // Routes set navProps after their async setup. Merge a synchronous fallback so
-// the first render already has the signed-in user and working nav handlers —
-// otherwise the nav flashes the guest state on every navigation.
+// the first render already has working nav handlers. `mounted` starts false so
+// the SSR HTML and the first client render agree (the session is client-only).
+let mounted = $state(false);
 const fallbackNavProps = () => ({
   activeItem: parseCurrentRoute()?.view ?? 'home',
-  currentUser: getSessionUser() ?? undefined,
+  currentUser: mounted ? (getSessionUser() ?? undefined) : undefined,
   ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {
       void navigate(viewToPath(view, postId, username));
@@ -51,6 +52,7 @@ $effect(() => {
 });
 
 onMount(() => {
+  mounted = true;
   void ensureBottomNav({
     navigate: (view, postId, username) => {
       void navigate(viewToPath(view, postId, username));
