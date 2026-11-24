@@ -152,7 +152,7 @@
   },
   "packageManager": "pnpm@8.0.0",
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,json,html,css,md}": [
+    "*.{ts,tsx,js,jsx,json,html,css,md,svelte}": [
       "biome check --write --no-errors-on-unmatched"
     ]
   }

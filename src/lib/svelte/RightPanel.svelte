@@ -7,7 +7,7 @@ import { navigate } from '../navigation.ts';
 import { iconHtml } from '../post/icon-html.ts';
 import { commandShortcutLabel } from '../shortcut-label.ts';
 import { openShortcutSheet } from '../shortcut-sheet.ts';
-import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
+import { loadTrendingTags, type TrendingTag } from '../tags/trending.ts';
 
 interface PopularGame {
   id: string;

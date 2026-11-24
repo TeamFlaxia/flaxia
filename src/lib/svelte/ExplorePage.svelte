@@ -8,10 +8,10 @@ import { t } from '../i18n.ts';
 import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import { openPostModal } from '../post-modal.ts';
+import { loadTrendingTags, type TrendingTag } from '../tags/trending.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
 import { appendUniqueBy, uniqueBy } from '../unique.ts';
-import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
 
 interface ExploreUser {
   id: string;

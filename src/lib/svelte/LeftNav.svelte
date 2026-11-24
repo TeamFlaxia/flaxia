@@ -13,7 +13,7 @@ import { isNativeApp, nativeApiHref } from '../native-api.ts';
 import { navItemsFor } from '../nav-items.ts';
 import { navigate } from '../navigation.ts';
 import { iconHtml } from '../post/icon-html.ts';
-import { type TrendingTag, loadTrendingTags } from '../tags/trending.ts';
+import { loadTrendingTags, type TrendingTag } from '../tags/trending.ts';
 
 interface LeftNavUser {
   id: string;
