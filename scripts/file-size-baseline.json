@@ -1,7 +1,7 @@
 {
   "functions/api/routes/auth.ts": 877,
   "functions/api/routes/games.ts": 733,
-  "functions/api/routes/media.ts": 571,
+  "functions/api/routes/media.ts": 578,
   "functions/api/routes/posts/composer.ts": 900,
   "functions/api/routes/posts/engagement.ts": 753,
   "functions/api/routes/posts/manage.ts": 594,

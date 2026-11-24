@@ -4,6 +4,7 @@ import { createCloudflareServices } from '../../lib/adapters/cloudflare/index.ts
 import { isAdmin } from '../../lib/admin.ts';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { servePublicLoader } from '../../lib/game-loader-public.ts';
+import { resolveVersionPayloadKey } from '../../lib/game-version-key.ts';
 import { handleMediaUpload } from '../../lib/media-upload.ts';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { isKeyBlocked } from '../../lib/scan/db';
@@ -374,22 +375,11 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    const requestedVersion = c.req.query('v');
-    let objectKey = `zip/${postId}.zip`;
-    if (requestedVersion) {
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestedVersion)) {
-        return c.json({ error: 'ZIP not found' }, 404);
-      }
-      if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-      // The version id is only a lookup key; never build an R2 path from it.
-      const version = await c.env.DB.prepare('SELECT payload_key FROM game_versions WHERE post_id = ? AND id = ?')
-        .bind(postId, requestedVersion)
-        .first<{ payload_key: string }>();
-      if (!version || typeof version.payload_key !== 'string') {
-        return c.json({ error: 'ZIP not found' }, 404);
-      }
-      objectKey = version.payload_key;
+    const resolved = await resolveVersionPayloadKey(c.env.DB, postId, c.req.query('v'));
+    if (!resolved.ok) {
+      return c.json({ error: resolved.status === 500 ? 'Database not available' : 'ZIP not found' }, resolved.status);
     }
+    const objectKey = resolved.key ?? `zip/${postId}.zip`;
 
     if (!(await canAccessMediaKey(c, objectKey))) {
       return c.json({ error: 'ZIP not found' }, 404);
