@@ -2,9 +2,12 @@
 // biome-ignore-all lint/correctness/noUnusedImports: types and markup-only helpers
 // biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
 import { onMount } from 'svelte';
+import { maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { t } from '../i18n.ts';
 import { gameUpdateFileError } from '../modals/dialog-logic.ts';
 import { attachModalBehavior, type ModalBehavior } from '../modals/modal-behavior.ts';
+import { uploadFileBody } from '../upload.ts';
+import { getSessionUser } from './session.ts';
 
 interface Props {
   postId: string;
@@ -34,13 +37,18 @@ function onFileChange(event: Event): void {
 }
 
 async function submit(): Promise<void> {
-  const error = gameUpdateFileError(selectedFile);
+  const maxBytes = maxUploadBytesForUser(getSessionUser());
+  const error = gameUpdateFileError(selectedFile, maxBytes);
   if (error === 'missing') {
     setStatus(t('game.update_error_no_file'), true);
     return;
   }
   if (error === 'not_zip') {
     setStatus(t('game.update_error_not_zip'), true);
+    return;
+  }
+  if (error === 'too_large') {
+    setStatus(t('arcade.upload_file_too_large'), true);
     return;
   }
   if (!selectedFile || busy) return;
@@ -57,15 +65,10 @@ async function submit(): Promise<void> {
     const prepare = (await prepareResponse.json()) as { versionId: string; zipUploadUrl: string };
 
     setStatus(t('game.update_status_uploading'));
-    const uploadResponse = await fetch(prepare.zipUploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': selectedFile.type || 'application/zip' },
-      body: selectedFile,
-    });
-    if (!uploadResponse.ok) {
-      const err = (await uploadResponse.json().catch(() => ({}))) as { error?: string };
-      throw new Error(err.error || 'upload failed');
-    }
+    // Reuse the chunked uploader: anything above the 25MB single-request
+    // ceiling is sent as 16MB parts and assembled in R2.
+    const uploaded = await uploadFileBody(selectedFile, prepare.zipUploadUrl, 'application/zip');
+    if (!uploaded) throw new Error('upload failed');
 
     setStatus(t('game.update_status_committing'));
     const commitResponse = await fetch(`/api/posts/${postId}/versions/commit`, {

@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { FREE_UPLOAD_MAX_BYTES, PLUS_UPLOAD_MAX_BYTES } from '../../../shared/upload-limits.ts';
+import { getUserPlan } from '../../lib/billing.ts';
 import { extractFileFromZip, extractZipToR2 } from '../../lib/wvfs-zip-server.ts';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
@@ -159,7 +161,10 @@ postVersions.post('/posts/:id/versions/commit', requireAuth, async (c) => {
     if (!head) return c.json({ error: 'Uploaded file not found' }, 400);
     // #86: bound per-post storage — the upload route caps bytes, the commit
     // caps count, so a single game cannot accumulate unbounded versions.
-    if (head.size > 25 * 1024 * 1024) return c.json({ error: 'File too large' }, 413);
+    // The byte cap must follow the same plan as the chunked upload route.
+    const plan = await getUserPlan({ DB: c.env.DB }, user.id);
+    const maxBytes = plan.isActive ? PLUS_UPLOAD_MAX_BYTES : FREE_UPLOAD_MAX_BYTES;
+    if (head.size > maxBytes) return c.json({ error: 'File too large' }, 413);
 
     const maxRow = (await c.env.DB.prepare(
       'SELECT MAX(version_number) as m, COUNT(*) as n FROM game_versions WHERE post_id = ?',

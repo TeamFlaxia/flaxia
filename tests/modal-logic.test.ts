@@ -158,6 +158,11 @@ describe('game update validation', () => {
     assert.equal(gameUpdateFileError({ name: 'GAME.ZIP' }), null);
     assert.equal(gameUpdateFileError({ name: 'game.html' }), 'not_zip');
   });
+
+  it('enforces the plan-aware byte ceiling', () => {
+    assert.equal(gameUpdateFileError({ name: 'game.zip', size: 26 * 1024 * 1024 }, 25 * 1024 * 1024), 'too_large');
+    assert.equal(gameUpdateFileError({ name: 'game.zip', size: 26 * 1024 * 1024 }, 128 * 1024 * 1024), null);
+  });
 });
 
 describe('game upload helpers', () => {

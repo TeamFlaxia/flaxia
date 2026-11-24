@@ -60,6 +60,7 @@ const groups = {
     'post-text-helpers',
     'ai-index',
     'chunked-upload',
+    'game-upload-e2e',
     'composer-logic',
     'ai-tags',
     'ai-tags-e2e',

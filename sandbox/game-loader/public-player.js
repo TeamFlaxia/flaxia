@@ -76,7 +76,7 @@ export async function startPublicPlayer({ cacheRequest, unzip, play, container, 
         const response = await fetch(archiveUrl, { cache: 'no-store', credentials: 'omit', signal: controller.signal });
         if (!response.ok) throw new Error(`Archive unavailable (${response.status})`);
         const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > MAX_ZIP_BYTES) throw new Error('ZIP exceeds 25 MB');
+        if (bytes.byteLength > MAX_ZIP_BYTES) throw new Error(`ZIP exceeds ${MAX_ZIP_BYTES / (1024 * 1024)} MB`);
         const files = await unzip(bytes);
         if (controller.signal.aborted) return;
         await cacheRequest(

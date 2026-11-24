@@ -143,9 +143,13 @@ export function isCurrentVersion(currentVersionId: string | null, versionId: str
   return currentVersionId === versionId;
 }
 
-export type GameUpdateFileError = 'missing' | 'not_zip' | null;
+export type GameUpdateFileError = 'missing' | 'not_zip' | 'too_large' | null;
 
-export function gameUpdateFileError(file: { name: string } | null | undefined): GameUpdateFileError {
+export function gameUpdateFileError(
+  file: { name: string; size?: number } | null | undefined,
+  maxBytes = Number.POSITIVE_INFINITY,
+): GameUpdateFileError {
   if (!file) return 'missing';
+  if (typeof file.size === 'number' && file.size > maxBytes) return 'too_large';
   return file.name.toLowerCase().endsWith('.zip') ? null : 'not_zip';
 }

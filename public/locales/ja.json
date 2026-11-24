@@ -601,7 +601,7 @@
   "arcade.upload_subtitle": "ZIP / HTML5 ゲームを共有",
   "arcade.upload_title_label": "タイトル",
   "arcade.upload_title_placeholder": "ゲームのタイトルを入力（1〜200文字）",
-  "arcade.upload_file_hint": "ZIP / HTML ファイルを選択（25MBまで）",
+  "arcade.upload_file_hint": "ZIP / HTML ファイルを選択（無料25MB / Flaxia+ 128MB）",
   "arcade.upload_thumbnail_button": "サムネイル",
   "arcade.upload_thumbnail_hint": "任意: .jpg .png .gif .webp（1MBまで）",
   "arcade.upload_submit": "アップロード",

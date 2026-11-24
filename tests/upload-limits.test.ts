@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
   FREE_MEDIA_TOTAL_BYTES,
@@ -13,6 +14,7 @@ import {
   UPLOAD_CHUNK_BYTES,
 } from '../shared/upload-limits.ts';
 import { validateSubmission } from '../src/lib/composer/logic.ts';
+import { uploadFileBody } from '../src/lib/upload.ts';
 
 const MIB = 1024 * 1024;
 
@@ -41,6 +43,36 @@ describe('upload limits', () => {
   it('keeps single requests below Cloudflare’s 100MB body limit', () => {
     assert.ok(SINGLE_REQUEST_UPLOAD_MAX_BYTES < 100 * MIB);
     assert.equal(FREE_MEDIA_TOTAL_BYTES, 50 * MIB);
+  });
+
+  it('chunks a file just over 25MB instead of sending one whole-file PUT', async () => {
+    const originalFetch = globalThis.fetch;
+    const urls: string[] = [];
+    const partSizes: number[] = [];
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(input));
+      partSizes.push((init?.body as Blob | undefined)?.size ?? 0);
+      return new Response(null, { status: 200 });
+    };
+    try {
+      const file = new File([new Uint8Array(SINGLE_REQUEST_UPLOAD_MAX_BYTES + 1)], 'game.zip', {
+        type: 'application/zip',
+      });
+      assert.equal(await uploadFileBody(file, 'https://example.test/api/upload/zip/x'), true);
+      assert.equal(urls.length, 3, 'two parts plus one finalize request');
+      assert.match(urls[0], /part=1&parts=2/);
+      assert.match(urls[1], /part=2&parts=2/);
+      assert.match(urls[2], /finalize=1/);
+      assert.equal(partSizes[0], UPLOAD_CHUNK_BYTES);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uses the chunked uploader for game version updates', () => {
+    const modal = readFileSync(new URL('../src/lib/svelte/GameUpdateModal.svelte', import.meta.url), 'utf8');
+    assert.match(modal, /uploadFileBody\(/, 'the version modal must not send the whole ZIP in one PUT');
+    assert.doesNotMatch(modal, /body: selectedFile/);
   });
 });
 

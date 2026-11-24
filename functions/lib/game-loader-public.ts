@@ -1,10 +1,13 @@
 import type { Context } from 'hono';
+import { PLUS_UPLOAD_MAX_BYTES } from '../../shared/upload-limits.ts';
 import { createWvfsGameUrl } from '../../shared/wvfs-game-url.ts';
 import { isKeyBlocked } from './scan/db.ts';
 
 type Bindings = { BUCKET: R2Bucket; DB: D1Database; CACHE?: KVNamespace };
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
-const MAX_BYTES = 25 * 1024 * 1024;
+// The local archive endpoint streams from R2, so it can follow the largest
+// upload the API accepts instead of the old 25MB free-tier ceiling.
+const MAX_BYTES = PLUS_UPLOAD_MAX_BYTES;
 
 /** Public posts only. Never cache an authorization/publication decision. */
 export async function servePublicLoader<E extends { Bindings: Bindings }>(c: Context<E>): Promise<Response> {
