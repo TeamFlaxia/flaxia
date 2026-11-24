@@ -95,7 +95,8 @@ When iframe is closed or replaced, all blob URLs are revoked via `URL.revokeObje
 - No path traversal segments (`..`) or backslash separators
 - No absolute paths (`/` or drive-letter paths)
 - `index.html` must exist at root
-- Allowed extensions: `.html`, `.css`, `.js`, `.wasm`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.json`, `.txt`, `.glsl`, `.wgsl`, `.woff`, `.woff2`, `.ttf`, `.otf`, `.eot`, `.ico`, `.xml`, `.map`, `.dat`, `.bin`
+- No extension whitelist: unrecognised formats are served as opaque downloads
+- Blocked extensions: scriptable SVG (`.svg`, `.svgz`), server scripts (`.php`, `.jsp`, `.asp`, `.py`, `.rb`, `.pl`, …), shell scripts and native executables/libraries (`.sh`, `.exe`, `.dll`, `.so`, …)
 
 ## R2 Storage Keys
 

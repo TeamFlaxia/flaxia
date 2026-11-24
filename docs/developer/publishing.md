@@ -69,13 +69,11 @@ ZIP 作成 → 投稿作成（prepare）→ アップロード（upload）→ �
 | 絶対パス | 不可 |
 | `index.html` | ルートに必須 |
 
-### 許可される拡張子
+### ファイル形式
 
-```
-.html .css .js .wasm .png .jpg .jpeg .gif .webp .svg
-.mp3 .wav .ogg .mp4 .webm .json .txt .glsl .wgsl
-.woff .woff2 .ttf .otf .eot .ico .xml .map .dat .bin
-```
+拡張子の許可リストはありません。未知の形式は `application/octet-stream` として配信されます。
+Scriptable SVG（`.svg` / `.svgz`）、サーバ用スクリプト、シェルスクリプト、
+ネイティブ実行ファイル/ライブラリのみ拒否されます。ネスト ZIP とシンボリックリンクも不可です。
 
 ---
 

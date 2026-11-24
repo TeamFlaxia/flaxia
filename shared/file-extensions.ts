@@ -3,6 +3,13 @@
 /** Executable post payloads use the sandbox flow instead of document attachments. */
 export const GAME_FILE_EXTENSIONS = new Set(['zip', 'swf', 'html', 'htm', 'rsp', 'js', 'wasm']);
 
+/**
+ * Known MIME mappings for files commonly shipped inside game ZIPs.
+ *
+ * This is no longer an allowlist: an unrecognised extension is served as an
+ * opaque download instead of aborting ZIP extraction. Only formats that can
+ * execute code or wrap a native binary are blocked (see BLOCKED_EXTENSIONS).
+ */
 export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Web content
   '.html': 'text/html',
@@ -17,8 +24,8 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  // NOTE: '.svg' is deliberately absent (H-4/M-5): scriptable SVG inside
-  // game ZIPs is an XSS vector. Re-adding it reopens the finding.
+  // NOTE: '.svg' / '.svgz' are in BLOCKED_EXTENSIONS (H-4/M-5): scriptable SVG
+  // inside game ZIPs is an XSS vector, so a blacklist keeps them out.
 
   '.ico': 'image/x-icon',
 
@@ -55,22 +62,74 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.zip': 'application/zip',
 };
 
-export function isExtensionAllowed(filename: string): boolean {
-  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-  return ext in ALLOWED_EXTENSIONS;
+/**
+ * Formats that can execute code or wrap a native binary. Everything else is
+ * allowed as an opaque download, so new asset formats do not break games.
+ * Nested ZIPs and symlinks are rejected separately by the ZIP validators.
+ */
+export const BLOCKED_EXTENSIONS = new Set([
+  // Scriptable vector graphics (XSS inside the game origin).
+  '.svg',
+  '.svgz',
+  // Server-side scripts (never interpreted here, but no reason to ship them).
+  '.php',
+  '.php3',
+  '.php4',
+  '.php5',
+  '.phtml',
+  '.jsp',
+  '.jspx',
+  '.asp',
+  '.aspx',
+  '.py',
+  '.pyc',
+  '.rb',
+  '.pl',
+  '.pm',
+  // Shell / automation scripts.
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.bat',
+  '.cmd',
+  '.ps1',
+  '.vbs',
+  '.hta',
+  // Native executables and libraries.
+  '.exe',
+  '.dll',
+  '.so',
+  '.dylib',
+  '.msi',
+  '.deb',
+  '.rpm',
+  '.dmg',
+  '.pkg',
+  '.apk',
+  '.ipa',
+  '.app',
+  '.scr',
+  '.jar',
+  '.war',
+  '.class',
+]);
+
+function extensionOf(filename: string): string {
+  return filename.substring(filename.lastIndexOf('.')).toLowerCase();
 }
 
+/** Blocked formats are rejected; every other extension is permitted. */
+export function isExtensionAllowed(filename: string): boolean {
+  return !BLOCKED_EXTENSIONS.has(extensionOf(filename));
+}
+
+/** Unknown extensions are served as opaque downloads, never as active content. */
 export function getMimeType(filename: string): string {
-  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-  return ALLOWED_EXTENSIONS[ext] || 'text/plain';
+  return ALLOWED_EXTENSIONS[extensionOf(filename)] || 'application/octet-stream';
 }
 
 export function validateFileType(filename: string): { allowed: boolean; mimeType: string } {
-  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
-  const mimeType = ALLOWED_EXTENSIONS[ext] || 'text/plain';
-  const allowed = ext in ALLOWED_EXTENSIONS;
-
-  return { allowed, mimeType };
+  return { allowed: isExtensionAllowed(filename), mimeType: getMimeType(filename) };
 }
 
 /**

@@ -136,6 +136,15 @@ describe('validateZipLegacy', () => {
     await assert.rejects(() => validateZipLegacy(zipData), /File type not allowed/);
   });
 
+  it('accepts previously-unlisted asset formats inside a game ZIP', async () => {
+    const zipData = await createZip({
+      'index.html': '<html></html>',
+      'models/scene.glb': new Uint8Array([1, 2, 3]),
+      'fonts/icon.otf': new Uint8Array([4, 5, 6]),
+    });
+    await assert.doesNotReject(() => validateZipLegacy(zipData));
+  });
+
   it('accepts zip with directories alongside valid files', async () => {
     const zip = new JSZip();
     zip.folder('subdir');

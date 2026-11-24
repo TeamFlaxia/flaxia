@@ -142,17 +142,17 @@ describe('isExtensionAllowed', () => {
     assert.ok(isExtensionAllowed('audio.Mp3'));
   });
 
-  it('returns false for files without extension', () => {
-    assert.ok(!isExtensionAllowed('README'));
-    assert.ok(!isExtensionAllowed('Makefile'));
+  it('permits files without extension as opaque downloads', () => {
+    assert.ok(isExtensionAllowed('README'));
+    assert.ok(isExtensionAllowed('Makefile'));
   });
 
-  it('returns false for files with only a dot at the end', () => {
-    assert.ok(!isExtensionAllowed('file.'));
+  it('permits a trailing dot as an unknown extension', () => {
+    assert.ok(isExtensionAllowed('file.'));
   });
 
-  it('handles dotted filenames like .htaccess', () => {
-    assert.ok(!isExtensionAllowed('.htaccess'));
+  it('permits dotfiles as opaque downloads', () => {
+    assert.ok(isExtensionAllowed('.htaccess'));
   });
 
   it('handles paths with directories', () => {
@@ -187,13 +187,13 @@ describe('getMimeType', () => {
     assert.equal(getMimeType('video.mp4'), 'video/mp4');
   });
 
-  it('returns text/plain for unknown extensions', () => {
-    assert.equal(getMimeType('file.xyz'), 'text/plain');
-    assert.equal(getMimeType('file.php'), 'text/plain');
+  it('returns application/octet-stream for unknown or blocked extensions', () => {
+    assert.equal(getMimeType('file.xyz'), 'application/octet-stream');
+    assert.equal(getMimeType('file.php'), 'application/octet-stream');
   });
 
-  it('returns text/plain for files without extension', () => {
-    assert.equal(getMimeType('README'), 'text/plain');
+  it('returns application/octet-stream for files without extension', () => {
+    assert.equal(getMimeType('README'), 'application/octet-stream');
   });
 
   it('handles uppercase extensions case-insensitively', () => {
@@ -213,22 +213,23 @@ describe('validateFileType', () => {
     assert.equal(result.mimeType, 'text/html');
   });
 
-  it('returns allowed=false and text/plain for unknown files', () => {
+  it('returns allowed=false for blocked scripts, served as opaque downloads', () => {
     const result = validateFileType('script.php');
     assert.ok(!result.allowed);
-    assert.equal(result.mimeType, 'text/plain');
+    assert.equal(result.mimeType, 'application/octet-stream');
   });
 
-  it('returns allowed=false for .exe programs', () => {
+  it('returns allowed=false for native executables', () => {
     const result = validateFileType('game.exe');
     assert.ok(!result.allowed);
-    assert.equal(result.mimeType, 'text/plain');
+    assert.equal(result.mimeType, 'application/octet-stream');
   });
 
-  it('returns allowed=false for files without extension', () => {
-    const result = validateFileType('README');
-    assert.ok(!result.allowed);
-    assert.equal(result.mimeType, 'text/plain');
+  it('permits unknown but harmless extensions as opaque downloads', () => {
+    for (const name of ['model.glb', 'font.otf', 'audio.aac', 'README', 'assets/data.xyz']) {
+      assert.ok(validateFileType(name).allowed, `${name} must not be blocked by a whitelist`);
+      assert.equal(validateFileType(name).mimeType, 'application/octet-stream');
+    }
   });
 
   it('is case-insensitive for allowed check', () => {
