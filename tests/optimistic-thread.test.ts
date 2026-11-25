@@ -149,3 +149,11 @@ test('ThreadPage reconciles the mounted root via update() and shows reply skelet
   assert.match(source, /thread-reply-skeleton/);
   assert.match(source, /#if loading && deferred[\s\S]{0,240}thread-reply-skeleton/);
 });
+
+test('mention suggestions inside a post card do not trigger thread navigation', async () => {
+  const source = await read('src/lib/svelte/PostCard.svelte');
+  const guard = source.slice(source.indexOf('function onPostClick'), source.indexOf('function handleReplyCreated'));
+  assert.match(guard, /\.mention-dropdown/, 'mention dropdown must be excluded from card navigation');
+  assert.match(guard, /\.mention-item/, 'mention suggestion rows must be excluded from card navigation');
+  assert.match(guard, /\.reply-composer/, 'reply composer clicks must not navigate to the thread');
+});
