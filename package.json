@@ -75,7 +75,7 @@
     "cap:build:android:release": "npm run build:native && CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && node scripts/patch-native-deeplink.mjs && cd android && ./gradlew bundleRelease",
     "cap:build:ios": "node scripts/patch-native-bridges.mjs && npx cap sync && npx cap copy && node scripts/patch-native-deeplink.mjs",
     "prepare": "husky",
-    "build:game-loader": "node scripts/patch-native-bridges.mjs && node scripts/build-game-loader.mjs && node scripts/build-offline-game.mjs",
+    "build:game-loader": "svelte-kit sync && node scripts/patch-native-bridges.mjs && node scripts/build-game-loader.mjs && node scripts/build-offline-game.mjs",
     "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs tests/offline-games.browser.mjs",
     "prepublishOnly": "node -e \"console.error('npm publishing is disabled; use the GitHub Release tarball'); process.exit(1)\"",
     "build:native": "svelte-kit sync && node scripts/docs-manifest.mjs && node scripts/build-maplibre-worker.mjs && npm run build:sdk && npm run build:game-sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && BUILD_TARGET=native vite build"
