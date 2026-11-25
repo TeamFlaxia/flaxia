@@ -518,6 +518,9 @@ export function updatePost(next: Partial<Post>): void {
     if (next.hashtags !== undefined) currentHashtags = parseHashtags(next.hashtags);
     if (next.mentions !== undefined) currentMentions = next.mentions;
     queueMicrotask(() => {
+      // A card can be destroyed between scheduling and running this task;
+      // mounting then would leave a Svelte root inside a detached textHost.
+      if (cardDestroyed || !textHost?.isConnected) return;
       void mountPostText(textHost, {
         text: displayText,
         mentions: currentMentions,

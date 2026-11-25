@@ -2,11 +2,12 @@
 import '../styles/index.css';
 import '../styles/ssr.css';
 import { onMount } from 'svelte';
-import { beforeNavigate } from '$app/navigation';
+import { afterNavigate, beforeNavigate } from '$app/navigation';
 import { page } from '$app/state';
 import { getBottomNav } from '../lib/bottom-nav-setup.ts';
 import { t } from '../lib/i18n.ts';
 import { closeLeftNav } from '../lib/left-nav-drawer.ts';
+import { beginNavigation, endNavigation } from '../lib/nav-loading.ts';
 import { pageTitle } from '../lib/page-title.ts';
 import { parseCurrentRoute } from '../lib/router.ts';
 import { renderWebSiteJsonLd, SEO_ORIGIN } from '../lib/seo-jsonld.ts';
@@ -97,8 +98,15 @@ const isPrivateRoute = $derived(PRIVATE_ROUTE_IDS.has(routeId));
 const jsonLd = $derived(hasOwnMeta ? '' : renderWebSiteJsonLd('Flaxia', SEO_ORIGIN));
 
 // The drawer is an overlay on <body>; a client-side route change replaces the
-// nav element but leaves the overlay and body scroll lock behind.
-beforeNavigate(() => closeLeftNav());
+// nav element but leaves the overlay and body scroll lock behind. The top
+// progress bar starts with the same navigation; afterNavigate (or the module
+// watchdog, if the navigation is cancelled) is the only thing that ends it.
+let navProgressToken = 0;
+beforeNavigate(() => {
+  closeLeftNav();
+  navProgressToken = beginNavigation();
+});
+afterNavigate(() => endNavigation(navProgressToken));
 
 // The legacy app used to sync the bottom bar on popstate. Keep this at the
 // root so it survives every Svelte route transition.

@@ -313,6 +313,38 @@ html.is-theme-switching *::after {
     color 180ms var(--ease-standard);
 }
 
+/* --- 6.5. Navigation progress: a fixed hairline, never a layout box --- */
+/* Mounting the bar must not shift the page (CLS = 0), so it is fixed to the
+   viewport and animated with transform/opacity only. */
+@keyframes nav-progress-sweep {
+  0% {
+    transform: scaleX(0.04);
+    opacity: 0.55;
+  }
+  45% {
+    transform: scaleX(0.62);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(1);
+    opacity: 0;
+  }
+}
+
+.nav-progress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 2px;
+  pointer-events: none;
+  z-index: 2147483647;
+  background-color: var(--accent, #4ade80);
+  transform: scaleX(0);
+  transform-origin: left center;
+  opacity: 0;
+  animation: nav-progress-sweep 1.4s var(--ease-out, ease-out) infinite;
+}
+
 /* --- 7. Reduced motion: keep the meaning, drop the movement ---------- */
 @media (prefers-reduced-motion: reduce) {
   .timeline .post-list > .post-card,
@@ -354,6 +386,15 @@ html.is-theme-switching *::after {
   .composer-icon-btn svg,
   .arcade-nav {
     transform: none !important;
+  }
+
+  /* Navigation still reads as in-flight; the hairline just stops sweeping.
+     This rule comes after the base .nav-progress rule at equal specificity, so
+     no !important is needed to win the cascade. */
+  .nav-progress {
+    animation: none;
+    transform: scaleX(0.6);
+    opacity: 1;
   }
 
   .timeline .load-more-container svg {

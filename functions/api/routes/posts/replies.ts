@@ -1,14 +1,13 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
-import { enrichPostsWithAttachments } from '../../../lib/attachments';
 import { embedPost, screenPostImages } from '../../../lib/crowd';
-import { sendPushToAll } from '../../../lib/notify';
+import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
 import { runInBackground } from '../../../lib/scan/index';
-import { enrichPostsWithPolls, enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
-import { batchGetFreshAndBookmarkStatus, requireAuth, resolveMentions, resolveRequestUser } from '../../helpers';
+import { enrichPostsForFeed } from '../../feed-enrichment';
+import { requireAuth, resolveMentions, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
 import { colorEntitlementError, isValidPostId } from './helpers.ts';
 
@@ -70,35 +69,18 @@ replies.get('/posts/:id/replies', async (c) => {
     const replies = result.results || [];
     const _nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
 
-    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
-    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
-    await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
-
-    if (currentUserId) {
-      const allPostRows = [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
-      const { reloaded } = await batchGetFreshAndBookmarkStatus(
-        c.env.DB,
-        currentUserId,
-        allPostRows.map((post) => String(post.id)),
-      );
-      allPostRows.forEach((post) => {
-        post.is_reloaded = reloaded.has(String(post.id));
-      });
-    }
-
-    // Add poll data
-    await enrichPostsWithPolls([parentPost as PostRow], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes([parentPost as PostRow], c.env.DB);
-    await enrichPostsWithAttachments([parentPost as PostRow], c.env.DB);
-    await enrichPostsWithReactions([parentPost as PostRow], c.env.DB, currentUserId);
-    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
-    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
-    await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
+    // Enrich parent and replies in a single batch. The old code ran the same
+    // four enrichment queries twice (once on replies, then again on both the
+    // parent and replies) before responding.
+    const allPosts: Array<Record<string, unknown>> = [
+      parentPost as Record<string, unknown>,
+      ...(replies as Array<Record<string, unknown>>),
+    ];
+    // Authors run after feed enrichment so quoted_post is already populated.
+    await enrichPostsForFeed(allPosts as PostRow[], c.env.DB, currentUserId);
+    await enrichPostsWithRemoteAuthors(allPosts, c.env.DB);
 
     // Trigger vector embedding for unprocessed posts in background
-    const allPosts = [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
     const toEmbed = allPosts.filter((p) => p.text);
     if (toEmbed.length > 0) {
       const existingRows = await c.env.DB.prepare(
@@ -118,10 +100,6 @@ replies.get('/posts/:id/replies', async (c) => {
       }
     }
 
-    await enrichPostsWithRemoteAuthors(
-      [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
-      c.env.DB,
-    );
     return c.json({ root: parentPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);
@@ -186,67 +164,43 @@ replies.get('/posts/:id/thread', async (c) => {
 
     const replies = repliesResult.results || [];
 
-    if (currentUserId) {
-      const allPosts: Array<Record<string, unknown>> = [
-        rootPost as Record<string, unknown>,
-        ...(replies as Array<Record<string, unknown>>),
-      ];
-      const postIds = allPosts.map((p: Record<string, unknown>) => p.id as string);
+    // Root and replies were fetched in one pass. Enrich the merged array once:
+    // the shared feed helper runs polls + quotes + attachments + reactions +
+    // viewer flags in a single Promise.all instead of eight serial awaits, and
+    // the remote-author lookup must run AFTER it so quoted posts are enriched.
+    const allPosts: Array<Record<string, unknown>> = [
+      rootPost as Record<string, unknown>,
+      ...(replies as Array<Record<string, unknown>>),
+    ];
+    await enrichPostsForFeed(allPosts as PostRow[], c.env.DB, currentUserId);
+    await enrichPostsWithRemoteAuthors(allPosts, c.env.DB);
 
-      const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
-      (rootPost as Record<string, unknown>).is_freshed = freshed.has(
-        (rootPost as Record<string, unknown>).id as string,
-      );
-      (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
-        post.is_freshed = freshed.has(post.id as string);
-      });
-      (rootPost as Record<string, unknown>).is_reloaded = reloaded.has(
-        (rootPost as Record<string, unknown>).id as string,
-      );
-      (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
-        post.is_reloaded = reloaded.has(post.id as string);
-      });
-      (rootPost as Record<string, unknown>).is_bookmarked = bookmarked.has(
-        (rootPost as Record<string, unknown>).id as string,
-      );
-      (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
-        post.is_bookmarked = bookmarked.has(post.id as string);
-      });
-    }
-
-    await enrichPostsWithPolls([rootPost as PostRow], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes([rootPost as PostRow], c.env.DB);
-    await enrichPostsWithAttachments([rootPost as PostRow], c.env.DB);
-    await enrichPostsWithReactions([rootPost as PostRow], c.env.DB, currentUserId);
-    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
-    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
-    await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
-
-    const allPosts2 = [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
-    const toEmbed2 = allPosts2.filter((p) => p.text);
-    if (toEmbed2.length > 0) {
-      const existingRows2 = await c.env.DB.prepare(
-        `SELECT post_id FROM post_embeddings WHERE post_id IN (${toEmbed2.map(() => '?').join(',')})`,
-      )
-        .bind(...toEmbed2.map((p) => p.id as string))
-        .all<{ post_id: string }>();
-      const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
-      for (const p of toEmbed2) {
-        if (!existingIds2.has(p.id as string)) {
-          runInBackground(
-            c,
-            () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
-            'Background embed failed',
-          );
+    // Vector embedding is background work. Neither the existence query nor the
+    // embedPost dispatch may hold up the thread response.
+    waitUntil(
+      c,
+      async () => {
+        const toEmbed = allPosts.filter((p) => p.text);
+        if (toEmbed.length === 0) return;
+        const existingRows = await c.env.DB.prepare(
+          `SELECT post_id FROM post_embeddings WHERE post_id IN (${toEmbed.map(() => '?').join(',')})`,
+        )
+          .bind(...toEmbed.map((p) => p.id as string))
+          .all<{ post_id: string }>();
+        const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
+        for (const p of toEmbed) {
+          if (!existingIds.has(p.id as string)) {
+            runInBackground(
+              c,
+              () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
+              'Background embed failed',
+            );
+          }
         }
-      }
-    }
-
-    await enrichPostsWithRemoteAuthors(
-      [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)],
-      c.env.DB,
+      },
+      'thread-embed',
     );
+
     return c.json({ root: rootPost, replies });
   } catch (error: unknown) {
     console.error('Thread fetch error:', error);

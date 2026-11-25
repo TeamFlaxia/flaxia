@@ -10,29 +10,57 @@ import MediaFallback from '../lib/svelte/media/MediaFallback.svelte';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const target = document.createElement('div');
+  let instance: ReturnType<typeof mount> | undefined;
+  let observer: MutationObserver | undefined;
+
+  // Whichever root is mounted below gets one shared removal observer. The
+  // data-saver gate used to return before reaching it, leaving its Svelte root
+  // (and any document listeners) alive when a card was removed untapped.
+  const watchForRemoval = () => {
+    if (observer) return;
+    observer = new MutationObserver(() => {
+      if (target.isConnected) return;
+      observer?.disconnect();
+      if (instance) {
+        unmount(instance);
+        instance = undefined;
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+  };
 
   // Data-saver: don't fetch image bytes until the user taps.
   if (!props.src && !props.dataSaverConfirmed && isDataSaverEnabled()) {
     target.className = 'image-preview';
-    const placeholder = mount(DataSaverPlaceholder, {
+    instance = mount(DataSaverPlaceholder, {
       target,
       props: {
         label: t('media.data_saver_load_image'),
         onLoad: () => {
           const real = createImagePreview({ ...props, dataSaverConfirmed: true });
           target.replaceWith(real);
-          unmount(placeholder);
+          // The observer will also see this removal; clear the tracked root so
+          // it is not unmounted twice once that callback fires, and stop
+          // observing a target that is no longer in the document.
+          observer?.disconnect();
+          observer = undefined;
+          if (instance) {
+            unmount(instance);
+            instance = undefined;
+          }
         },
       },
     });
+    watchForRemoval();
     return target;
   }
 
   if (!props.gifKey && !props.src) {
-    mount(MediaFallback, {
+    instance = mount(MediaFallback, {
       target,
       props: { message: t('image_preview.no_preview') },
     });
+    watchForRemoval();
     return target;
   }
 
@@ -40,7 +68,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     props.src || nativeApiHref(props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`);
   const baseImageUrl = imageUrl;
 
-  const instance = mount(ImagePreview, {
+  instance = mount(ImagePreview, {
     target,
     props: {
       imageUrl,
@@ -59,12 +87,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     },
   });
 
-  const observer = new MutationObserver(() => {
-    if (target.isConnected) return;
-    observer.disconnect();
-    unmount(instance);
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
+  watchForRemoval();
 
   return target;
 }

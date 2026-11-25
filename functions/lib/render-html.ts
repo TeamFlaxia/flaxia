@@ -704,7 +704,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
     </div>
     <div class="ssr-post-meta">
       <time datetime="${escapeHtml(post.created_at)}">${formatDate(post.created_at, locale)}</time>
-      <a href="${escapeHtml(postUrl)}">${escapeHtml(VIEW_POST_LABELS[localeBase(locale)] ?? VIEW_POST_LABELS.en)}</a>
+      <a href="${escapeHtml(postUrl)}" class="ssr-view-post">${escapeHtml(VIEW_POST_LABELS[localeBase(locale)] ?? VIEW_POST_LABELS.en)}</a>
     </div>
     <div class="ssr-post-stats">
       <span>${renderFreshIcon()} ${post.fresh_count}</span>
