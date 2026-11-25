@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
-import { getMeWithSession, getSessionToken } from '../../../lib/auth';
 import { embedPost } from '../../../lib/crowd';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
@@ -8,7 +7,7 @@ import { runInBackground } from '../../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../../lib/scoring';
 import { refreshUserTrustSafe } from '../../../lib/trust';
 import { enrichPostsForFeed } from '../../feed-enrichment';
-import { kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../../helpers';
+import { kvCacheGet, kvCacheSet, makeCacheKey, requireAuth, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
 import { colorEntitlementError, enrichFeedPosts, isOwnedMediaKey } from './helpers.ts';
 
@@ -113,13 +112,10 @@ feed.get('/posts', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Get current user ID for fresh status (optional for all tabs, required for Following tab)
-    let currentUserId: string | null = null;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    if (sessionData) {
-      currentUserId = sessionData.user.id;
-    }
+    // Reuse the user authMiddleware already resolved; only fall back if the
+    // middleware did not run for this request.
+    const user = await resolveRequestUser(c, c.get('user'));
+    const currentUserId: string | null = user?.id ?? null;
 
     // For Following tab, require authentication
     if (following && !currentUserId) {
@@ -289,13 +285,9 @@ feed.get('/posts/trending', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Get current user for fresh status
-    let currentUserId: string | null = null;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    if (sessionData) {
-      currentUserId = sessionData.user.id;
-    }
+    // Reuse the user authMiddleware already resolved.
+    const user = await resolveRequestUser(c, c.get('user'));
+    const currentUserId: string | null = user?.id ?? null;
 
     // Try cache hit (only for non-cursor requests)
     if (!cursor) {

@@ -193,6 +193,11 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
  * Initialise the node once and return its controller. `onConsentRequired` is
  * invoked only when the decision is still unset, so callers should pass their
  * consent UI opener. Subsequent calls return the cached controller.
+ *
+ * This remains the single callable entry point for shell boot, settings and
+ * native preparation. Callers on an interactive path must schedule it for
+ * idle time (or the first user interaction): loading the bundle and running
+ * its synchronous WASM memory probe can block the main thread for seconds.
  */
 export async function initCrowdNode(
   onConsentRequired?: (controls: CrowdConsentControls) => void,

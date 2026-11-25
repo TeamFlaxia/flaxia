@@ -4,7 +4,7 @@ import { buildLikeActivity, buildUndoActivity } from '../../../lib/activitypub/a
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
 import { deliverToActorInbox, deliverToFollowers } from '../../../lib/activitypub/delivery';
 import { enrichPostsWithAttachments } from '../../../lib/attachments';
-import { sendPushToAll } from '../../../lib/notify';
+import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { requireAuth } from '../../helpers';
@@ -51,15 +51,16 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
       .first<{ fresh_count: number }>();
 
     // The like of a post of another instance is retracted there as well.
-    if (post.actor_id && currentUser) {
+    const actorUrl = post.actor_id;
+    if (actorUrl && currentUser) {
       const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
       const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
       const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
-      await deliverToActorInbox(c.env, {
-        actorUrl: post.actor_id,
-        username: currentUser.username,
-        activity: undo,
-      });
+      waitUntil(
+        c,
+        () => deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity: undo }),
+        'Failed to deliver undo Like to remote actor',
+      );
     }
 
     return c.json({ freshed: false, is_freshed: false, fresh_count: result?.fresh_count ?? 0 });
@@ -108,14 +109,11 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
             const actor = c.get('user');
 
             const textPreview = ((post as Record<string, unknown>).text as string) || '';
-            await sendPushToAll(
-              c.env,
-              post.user_id,
-              'fresh',
-              actor?.username,
-              actor?.display_name,
-              textPreview,
-              postId,
+            waitUntil(
+              c,
+              () =>
+                sendPushToAll(c.env, post.user_id, 'fresh', actor?.username, actor?.display_name, textPreview, postId),
+              'Failed to send fresh push',
             );
           }
         }
@@ -127,14 +125,20 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
     // A post of another instance is liked on the instance that published it:
     // the activity has to reference the object id of that note, not a note
     // URL of this instance.
-    if (post.actor_id && currentUser) {
+    const freshActorUrl = post.actor_id;
+    if (freshActorUrl && currentUser) {
       const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
       const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
-      await deliverToActorInbox(c.env, {
-        actorUrl: post.actor_id,
-        username: currentUser.username,
-        activity: likeActivity,
-      });
+      waitUntil(
+        c,
+        () =>
+          deliverToActorInbox(c.env, {
+            actorUrl: freshActorUrl,
+            username: currentUser.username,
+            activity: likeActivity,
+          }),
+        'Failed to deliver Like to remote actor',
+      );
     }
 
     return c.json({ freshed: true, is_freshed: true, fresh_count: result?.fresh_count ?? 0 });
@@ -576,33 +580,36 @@ type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
  * Delivers a reload Announce/Undo to the reloading user's federated followers
  * and, for remote posts, to the original author's inbox.
  */
-async function deliverReloadActivity(
+function deliverReloadActivity(
   c: PostsContext,
   post: { actor_id: string | null },
   currentUser: { id: string; username: string },
   activity: Record<string, unknown>,
-): Promise<void> {
-  try {
-    await deliverToFollowers(c.env, {
-      userId: currentUser.id,
-      username: currentUser.username,
-      activity,
-    });
-  } catch (e) {
-    console.error('Failed to deliver reload activity to followers:', e);
-  }
+): void {
+  const actorUrl = post.actor_id;
+  waitUntil(
+    c,
+    async () => {
+      try {
+        await deliverToFollowers(c.env, {
+          userId: currentUser.id,
+          username: currentUser.username,
+          activity,
+        });
+      } catch (e) {
+        console.error('Failed to deliver reload activity to followers:', e);
+      }
 
-  if (!post.actor_id) return;
-
-  try {
-    await deliverToActorInbox(c.env, {
-      actorUrl: post.actor_id,
-      username: currentUser.username,
-      activity,
-    });
-  } catch (e) {
-    console.error('Failed to deliver reload activity to remote actor:', e);
-  }
+      if (actorUrl) {
+        try {
+          await deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity });
+        } catch (e) {
+          console.error('Failed to deliver reload activity to remote actor:', e);
+        }
+      }
+    },
+    'Failed to deliver reload activity',
+  );
 }
 
 // POST /api/posts/:id/reload - toggle reload (retweet, protected)
@@ -656,7 +663,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
         to: [publicAudience],
         cc: [`${c.env.BASE_URL}/api/actors/${currentUser.username}/followers`],
       };
-      await deliverReloadActivity(c, post, currentUser, {
+      deliverReloadActivity(c, post, currentUser, {
         '@context': 'https://www.w3.org/ns/activitystreams',
         id: `${c.env.BASE_URL}/activities/undo-announce-${existing.id}`,
         type: 'Undo',
@@ -711,14 +718,19 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
           )
             .bind(nanoid(), post.user_id, 'reload', postId, currentUser.id)
             .run();
-          await sendPushToAll(
-            c.env,
-            post.user_id,
-            'reload',
-            currentUser.username,
-            currentUser.display_name,
-            post.text,
-            postId,
+          waitUntil(
+            c,
+            () =>
+              sendPushToAll(
+                c.env,
+                post.user_id,
+                'reload',
+                currentUser.username,
+                currentUser.display_name,
+                post.text,
+                postId,
+              ),
+            'Failed to send reload push',
           );
         }
       } catch (e) {
@@ -736,7 +748,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
       cc: [`${c.env.BASE_URL}/api/actors/${currentUser.username}/followers`],
       published: new Date().toISOString(),
     };
-    await deliverReloadActivity(c, post, currentUser, announce);
+    deliverReloadActivity(c, post, currentUser, announce);
 
     const response = { reloaded: true, is_reloaded: true, reload_count: result?.reload_count ?? 0 };
     return c.json(legacyAlias ? { ...response, shared: true, share_id: reloadId } : response);

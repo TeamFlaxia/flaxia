@@ -90,21 +90,28 @@ async function toggleFollow(user: UserListItem): Promise<void> {
   }
   if (busy[user.username]) return;
   busy = { ...busy, [user.username]: true };
+  const wasFollowing = Boolean(user.is_following);
+  // Give immediate feedback: flip the visible state before the request resolves.
+  users = users.map((entry) => (entry.username === user.username ? { ...entry, is_following: !wasFollowing } : entry));
   try {
-    const method = user.is_following ? 'DELETE' : 'POST';
+    const method = wasFollowing ? 'DELETE' : 'POST';
     const response = await fetch(`/api/users/${user.username}/follow`, { method, credentials: 'include' });
     if (!response.ok) {
       console.error('Follow/unfollow failed:', await response.text());
+      users = users.map((entry) =>
+        entry.username === user.username ? { ...entry, is_following: wasFollowing } : entry,
+      );
       return;
     }
     const result = (await response.json()) as { followers_count: number; following_count: number };
     users = users.map((entry) =>
       entry.username === user.username
-        ? { ...entry, is_following: !entry.is_following, following_count: result.following_count }
+        ? { ...entry, is_following: !wasFollowing, following_count: result.following_count }
         : entry,
     );
   } catch (error) {
     console.error('Follow/unfollow error:', error);
+    users = users.map((entry) => (entry.username === user.username ? { ...entry, is_following: wasFollowing } : entry));
   } finally {
     busy = { ...busy, [user.username]: false };
   }
@@ -187,7 +194,7 @@ onMount(() => {
                 type="button"
                 class="follow-button"
                 class:follow-button--active={user.is_following}
-                disabled={busy[user.username]}
+                aria-busy={busy[user.username]}
                 onclick={() => void toggleFollow(user)}
               >
                 {user.is_following ? t('profile.following') : t('profile.follow')}

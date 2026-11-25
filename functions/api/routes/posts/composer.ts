@@ -17,7 +17,7 @@ import {
 } from '../../../lib/attachments';
 import { embedPost, isImageKey, type PostMediaInput, screenPostImages, tagPost } from '../../../lib/crowd';
 import { validateImageDimensions } from '../../../lib/image-dimensions';
-import { sendPushToAll } from '../../../lib/notify';
+import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { checkRateLimit } from '../../../lib/rate-limit';
 import { submitFileScans } from '../../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../../lib/scan/index';
@@ -693,14 +693,19 @@ composer.post('/posts/commit', requireAuth, async (c) => {
         }
         const actor = c.get('user');
         for (const mention of mentionTargets) {
-          await sendPushToAll(
-            c.env,
-            mention.user_id,
-            'mention',
-            actor?.username,
-            actor?.display_name,
-            text || '',
-            postId,
+          waitUntil(
+            c,
+            () =>
+              sendPushToAll(
+                c.env,
+                mention.user_id,
+                'mention',
+                actor?.username,
+                actor?.display_name,
+                text || '',
+                postId,
+              ),
+            'Failed to send mention push',
           );
         }
       } catch (e) {
@@ -718,14 +723,11 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           .bind(nanoid(), quotedPostAuthorId, 'quote', postId, userId)
           .run();
         const actor = c.get('user');
-        await sendPushToAll(
-          c.env,
-          quotedPostAuthorId,
-          'quote',
-          actor?.username,
-          actor?.display_name,
-          text || '',
-          postId,
+        waitUntil(
+          c,
+          () =>
+            sendPushToAll(c.env, quotedPostAuthorId, 'quote', actor?.username, actor?.display_name, text || '', postId),
+          'Failed to send quote push',
         );
       } catch (e) {
         console.error('Failed to create quote notification:', e);
@@ -781,7 +783,9 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
           // One delivery per remote inbox (a shared inbox expects one activity).
-          await deliverToFollowers(c.env, { userId, username, activity });
+          // Federation is not needed to answer the publish request; keep it
+          // alive after the response instead of blocking the click.
+          waitUntil(c, () => deliverToFollowers(c.env, { userId, username, activity }), 'ActivityPub delivery failed');
         }
       }
     } catch (e) {

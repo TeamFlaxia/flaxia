@@ -130,6 +130,12 @@ function maybeHideControls(): void {
 
 function togglePlay(): void {
   if (audioEl.paused || audioEl.ended) {
+    // The init timer attaches src on a later tick; an early play click must
+    // still work, so attach it on demand before creating the audio graph.
+    if (!audioEl.src) {
+      audioEl.src = audioUrl;
+      audioEl.load();
+    }
     // The visualizer must be created after the src is attached, otherwise
     // the Web Audio source node severs the element → graph connection.
     ensureVisualizer();

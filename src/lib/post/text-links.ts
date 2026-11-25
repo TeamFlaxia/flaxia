@@ -78,10 +78,12 @@ export function linkifyHashtags(container: HTMLElement): void {
       span.className = 'hashtag-link';
       span.textContent = `#${hashtag}`;
       span.style.cursor = 'pointer';
-      span.addEventListener('click', (e) => {
-        e.stopPropagation();
-        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(hashtag)}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag: hashtag } }));
+      // Route through the shared helper so SvelteKit keeps ownership of
+      // history.state. Loaded lazily because navigation.ts imports the
+      // SvelteKit-only `$app/navigation` virtual module, while these DOM
+      // linkifiers are also imported by plain Node unit tests.
+      span.addEventListener('click', () => {
+        void import('../navigation.ts').then(({ navigate }) => navigate(`/explore?tag=${encodeURIComponent(hashtag)}`));
       });
       fragment.appendChild(span);
 
@@ -191,10 +193,10 @@ export function linkifyMentions(container: HTMLElement, mentions?: string): void
         span.className = 'mention-link';
         span.textContent = `@${username}`;
         span.style.cursor = 'pointer';
-        span.addEventListener('click', (e) => {
-          e.stopPropagation();
-          window.history.pushState({}, '', `/profile/${encodeURIComponent(username)}`);
-          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username } }));
+        // Same lazy import as the hashtag handler: no pushState, no custom
+        // bridge event, and no stopPropagation (PostCard's fallback still runs).
+        span.addEventListener('click', () => {
+          void import('../navigation.ts').then(({ navigate }) => navigate(`/profile/${encodeURIComponent(username)}`));
         });
         fragment.appendChild(span);
       } else {

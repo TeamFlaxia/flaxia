@@ -2,14 +2,13 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
 import { enrichPostsWithAttachments } from '../../../lib/attachments';
-import { getMeWithSession, getSessionToken } from '../../../lib/auth';
 import { embedPost, screenPostImages } from '../../../lib/crowd';
 import { sendPushToAll } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
 import { runInBackground } from '../../../lib/scan/index';
 import { enrichPostsWithPolls, enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
-import { batchGetFreshAndBookmarkStatus, requireAuth, resolveMentions } from '../../helpers';
+import { batchGetFreshAndBookmarkStatus, requireAuth, resolveMentions, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
 import { colorEntitlementError, isValidPostId } from './helpers.ts';
 
@@ -21,10 +20,9 @@ replies.get('/posts/:id/replies', async (c) => {
     const cursor = c.req.query('cursor');
     const limit = clampLimit(c.req.query('limit'), 20, 50);
 
-    // Get current user ID from session (optional)
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    const currentUserId = sessionData?.user?.id || null;
+    // Reuse the user authMiddleware already resolved; session is optional here.
+    const user = await resolveRequestUser(c, c.get('user'));
+    const currentUserId = user?.id ?? null;
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -136,9 +134,8 @@ replies.get('/posts/:id/thread', async (c) => {
   try {
     const postId = c.req.param('id');
 
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    const currentUserId = sessionData?.user?.id || null;
+    const user = await resolveRequestUser(c, c.get('user'));
+    const currentUserId = user?.id ?? null;
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);

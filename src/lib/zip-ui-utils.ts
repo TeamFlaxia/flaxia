@@ -25,6 +25,7 @@ export function createZipLoadingIndicator(prefix: string): HTMLElement {
     justify-content: center;
     background: var(--bg-primary, #ffffff);
     z-index: 10;
+    pointer-events: none;
     transition: opacity 0.3s ease;
     border-radius: 8px;
   `;
@@ -180,5 +181,8 @@ export function fadeOutLoading(loadingEl: HTMLElement | null): void {
 export function showLoadingTimeoutMessage(loadingEl: HTMLElement | null): void {
   if (loadingEl?.parentNode) {
     loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">${t('zip.loading_slow')}</div>`;
+    // The message is transient: never leave an opaque layer in the DOM that
+    // keeps swallowing clicks after loading has stalled.
+    fadeOutLoading(loadingEl);
   }
 }

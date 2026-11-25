@@ -1,4 +1,6 @@
 <script lang="ts">
+// biome-ignore-all lint/correctness/noUnusedImports: types and markup-only helpers
+// biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
 import type { PostAttachment } from '../../../shared/types/post.ts';
 import { attachmentUrl, isAbsoluteMediaUrl } from '../../components/MediaCarousel.ts';
 import { t } from '../i18n.ts';
@@ -78,16 +80,22 @@ async function toggleFollow(): Promise<void> {
   }
   if (followBusy) return;
   followBusy = true;
+  const wasFollowing = following;
+  // Federation can be slow: show the new state immediately, restore on failure.
+  following = !following;
   try {
     const response = await fetch('/api/remote-follow', {
-      method: following ? 'DELETE' : 'POST',
+      method: wasFollowing ? 'DELETE' : 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: `${username}@${domain}` }),
     });
-    if (response.ok) following = !following;
+    if (!response.ok) {
+      following = !following;
+      return;
+    }
   } catch {
-    // keep the current state
+    following = !following;
   } finally {
     followBusy = false;
   }
@@ -123,7 +131,7 @@ async function toggleFollow(): Promise<void> {
           <button
             type="button"
             class="profile-follow-button"
-            disabled={followBusy}
+            aria-busy={followBusy}
             onclick={toggleFollow}
           >
             {following ? t('profile.unfollow') : t('profile.follow')}

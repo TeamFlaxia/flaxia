@@ -2,17 +2,16 @@
 export const ssr = import.meta.env.BUILD_TARGET !== 'native';
 export const prerender = false;
 
-// Legacy components call t() while building their DOM, so locale strings must
-// be loaded before any route component mounts.
-export async function load() {
+import { bootShell } from '../lib/svelte/shell-boot.ts';
+
+// Locale strings and the session snapshot are needed by legacy components, but
+// waiting for them here blocks hydration of the entire app. Start boot without
+// awaiting it; +layout.svelte awaits the same promise in onMount to re-render
+// metadata once the locale is known.
+export function load() {
   if (typeof window === 'undefined') return {};
-  const [{ initShellBootstrap }, { initI18n }, { loadSessionUser }] = await Promise.all([
-    import('../lib/svelte/bootstrap.ts'),
-    import('../lib/i18n.ts'),
-    import('../lib/svelte/session.ts'),
-  ]);
-  // Patch fetch first, but the two independent boot requests can run together.
-  initShellBootstrap();
-  await Promise.all([initI18n(), loadSessionUser()]);
+  void bootShell().catch(() => {
+    // The shell degrades to translation keys / guest state; routes still mount.
+  });
   return {};
 }

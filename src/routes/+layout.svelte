@@ -10,6 +10,7 @@ import { closeLeftNav } from '../lib/left-nav-drawer.ts';
 import { pageTitle } from '../lib/page-title.ts';
 import { parseCurrentRoute } from '../lib/router.ts';
 import { renderWebSiteJsonLd, SEO_ORIGIN } from '../lib/seo-jsonld.ts';
+import { bootShell } from '../lib/svelte/shell-boot.ts';
 import { viewToBottomNavId } from '../lib/view-nav.ts';
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte snippet used in markup
@@ -69,6 +70,10 @@ const SITE_DESCRIPTION = 'The SNS where your posts are playable.';
 const DEFAULT_OG_IMAGE = `${SEO_ORIGIN}/og-default-v2.png`;
 
 let localeVersion = $state(0);
+// Route components read the session snapshot once in onMount. The shell boot
+// resolves it after mount, so remount children once when it settles to give
+// them the signed-in state without blocking initial hydration.
+let sessionVersion = $state(0);
 
 // Called from the template (the render path) so it may read reactive page
 // state; a module-level evaluation would trip Svelte's state_read_outside_render.
@@ -107,6 +112,17 @@ onMount(() => {
   const onLocale = () => (localeVersion += 1);
   window.addEventListener('localechange', onLocale);
   sync();
+  // Boot work (locale files + session) runs in parallel with mount. Once it
+  // settles, re-render head metadata and re-sync the nav with the real user.
+  void bootShell()
+    .then(() => {
+      localeVersion += 1;
+      sessionVersion += 1;
+      sync();
+    })
+    .catch(() => {
+      // Already handled by the fire-and-forget starter in +layout.ts.
+    });
   return () => {
     window.removeEventListener('popstate', sync);
     window.removeEventListener('localechange', onLocale);
@@ -140,4 +156,6 @@ onMount(() => {
   {/if}
 </svelte:head>
 
-{@render children()}
+{#key sessionVersion}
+  {@render children()}
+{/key}

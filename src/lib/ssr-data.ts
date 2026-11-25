@@ -6,7 +6,39 @@ import type { Post } from '../../shared/types/post.ts';
 // hydrates its route data from /api.
 type Fetch = typeof fetch;
 
+// Universal loads re-run on every client navigation. SvelteKit replays the
+// SSR-fetched response during hydration but does not cache it for subsequent
+// navigations unless the endpoint sets max-age. Keep a short-lived client-side
+// cache here so clicking between routes does not repeat the same RTT.
+const CLIENT_CACHE_TTL = 10_000;
+const clientCache = new Map<string, { data: unknown; at: number }>();
+
+export function clearSsrDataCache(): void {
+  clientCache.clear();
+}
+
+if (typeof window !== 'undefined') {
+  for (const event of [
+    'postCreated',
+    'postUpdated',
+    'postDeleted',
+    'postChanged',
+    'profileUpdated',
+    'followChanged',
+    'flaxia:session',
+    'localechange',
+  ]) {
+    window.addEventListener(event, clearSsrDataCache);
+  }
+  // Account switches in another tab must not reuse this tab's cached flags.
+  window.addEventListener('storage', clearSsrDataCache);
+}
+
 async function apiJson<T>(path: string, fetchFn: Fetch): Promise<T | null> {
+  if (typeof window !== 'undefined') {
+    const cached = clientCache.get(path);
+    if (cached && Date.now() - cached.at < CLIENT_CACHE_TTL) return cached.data as T;
+  }
   let response: Response;
   try {
     response = await fetchFn(path);
@@ -18,7 +50,9 @@ async function apiJson<T>(path: string, fetchFn: Fetch): Promise<T | null> {
   // reporting a server error, and would let crawlers index a false 404.
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`SSR request to ${path} returned ${response.status}`);
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  if (typeof window !== 'undefined') clientCache.set(path, { data, at: Date.now() });
+  return data;
 }
 
 export interface SsrFeed {

@@ -219,7 +219,9 @@ function mountList(tab: Tab, host: HTMLDivElement | undefined): void {
     showPinOption: own && tab === 'posts',
     onTogglePin: own && tab === 'posts' ? (id) => void togglePin(id) : undefined,
   });
-  if (tab === 'posts') signalSsrHandover();
+  // Any interactive tab is ready to replace the SSR fallback; waiting only
+  // for 'posts' left the static markup mounted on freshs/bookmarks tabs.
+  signalSsrHandover();
 }
 
 function selectTab(tab: Tab): void {

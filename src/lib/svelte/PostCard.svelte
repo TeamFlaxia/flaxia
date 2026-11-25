@@ -390,7 +390,7 @@ function onPostClick(e: MouseEvent): void {
   const target = e.target as HTMLElement;
   if (
     target.closest(
-      'button, input, textarea, a, .poll-option, .video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track',
+      'button, input, textarea, a, .poll-option, .video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track, .hashtag-link, .mention-link',
     )
   )
     return;

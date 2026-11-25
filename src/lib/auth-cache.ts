@@ -18,7 +18,9 @@ export async function getMe(): Promise<Record<string, unknown> | null> {
   if (cachePromise) return cachePromise;
   const generation = cacheGeneration;
 
-  cachePromise = fetch('/api/me', { credentials: 'include' })
+  // A stalled auth worker must never hold the whole app hostage: the layout
+  // no longer awaits this, but a bounded request still releases its consumers.
+  cachePromise = fetch('/api/me', { credentials: 'include', signal: AbortSignal.timeout(8000) })
     .then((r) => {
       if (generation !== cacheGeneration) return cachedMe;
       if (r.ok) return r.json() as Promise<Record<string, unknown>>;

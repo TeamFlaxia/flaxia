@@ -1,6 +1,6 @@
 import type { Context, Next } from 'hono';
 import { isAdmin } from '../lib/admin.ts';
-import { getMeWithSession, getSessionToken } from '../lib/auth';
+import { getMeWithSession, getSessionToken, type User } from '../lib/auth';
 import { NATIVE_APP_ORIGINS } from '../lib/native-origins';
 import type { Bindings, Variables } from './types';
 
@@ -126,6 +126,24 @@ export function parseRange(rangeHeader: string, fileSize: number): { start: numb
 type R2ObjectLike = { size?: number; body?: BodyInit | null };
 
 type RouteContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * Return the user already resolved by authMiddleware.
+ *
+ * `authMiddleware` resolves the session once for every `/api/*` request and
+ * stores the result in `c.get('user')` (a User, or null when unauthenticated).
+ * A handler that calls getMeWithSession again repeats the whole auth-service +
+ * D1 chain for no benefit. `undefined` means the middleware never ran (e.g. a
+ * route mounted outside `/api/*` or a direct unit invocation); only then do the
+ * fallback lookup, and never for an explicitly unauthenticated request.
+ */
+export async function resolveRequestUser(c: RouteContext, contextUser: User | null | undefined): Promise<User | null> {
+  if (contextUser !== undefined) return contextUser ?? null;
+  const token = getSessionToken(c.req.raw);
+  if (!token) return null;
+  const sessionData = await getMeWithSession(c.env, token);
+  return sessionData?.user ?? null;
+}
 
 export async function handleRangeRequest(
   c: RouteContext,
