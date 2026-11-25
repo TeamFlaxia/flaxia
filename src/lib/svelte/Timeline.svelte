@@ -19,6 +19,7 @@ import {
   getTimelinePageSize,
   isDataSaverEnabled,
 } from '../settings.ts';
+import { signalSsrHandover } from '../ssr-handover.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
 import { getRecommendationProfile, type RecommendationProfile } from '../vault/recommendation-profile.ts';
@@ -157,6 +158,7 @@ async function loadInitial(): Promise<void> {
           cursor = batch.nextCursor;
           hasMore = forYouQueue.length > 0 || Boolean(batch.nextCursor);
           root?.dispatchEvent(new CustomEvent('timelineReady'));
+          signalSsrHandover();
           return;
         }
       }
@@ -171,6 +173,7 @@ async function loadInitial(): Promise<void> {
     cursor = data.next_cursor;
     hasMore = Boolean(data.next_cursor) || posts.length >= getTimelinePageSize();
     root?.dispatchEvent(new CustomEvent('timelineReady'));
+    signalSsrHandover();
   } catch {
     if (!destroyed && gen === generation) errorMessage = t('timeline.load_failed');
   } finally {

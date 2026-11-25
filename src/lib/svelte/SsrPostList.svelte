@@ -1,20 +1,29 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import type { Post } from '../../../shared/types/post.ts';
+import { hasSsrHandover, SSR_HANDOVER_EVENT } from '../ssr-handover.ts';
 import SsrPostCard from './SsrPostCard.svelte';
 
-// Server-rendered fallback content. `hydrated` starts false on both the server
-// and the first client render (so hydration matches), then flips in onMount to
-// hand the page over to the interactive components.
+// Server-rendered fallback content. `handover` starts false on both the server
+// and the first client render (so hydration matches), then flips when the
+// interactive timeline/thread view has rendered its own posts.
 let { posts, label = 'Posts' }: { posts: Post[]; label?: string } = $props();
 
-let hydrated = $state(false);
+let handover = $state(false);
 onMount(() => {
-  hydrated = true;
+  if (hasSsrHandover()) {
+    handover = true;
+    return;
+  }
+  const onHandover = () => {
+    handover = true;
+  };
+  window.addEventListener(SSR_HANDOVER_EVENT, onHandover);
+  return () => window.removeEventListener(SSR_HANDOVER_EVENT, onHandover);
 });
 </script>
 
-{#if !hydrated && posts.length > 0}
+{#if !handover && posts.length > 0}
   <section class="ssr-feed" aria-label={label}>
     {#each posts as post, index (post.id)}
       <SsrPostCard {post} isReply={index > 0} />

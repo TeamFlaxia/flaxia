@@ -209,3 +209,21 @@ test('cutover enables Auth authority in production and keeps local modes explici
     assert.match(pkg.scripts[name], /AUTH_AUTHORITY_MODE=off/, `${name} must stay in legacy mode locally`);
   }
 });
+
+test('Cloudflare Pages serves postbuild static files without hitting the worker', async (t) => {
+  const routesFile = new URL('../.svelte-kit/cloudflare/_routes.json', import.meta.url);
+  let raw: string;
+  try {
+    raw = await readFile(routesFile, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      t.skip('skip: adapter-cloudflare output not built (run npm run build first)');
+      return;
+    }
+    throw error;
+  }
+  const routes = JSON.parse(raw) as { exclude?: string[] };
+  for (const pattern of ['/crowd/*', '/export-popup.html', '/export-popup', '/docs/index.json', '/404.html']) {
+    assert.ok(routes.exclude?.includes(pattern), `_routes.json must exclude ${pattern} from the worker`);
+  }
+});

@@ -55,9 +55,21 @@ function escapeHtml(text: string): string {
 }
 
 // These documents are framed by the arcade page; only same-origin framing is
-// allowed and no other script may run in the ZIP wrapper.
-const ZIP_PLAYER_CSP =
-  "default-src 'none'; frame-src https://sandbox.flaxia.app; style-src 'unsafe-inline'; frame-ancestors 'self'";
+// allowed and no other script may run in the ZIP wrapper. The iframe src comes
+// from SANDBOX_ORIGIN, so frame-src must be derived from it too (local/test
+// deployments use http://localhost:3000).
+function zipPlayerCsp(sandboxOrigin: string): string {
+  let frameSource = 'https://sandbox.flaxia.app';
+  try {
+    const parsed = new URL(sandboxOrigin);
+    // URL.origin normalises the value and strips credentials/path/query, so it
+    // cannot inject extra CSP directives. Non-HTTP schemes are never origins.
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') frameSource = parsed.origin;
+  } catch {
+    // Keep the production default for malformed values.
+  }
+  return `default-src 'none'; frame-src ${frameSource}; style-src 'unsafe-inline'; frame-ancestors 'self'`;
+}
 const SWF_PLAYER_CSP =
   "default-src 'none'; script-src https://unpkg.com; object-src 'self'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'";
 
@@ -87,7 +99,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
       'X-Frame-Options': 'SAMEORIGIN',
-      'Content-Security-Policy': ZIP_PLAYER_CSP,
+      'Content-Security-Policy': zipPlayerCsp(sandboxOrigin),
     },
   });
 }

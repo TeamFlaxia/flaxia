@@ -110,6 +110,41 @@ jobs:
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
 
+  ssr-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: npm run migrate:local
+      # Use the runner's installed Chrome; avoid OS package/browser downloads.
+      - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
+      - name: Verify SSR content survives hydration in a real browser
+        run: |
+          set -o pipefail
+          npm run dev:do &
+          DO_PID=$!
+          npm run dev:multiplayer &
+          MP_PID=$!
+          npm run dev:test &
+          SERVER_PID=$!
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:8788/home > /dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          EXIT_CODE=0
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/flaxia-browser-tools/node_modules/playwright/index.mjs" \
+          CHROMIUM_EXECUTABLE=/usr/bin/google-chrome \
+          FLAXIA_SSR_URL=http://localhost:8788 \
+            npm run test:ssr:browser || EXIT_CODE=$?
+          kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true
+          exit "$EXIT_CODE"
+
   lint:
     runs-on: ubuntu-latest
     steps:

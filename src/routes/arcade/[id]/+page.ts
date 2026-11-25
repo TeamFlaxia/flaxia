@@ -1,17 +1,28 @@
 import { error } from '@sveltejs/kit';
-import { browser } from '$app/env';
-import { loadGames, loadThread } from '../../../lib/ssr-data.ts';
+import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { loadThread, type SsrGame } from '../../../lib/ssr-data.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, params, setHeaders }) => {
-  if (browser) return { game: null, post: null, replies: [] };
-  setHeaders({ 'Cache-Control': 'private, max-age=0, s-maxage=60' });
+  if (import.meta.env.BUILD_TARGET === 'native') return { game: null, post: null, replies: [] };
+  setHeaders({ 'Cache-Control': 'private, no-store' });
   if (!params.id) throw error(404, 'Game not found');
-  const [games, thread] = await Promise.all([loadGames(fetch, 50), loadThread(fetch, params.id)]);
+  // There is no per-game /api/games endpoint. The thread load already returns
+  // the game post with its text and author, so build the small game header
+  // from that instead of fetching 50 games just to find the matching id.
+  const thread = await loadThread(fetch, params.id);
   if (!thread.root) throw error(404, 'Game not found');
+  const root = thread.root;
+  const game: SsrGame | null = {
+    postId: root.id,
+    title: stripPostColors(root.text).slice(0, 100) || `Game by @${root.username}`,
+    username: root.username,
+    thumbnailKey: root.thumbnail_key ?? null,
+    createdAt: root.created_at,
+  };
   return {
-    game: games.find((game) => game.postId === params.id) ?? null,
-    post: thread.root,
+    game,
+    post: root,
     replies: thread.replies,
   };
 };

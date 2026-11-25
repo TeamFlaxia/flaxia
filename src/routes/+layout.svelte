@@ -13,11 +13,18 @@ import { viewToBottomNavId } from '../lib/view-nav.ts';
 // biome-ignore lint/correctness/noUnusedVariables: Svelte snippet used in markup
 let { children } = $props();
 
+// These routes describe their own content in <svelte:head>; the generic tags
+// below must not shadow their per-post/per-user metadata.
+const OWN_META_ROUTES: ReadonlySet<string> = new Set(['/thread/[id]', '/users/[username]', '/arcade', '/arcade/[id]']);
+const SITE_DESCRIPTION = 'The SNS where your posts are playable.';
+const DEFAULT_OG_IMAGE = 'https://flaxia.app/og-default-v2.png';
+
 let localeVersion = $state(0);
 const documentTitle = $derived.by(() => {
   localeVersion;
   return pageTitle(page.url.pathname);
 });
+const hasRouteMeta = $derived(OWN_META_ROUTES.has(page.route?.id ?? ''));
 
 // The drawer is an overlay on <body>; a client-side route change replaces the
 // nav element but leaves the overlay and body scroll lock behind.
@@ -40,6 +47,17 @@ onMount(() => {
 
 <svelte:head>
   <title>{documentTitle}</title>
+  {#if !hasRouteMeta}
+    <meta name="description" content={SITE_DESCRIPTION} />
+    <meta property="og:title" content={documentTitle} />
+    <meta property="og:description" content={SITE_DESCRIPTION} />
+    <meta property="og:url" content={page.url.href} />
+    <meta property="og:image" content={DEFAULT_OG_IMAGE} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={documentTitle} />
+    <meta name="twitter:description" content={SITE_DESCRIPTION} />
+    <meta name="twitter:image" content={DEFAULT_OG_IMAGE} />
+  {/if}
 </svelte:head>
 
 {@render children()}

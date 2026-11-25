@@ -17,6 +17,21 @@ test('SvelteKit CSP is hash-based and covers app.html inline scripts', async () 
   for (const hash of hashes) assert.match(hash, /^'sha256-[A-Za-z0-9+/]+=*'$/);
 });
 
+test('SvelteKit CSP allows Google Fonts and jsDelivr font assets', async () => {
+  const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  const cspStart = config.indexOf('csp: {');
+  assert.ok(cspStart !== -1, 'csp block must exist');
+  // Only inspect the sveltekit({ csp: ... }) section so other policies in the
+  // config cannot accidentally satisfy this check.
+  const csp = config.slice(cspStart, config.indexOf('docsManifestPlugin()', cspStart));
+  const fontSrc = csp.match(/['"]font-src['"]\s*:\s*\[([^\]]*)\]/);
+  assert.ok(fontSrc, "csp.directives must declare 'font-src'");
+  const sources = [...fontSrc[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  for (const source of ['self', 'https://cdn.jsdelivr.net', 'https://fonts.gstatic.com', 'blob:']) {
+    assert.ok(sources.includes(source), `font-src must allow ${source}`);
+  }
+});
+
 test('the static _headers file does not shadow the SvelteKit CSP', async () => {
   const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
   assert.doesNotMatch(

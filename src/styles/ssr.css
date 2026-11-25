@@ -91,71 +91,7 @@
 .ssr-post-body p {
   margin: 0 0 8px 0;
 }
-.post-color--red {
-  color: var(--post-color-red);
-}
-.post-color--orange {
-  color: var(--post-color-orange);
-}
-.post-color--yellow {
-  color: var(--post-color-yellow);
-}
-.post-color--green {
-  color: var(--post-color-green);
-}
-.post-color--blue {
-  color: var(--post-color-blue);
-}
-.post-color--purple {
-  color: var(--post-color-purple);
-}
-.post-color--pink {
-  color: var(--post-color-pink);
-}
-.post-color--gray {
-  color: var(--post-color-gray);
-}
-.post-color--mikan {
-  color: var(--post-color-mikan);
-}
-.post-color--kimwaipu {
-  color: var(--post-color-kimwaipu);
-}
-.post-color--rainbow {
-  color: var(--post-color-purple);
-}
-@supports ((-webkit-background-clip: text) or (background-clip: text)) {
-  .post-color--rainbow {
-    background-image: var(--post-rainbow);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-}
-.post-dinnerborn {
-  display: inline-block;
-  transform: rotate(180deg);
-  transform-origin: center;
-  vertical-align: middle;
-}
-@media (forced-colors: active) {
-  .post-color--red,
-  .post-color--orange,
-  .post-color--yellow,
-  .post-color--green,
-  .post-color--blue,
-  .post-color--purple,
-  .post-color--pink,
-  .post-color--gray,
-  .post-color--mikan,
-  .post-color--kimwaipu,
-  .post-color--rainbow {
-    color: inherit;
-    background-image: none;
-    -webkit-text-fill-color: currentColor;
-  }
-}
+/* Post colours and .post-dinnerborn are global (src/styles/main.css). */
 .ssr-post-body img,
 .ssr-post-body video {
   width: 100%;

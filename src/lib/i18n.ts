@@ -24,8 +24,24 @@ export function setLocaleResolver(resolver: (() => LocaleData | null) | null): v
 
 const STORAGE_KEY = 'flaxia_locale';
 
+/** The SSR hook and the browser must agree on the locale of the first paint. */
+export function localeFromCookie(cookieHeader: string): Locale | null {
+  const stored = cookieHeader.match(new RegExp(`(?:^|;\\s*)${STORAGE_KEY}=([^;]+)`))?.[1];
+  if (!stored) return null;
+  try {
+    const locale = decodeURIComponent(stored.trim());
+    return locale === 'en' || locale === 'ja' ? locale : null;
+  } catch {
+    return null;
+  }
+}
+
 function getInitialLocale(): Locale {
   try {
+    // The cookie is what SSR used; prefer it over localStorage, which can be
+    // stale (e.g. cleared independently) and would flip all text on hydration.
+    const fromCookie = localeFromCookie(document.cookie ?? '');
+    if (fromCookie) return fromCookie;
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) return stored;
     return navigator.language.startsWith('ja') ? 'ja' : 'en';

@@ -107,6 +107,7 @@ export default defineConfig({
           'connect-src': ['self', 'https:', 'wss:', 'blob:', 'data:'],
           'img-src': ['*', 'blob:', 'data:'],
           'style-src': ['self', "'unsafe-inline'", 'https://fonts.googleapis.com', 'blob:'],
+          'font-src': ['self', 'https://cdn.jsdelivr.net', 'https://fonts.gstatic.com', 'blob:'],
           'script-src': [
             'self',
             "'wasm-unsafe-eval'",

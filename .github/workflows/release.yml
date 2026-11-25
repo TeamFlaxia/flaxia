@@ -234,7 +234,7 @@ jobs:
       - run: npm ci
         env:
           HUSKY: 0
-      - run: npm run build
+      - run: npm run build:native
       - run: npx cap add android
       - run: npx cap sync android
         env:

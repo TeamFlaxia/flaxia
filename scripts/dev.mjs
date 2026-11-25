@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { watchWorkerPatch } from './dev-worker-watch.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -276,6 +277,10 @@ async function main() {
   if (hot) {
     console.log('[dev] Watching Vite builds…');
     spawnTracked('npx', ['vite', 'build', '--watch'], { label: 'vite build --watch' });
+    // A watch rebuild overwrites _worker.js with the unpatched adapter template.
+    watchWorkerPatch(join(ROOT, '.svelte-kit/cloudflare/_worker.js'), () =>
+      run('node', ['--experimental-strip-types', 'scripts/postbuild.mjs']),
+    );
   }
 }
 

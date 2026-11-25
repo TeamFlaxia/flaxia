@@ -7,13 +7,18 @@ import type { Post } from '../../shared/types/post.ts';
 type Fetch = typeof fetch;
 
 async function apiJson<T>(path: string, fetchFn: Fetch): Promise<T | null> {
+  let response: Response;
   try {
-    const response = await fetchFn(path);
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
+    response = await fetchFn(path);
+  } catch (error) {
+    throw new Error(`SSR request to ${path} failed`, { cause: error });
   }
+  // A missing post/profile is a legitimate 404; an outage is not. Returning
+  // null for a 5xx would make load() throw a bogus "not found" instead of
+  // reporting a server error, and would let crawlers index a false 404.
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`SSR request to ${path} returned ${response.status}`);
+  return (await response.json()) as T;
 }
 
 export interface SsrFeed {

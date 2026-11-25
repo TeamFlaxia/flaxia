@@ -2,6 +2,7 @@
 // of User-Agent. This is the regression guard for the removed crawler shim.
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
+import { CROWD_NODE_VERSION } from '../shared/crowd-node.ts';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 describe('SvelteKit SSR', () => {
@@ -53,7 +54,11 @@ describe('SvelteKit SSR', () => {
     ).text();
     assert.ok(browser.includes(text));
     assert.ok(bot.includes(text), 'crawler UA must receive the same SSR document');
-    assert.doesNotMatch(browser, /isCrawler/);
+    assert.equal(
+      (browser.match(/<title>/g) ?? []).length,
+      (bot.match(/<title>/g) ?? []).length,
+      'UA must not change the document structure',
+    );
   });
 
   it('returns 404 for unknown threads and profiles', async () => {
@@ -61,5 +66,43 @@ describe('SvelteKit SSR', () => {
     assert.equal(thread.status, 404);
     const profile = await fetch(`${BASE_URL}/users/does-not-exist-${crypto.randomUUID().slice(0, 6)}`);
     assert.equal(profile.status, 404);
+  });
+
+  it('serves postbuild-generated static files as files, not SPA HTML', async () => {
+    const crowd = await fetch(`${BASE_URL}/crowd/v${CROWD_NODE_VERSION}-0/index.js`);
+    assert.equal(crowd.status, 200);
+    assert.match(crowd.headers.get('content-type') ?? '', /javascript/);
+    assert.match(await crowd.text(), /export|import/i, 'Crowd node entry must be a JS module');
+
+    const docs = await fetch(`${BASE_URL}/docs/index.json`);
+    assert.equal(docs.status, 200);
+    assert.match(docs.headers.get('content-type') ?? '', /json/);
+    assert.ok(Array.isArray(((await docs.json()) as { docs?: unknown[] }).docs));
+
+    const popup = await fetch(`${BASE_URL}/export-popup.html`);
+    assert.equal(popup.status, 200);
+    assert.match(await popup.text(), /Flaxia — Export/, 'the export popup must not be the SPA shell');
+  });
+
+  it('emits a CSP that allows the webfont hosts', async () => {
+    const response = await fetch(`${BASE_URL}/home`);
+    const csp = response.headers.get('content-security-policy') ?? '';
+    const fontSrc = /font-src ([^;]+)/.exec(csp)?.[1] ?? '';
+    assert.match(fontSrc, /'self'/, 'font-src must be declared explicitly');
+    assert.match(fontSrc, /https:\/\/fonts\.gstatic\.com/, 'Noto Sans woff2 files must load');
+    assert.match(fontSrc, /https:\/\/cdn\.jsdelivr\.net/);
+  });
+
+  it('emits exactly one title per document', async () => {
+    for (const path of ['/home', '/thread/x']) {
+      const html = await (await fetch(`${BASE_URL}${path}`)).text();
+      assert.equal((html.match(/<title>/g) ?? []).length, 1, `${path} must not duplicate <title>`);
+    }
+  });
+
+  it('does not 500 on a malformed locale cookie', async () => {
+    const response = await fetch(`${BASE_URL}/home`, { headers: { Cookie: 'flaxia_locale=%' } });
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /<html lang="/);
   });
 });

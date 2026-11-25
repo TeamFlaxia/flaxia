@@ -16,3 +16,6 @@ const handle: RequestHandler = ({ request, platform, params }) =>
 
 export const GET = handle;
 export const POST = handle;
+// Cross-origin Crowd nodes send a custom `Range` header, so preflight must be
+// answered by the legacy handler's 204 CORS branch.
+export const OPTIONS = handle;

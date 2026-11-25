@@ -35,7 +35,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - run: npm ci --ignore-scripts
-      - run: npm run build
+      - run: npm run build:native
       - name: Add test-only game fixture to the debug APK
         run: node scripts/build-native-game-harness.mjs
       - run: npx cap add android
