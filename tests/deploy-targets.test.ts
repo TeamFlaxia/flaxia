@@ -25,6 +25,15 @@ function jobSection(source: string, job: string): string {
   return lines.slice(start, end).join('\n');
 }
 
+test('standalone game-loader builds generate $app/tsconfig first', async () => {
+  const scripts = await readScripts();
+  const command = scripts['build:game-loader'];
+  const sync = command.indexOf('svelte-kit sync');
+  const loader = command.indexOf('scripts/build-game-loader.mjs');
+  assert.ok(sync >= 0, 'build:game-loader must generate $app/tsconfig for its Vite build');
+  assert.ok(loader >= 0 && sync < loader, 'svelte-kit sync must run before the Vite build');
+});
+
 test('Pages deploy and dev scripts serve the adapter-cloudflare output', async () => {
   const scripts = await readScripts();
   for (const name of ['deploy', 'dev:api', 'dev:test', 'dev:all']) {
