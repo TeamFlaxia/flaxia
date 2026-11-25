@@ -51,7 +51,9 @@ function getInitialLocale(): Locale {
 }
 
 async function loadLocaleFile(locale: Locale): Promise<Strings> {
-  const response = await fetch(`/locales/${locale}.json`);
+  // Locale files are boot work, not click work: bound them so a slow asset
+  // cannot delay the interactive app. Callers already fall back to `{}`.
+  const response = await fetch(`/locales/${locale}.json`, { signal: AbortSignal.timeout(6000) });
   if (!response.ok) throw new Error(`Failed to load locale: ${locale}`);
   return response.json();
 }

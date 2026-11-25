@@ -17,6 +17,11 @@ interface ServiceAccount {
 
 let cachedToken: { accessToken: string; expiresAt: number } | null = null;
 
+/** A timed-out request is transient — the device token must be kept for retries. */
+export function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError';
+}
+
 function base64Url(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let str = '';
@@ -72,6 +77,7 @@ async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
       grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
       assertion: jwt,
     }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   if (!res.ok) {
@@ -134,6 +140,7 @@ export async function sendPushToDevice(
           },
         },
       }),
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
@@ -145,7 +152,11 @@ export async function sendPushToDevice(
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      console.error('[fcm] send timed out');
+      return true; // transient: keep the token for a later retry
+    }
     console.error('[fcm] send error');
     return false;
   }

@@ -296,7 +296,7 @@ onDestroy(() => {
       {#if suggestionsOpen}
         <div class="tag-suggest-dropdown" style="display:block;position:absolute;top:100%;left:0;right:0;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);z-index:100;max-height:300px;overflow-y:auto;margin-top:4px;">
           {#each suggestions as s (s.type + s.label)}
-            <div class="suggest-item" style="padding:0.6rem 0.75rem;cursor:pointer;display:flex;align-items:center;gap:0.5rem;" onclick={() => pick(s)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') pick(s); }}>
+            <div class="suggest-item" style="padding:0.6rem 0.75rem;cursor:pointer;display:flex;align-items:center;gap:0.5rem;" onmousedown={(e) => e.preventDefault()} onclick={() => pick(s)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === 'Enter') pick(s); }}>
               <span>{s.type === 'tag' ? '#' : '@'} {s.label}</span>
               {#if s.count !== undefined}<span style="margin-left:auto;color:var(--text-muted);font-size:0.75rem;">{formatCount(s.count)}</span>{/if}
             </div>

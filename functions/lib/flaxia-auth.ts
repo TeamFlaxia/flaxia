@@ -1,3 +1,12 @@
+import {
+  type AuthIdentity,
+  forgetAllIntrospection,
+  forgetIntrospection,
+  introspectionKey,
+  readIntrospection,
+  writeIntrospection,
+} from './auth-introspection-cache.ts';
+
 const AUTH_ORIGIN = 'https://auth.flaxia.app';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -192,6 +201,8 @@ export async function provisionAuthAccount(
 
 export async function revokeAuthGrant(env: AuthEnv, grant: string): Promise<boolean> {
   if (!TOKEN.test(grant)) return false;
+  // A revoked grant must not stay usable from this isolate's introspection cache.
+  await forgetIntrospection(env, grant);
   try {
     const response = await postAuth(env, '/api/flaxia/revoke', { grant });
     return response.ok;
@@ -201,6 +212,7 @@ export async function revokeAuthGrant(env: AuthEnv, grant: string): Promise<bool
 }
 
 export async function revokeAuthUserGrants(env: AuthEnv, userId: string): Promise<boolean> {
+  forgetAllIntrospection(env);
   try {
     const response = await postAuth(env, '/api/flaxia/revoke-user', { user_id: userId });
     return response.ok;
@@ -252,14 +264,17 @@ export async function completeAuthLink(
   }
 }
 
+// Introspection cache lives in auth-introspection-cache.ts (imported above).
+
 // Resolve an application grant against Auth directly. The grant is an opaque
 // bearer capability held in the browser cookie; it is never looked up in the
 // Flaxia database. An unavailable or malformed Auth response fails closed.
-export async function introspectAuthGrant(
-  env: AuthEnv,
-  grant: string,
-): Promise<{ user_id: string; expires_at: string } | null> {
+export async function introspectAuthGrant(env: AuthEnv, grant: string): Promise<AuthIdentity | null> {
   if (!TOKEN.test(grant)) return null;
+  const now = Date.now();
+  const key = await introspectionKey(grant);
+  const cached = readIntrospection(env, key, now);
+  if (cached) return cached;
   try {
     const response = await postAuth(env, '/api/flaxia/introspect', { grant });
     if (!response.ok) return null;
@@ -273,7 +288,9 @@ export async function introspectAuthGrant(
       Date.parse(body.expires_at) <= Date.now()
     )
       return null;
-    return { user_id: body.user_id, expires_at: body.expires_at };
+    const identity: AuthIdentity = { user_id: body.user_id, expires_at: body.expires_at };
+    await writeIntrospection(env, key, identity);
+    return identity;
   } catch {
     return null;
   }
@@ -287,6 +304,7 @@ export async function deleteAuthAccount(
   proof: { challenge_id: string; A: string; M1: string },
 ): Promise<'ok' | 'denied' | 'unavailable'> {
   if (!TOKEN.test(operation) || !TOKEN.test(grant)) return 'denied';
+  forgetAllIntrospection(env);
   try {
     const response = await postAuth(env, '/api/flaxia/delete', {
       operation,

@@ -90,6 +90,8 @@ onMount(() => {
   <ThreadPage
     postId={page.params.id ?? ''}
     sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}
+    initialRoot={data.root}
+    initialReplies={data.replies}
     currentUser={currentUser as never}
     onBack={() => void navigate('/home')}
   />

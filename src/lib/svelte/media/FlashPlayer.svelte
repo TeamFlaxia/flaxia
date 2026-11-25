@@ -142,7 +142,7 @@ function toggleFullscreen(event: MouseEvent): void {
     {#if loadingVisible}
       <div
         class="flash-loading"
-        style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--bg-primary, #ffffff); z-index: 10; transition: opacity 0.3s ease; border-radius: 8px; opacity: {iframeVisible ? 0 : 1};"
+        style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--bg-primary, #ffffff); z-index: 10; pointer-events: {iframeVisible ? 'none' : 'auto'}; transition: opacity 0.3s ease; border-radius: 8px; opacity: {iframeVisible ? 0 : 1};"
       >
         <div
           style="width: 32px; height: 32px; border: 3px solid var(--border, #e2e8f0); border-top-color: var(--accent, #22c55e); border-radius: 50%; animation: wvfs-spin 0.8s linear infinite; margin-bottom: 12px;"

@@ -22,8 +22,11 @@ interface Props {
   sandboxOrigin: string;
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
   onBack?: () => void;
+  /** Root + replies already loaded by the route's universal load. */
+  initialRoot?: Post | null;
+  initialReplies?: Post[];
 }
-let { postId, sandboxOrigin, currentUser = null, onBack }: Props = $props();
+let { postId, sandboxOrigin, currentUser = null, onBack, initialRoot = null, initialReplies = [] }: Props = $props();
 
 type Entry = { key: string; kind: 'tree'; node: PostNode } | { key: string; kind: 'flat'; post: Post; index?: number };
 
@@ -117,15 +120,21 @@ async function loadThread(): Promise<void> {
   loading = true;
   errorMessage = '';
   try {
-    const response = await fetch(`/api/posts/${postId}/thread`);
-    if (!response.ok) throw new Error('Failed to load thread');
-    const data = (await response.json()) as { root?: Post; replies?: Post[] };
-    const root = data.root;
+    // Reuse the data the route load already fetched. A second identical
+    // request before first paint made every thread click wait two round trips.
+    let root = initialRoot;
+    let threadReplies: Post[] = initialReplies;
+    if (!root) {
+      const response = await fetch(`/api/posts/${postId}/thread`);
+      if (!response.ok) throw new Error('Failed to load thread');
+      const data = (await response.json()) as { root?: Post; replies?: Post[] };
+      root = data.root ?? null;
+      threadReplies = Array.isArray(data.replies) ? data.replies : [];
+    }
     if (!root) {
       errorMessage = t('thread.load_failed');
       return;
     }
-    const threadReplies = Array.isArray(data.replies) ? data.replies : [];
     indexMap = new Map(threadReplies.map((p, i) => [p.id, i + 1]));
 
     if (rootHost) {

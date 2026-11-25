@@ -133,26 +133,17 @@ $effect(() => {
 });
 
 onMount(() => {
-  const blockOutside = (event: Event) => {
-    if (overlayEl?.contains(event.target as Node)) return;
-    const consent = document.getElementById('flaxia-consent-container');
-    if (consent && event.composedPath().includes(consent)) return;
-    event.stopPropagation();
-    event.preventDefault();
-  };
   const onResize = () => {
     targetRect = null;
     void tick().then(measure);
   };
 
-  document.addEventListener('click', blockOutside, true);
-  document.addEventListener('touchstart', blockOutside, true);
+  // The overlay/card/tooltip use pointer-events to handle their own taps;
+  // blocking every document-level click would make the whole page inert.
   window.addEventListener('resize', onResize);
   void tick().then(measure);
 
   return () => {
-    document.removeEventListener('click', blockOutside, true);
-    document.removeEventListener('touchstart', blockOutside, true);
     window.removeEventListener('resize', onResize);
   };
 });

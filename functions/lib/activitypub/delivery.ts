@@ -53,8 +53,6 @@ export async function deliverDirect(
   const body = JSON.stringify(options.activity);
   const headers = await signRequest(options.inboxUrl, body, key.private_key_pem, keyId);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const response = await fetch(options.inboxUrl, {
       method: 'POST',
@@ -63,7 +61,7 @@ export async function deliverDirect(
       // A redirect is not followed: the signature is bound to the inbox it
       // was made for.
       redirect: 'manual',
-      signal: controller.signal,
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) {
       console.error('Direct ActivityPub delivery failed:', {
@@ -81,8 +79,6 @@ export async function deliverDirect(
       activityType: options.activity.type,
     });
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -116,12 +112,19 @@ export async function deliverToFollowers(
   options: { userId: string; username: string; activity: DeliveryActivity },
 ): Promise<number> {
   const inboxes = await collectFollowerInboxes(env, options.userId);
-  for (const inboxUrl of inboxes) {
-    await deliverToInbox(env, {
-      inboxUrl,
-      username: options.username,
-      activity: options.activity,
-    });
+  // Fan out concurrently: one slow instance must not delay the others (or the
+  // background task's completion) while delivery runs after the response.
+  const results = await Promise.allSettled(
+    inboxes.map((inboxUrl) =>
+      deliverToInbox(env, {
+        inboxUrl,
+        username: options.username,
+        activity: options.activity,
+      }),
+    ),
+  );
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('ActivityPub delivery failed:', result.reason);
   }
   return inboxes.length;
 }

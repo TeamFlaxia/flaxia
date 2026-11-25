@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import { stripPostColors } from '../../shared/post-colors.ts';
-import { sendPushToDevice } from './fcm';
+import { isTimeoutError, sendPushToDevice } from './fcm';
 
 export type PushSubscription = {
   endpoint: string;
@@ -60,6 +60,7 @@ export async function sendPushToSubscription(
       method: details.method as 'POST',
       headers: details.headers as Record<string, string>,
       body: details.body as ReadableStream | string | undefined,
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (!res.ok) {
@@ -72,7 +73,11 @@ export async function sendPushToSubscription(
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      console.error('Web Push send timed out');
+      return true; // transient: keep the subscription for a later retry
+    }
     console.error('Web Push send error');
     return false;
   }

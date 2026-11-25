@@ -5,13 +5,13 @@ import {
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../shared/recommendation/vector-codec.ts';
-import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
 import {
   ARCADE_EVENT_TYPES,
   batchGetFreshAndBookmarkStatus,
   MAX_ARCADE_EVENTS_PER_REQUEST,
+  resolveRequestUser,
   runBatched,
 } from '../helpers';
 import type { Bindings, Variables } from '../types';
@@ -65,9 +65,8 @@ games.get('/games', async (c) => {
       if (cachedData) {
         const parsed = JSON.parse(cachedData);
 
-        const token = getSessionToken(c.req.raw);
-        const sessionData = token ? await getMeWithSession(c.env, token) : null;
-        const currentUserId = sessionData?.user?.id;
+        const user = await resolveRequestUser(c, c.get('user'));
+        const currentUserId = user?.id;
 
         if (currentUserId && parsed.games.length > 0) {
           const gameIds = parsed.games.map((g: Record<string, unknown>) => g.id as string);
@@ -83,9 +82,10 @@ games.get('/games', async (c) => {
       }
     }
 
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    const currentUserId = sessionData?.user?.id;
+    // Reuse the user authMiddleware already resolved (null for requests with
+    // no session cookie, where it skips the session lookup).
+    const user = await resolveRequestUser(c, c.get('user'));
+    const currentUserId = user?.id;
 
     if (shuffle) {
       const shuffleToken = c.req.query('token');

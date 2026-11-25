@@ -76,6 +76,10 @@ export async function executeZip(
     } else {
       if (loadingEl.parentNode) {
         loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">${t('zip.loading_slow')}</div>`;
+        loadingEl.style.opacity = '0';
+        setTimeout(() => {
+          if (loadingEl.parentNode) loadingEl.remove();
+        }, 300);
       }
       iframe.style.opacity = '1';
     }
@@ -123,6 +127,7 @@ function createZipLoadingIndicator(): HTMLElement {
     justify-content: center;
     background: var(--bg-primary, #ffffff);
     z-index: 10;
+    pointer-events: none;
     transition: opacity 0.3s ease;
     border-radius: 8px;
   `;

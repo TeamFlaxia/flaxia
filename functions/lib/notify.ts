@@ -1,5 +1,7 @@
 import { getPushPayload, type PushPayload, sendPushToUser } from './push';
 
+export { waitUntil } from './background-task.ts';
+
 interface NotificationWSMessage {
   type: 'notification';
   unread_count: number;

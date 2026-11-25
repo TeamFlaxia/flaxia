@@ -1,5 +1,6 @@
-// SSR fallback markup must stay visible until the interactive view says it is
-// ready, otherwise hydration briefly shows an empty feed (content flash / CLS).
+// SSR fallback markup stays visible until the interactive view has data (no
+// blank-feed flash), but it must remain clickable during that window: the
+// static cards have no JS handlers of their own.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -30,13 +31,20 @@ test('SSR-only components wait for the handover signal', async () => {
     assert.match(source, /SSR_HANDOVER_EVENT/, `${file} must listen for handover`);
     assert.doesNotMatch(
       source,
-      /onMount\(\(\)\s*=>\s*\{\s*hydrated\s*=\s*true;?\s*\}\)/,
-      `${file} must not remove SSR markup unconditionally on mount`,
+      /onMount\(\(\)\s*=>\s*\{\s*handover\s*=\s*true;?\s*\}\)/,
+      `${file} must not drop SSR markup unconditionally on mount`,
     );
   }
 });
 
-test('interactive views signal when their initial data is rendered', async () => {
+test('the SSR feed delegates post clicks to the thread route', async () => {
+  const source = await read('src/lib/svelte/SsrPostList.svelte');
+  assert.match(source, /onFeedClick/, 'must install a delegated click handler');
+  assert.match(source, /data-ssr-post-id/, 'must identify the clicked post');
+  assert.match(source, /navigate\(`\/thread\//, 'must navigate to the thread');
+});
+
+test('interactive views still signal a data-ready handover', async () => {
   for (const file of [
     'src/lib/svelte/Timeline.svelte',
     'src/lib/svelte/ThreadPage.svelte',
@@ -46,4 +54,10 @@ test('interactive views signal when their initial data is rendered', async () =>
     const source = await read(file);
     assert.match(source, /signalSsrHandover\(\)/, `${file} must hand over from the SSR fallback`);
   }
+});
+
+test('post text links do not also trigger card navigation', async () => {
+  const source = await read('src/lib/svelte/PostCard.svelte');
+  assert.match(source, /\.hashtag-link/, 'card click guard must exclude hashtags');
+  assert.match(source, /\.mention-link/, 'card click guard must exclude mentions');
 });

@@ -10,6 +10,7 @@ import { closeLeftNav } from '../lib/left-nav-drawer.ts';
 import { pageTitle } from '../lib/page-title.ts';
 import { parseCurrentRoute } from '../lib/router.ts';
 import { renderWebSiteJsonLd, SEO_ORIGIN } from '../lib/seo-jsonld.ts';
+import { bootShell } from '../lib/svelte/shell-boot.ts';
 import { viewToBottomNavId } from '../lib/view-nav.ts';
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte snippet used in markup
@@ -107,6 +108,16 @@ onMount(() => {
   const onLocale = () => (localeVersion += 1);
   window.addEventListener('localechange', onLocale);
   sync();
+  // Boot work (locale files + session) runs in parallel with mount. Once it
+  // settles, re-render head metadata and re-sync the nav with the real user.
+  void bootShell()
+    .then(() => {
+      localeVersion += 1;
+      sync();
+    })
+    .catch(() => {
+      // Already handled by the fire-and-forget starter in +layout.ts.
+    });
   return () => {
     window.removeEventListener('popstate', sync);
     window.removeEventListener('localechange', onLocale);

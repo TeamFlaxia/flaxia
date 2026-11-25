@@ -1,9 +1,8 @@
 import { Hono } from 'hono';
 import { enrichPostsWithAttachments } from '../../../lib/attachments';
-import { getMeWithSession, getSessionToken } from '../../../lib/auth';
 import { clampLimit } from '../../../lib/pagination';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
-import { batchGetFreshAndBookmarkStatus, requireAuth } from '../../helpers';
+import { batchGetFreshAndBookmarkStatus, requireAuth, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
 import { enrichPostsWithReactions, RECOMMENDED_SELECT } from './helpers.ts';
 
@@ -65,15 +64,15 @@ profiles.get('/users/:username', async (c) => {
 
     let is_following = false;
     let is_blocked = false;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    if (sessionData && sessionData.user.id !== user.id) {
+    // Reuse the user authMiddleware already resolved.
+    const viewer = await resolveRequestUser(c, c.get('user'));
+    if (viewer && viewer.id !== user.id) {
       const followResult = await c.env.DB.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?')
-        .bind(sessionData.user.id, user.id)
+        .bind(viewer.id, user.id)
         .first();
       is_following = followResult !== null;
       const blockResult = await c.env.DB.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?')
-        .bind(sessionData.user.id, user.id)
+        .bind(viewer.id, user.id)
         .first();
       is_blocked = blockResult !== null;
     }
@@ -120,9 +119,8 @@ profiles.get('/users/:username/pinned', async (c) => {
       return c.json({ post: null });
     }
 
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    const currentUserId = sessionData?.user.id ?? null;
+    const viewer = await resolveRequestUser(c, c.get('user'));
+    const currentUserId = viewer?.id ?? null;
 
     const row = await c.env.DB.prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
@@ -238,12 +236,8 @@ profiles.get('/users/:username/followers', async (c) => {
     }
     if (user.frozen_at) return c.json({ error: 'User not found' }, 404);
 
-    let currentUserId: string | null = null;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    if (sessionData) {
-      currentUserId = sessionData.user.id;
-    }
+    const viewer = await resolveRequestUser(c, c.get('user'));
+    const currentUserId: string | null = viewer?.id ?? null;
 
     let query = `
       SELECT 
@@ -353,12 +347,8 @@ profiles.get('/users/:username/following', async (c) => {
     }
     if (user.frozen_at) return c.json({ error: 'User not found' }, 404);
 
-    let currentUserId: string | null = null;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
-    if (sessionData) {
-      currentUserId = sessionData.user.id;
-    }
+    const viewer = await resolveRequestUser(c, c.get('user'));
+    const currentUserId: string | null = viewer?.id ?? null;
 
     let query = `
       SELECT 
