@@ -15,9 +15,11 @@ test('root layout load does not await locale network work', async () => {
   assert.match(layout, /bootShell\(/);
 });
 
-test('root layout still awaits the session snapshot before routes mount', async () => {
+test('root layout awaits boot before routes mount', async () => {
   const layout = await read('src/routes/+layout.ts');
-  assert.match(layout, /await loadSessionUser\(\)/);
+  // Deferring locale/session made SSR text turn into translation keys and made
+  // auth guards treat signed-in users as guests.
+  assert.match(layout, /await bootShell\(\)/);
   const shell = await read('src/routes/+layout.svelte');
   // Remounting children on session arrival duplicates global nav elements.
   assert.doesNotMatch(shell, /\{#key sessionVersion\}/);
