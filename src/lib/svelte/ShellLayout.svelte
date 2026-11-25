@@ -1,9 +1,10 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { page } from '$app/state';
 import { ensureBottomNav, getBottomNav } from '../../lib/bottom-nav-setup.ts';
 import { leftNavCallbacks } from '../../lib/left-nav-handlers.ts';
 import { navigate } from '../../lib/navigation.ts';
-import { parseCurrentRoute } from '../../lib/router.ts';
+import { parseCurrentRoute, parseRoute } from '../../lib/router.ts';
 import { viewToBottomNavId, viewToPath } from '../../lib/view-nav.ts';
 import LeftNav from './LeftNav.svelte';
 import RightPanel from './RightPanel.svelte';
@@ -30,7 +31,9 @@ let {
 // the SSR HTML and the first client render agree (the session is client-only).
 let mounted = $state(false);
 const fallbackNavProps = () => ({
-  activeItem: parseCurrentRoute()?.view ?? 'home',
+  // The window.location-based helper is undefined during SSR; the pure parser
+  // with the request URL highlights the same item before and after hydration.
+  activeItem: parseRoute(page.url.pathname, page.url.search)?.view ?? 'home',
   currentUser: mounted ? (getSessionUser() ?? undefined) : undefined,
   ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {

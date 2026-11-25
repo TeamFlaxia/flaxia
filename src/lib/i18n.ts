@@ -67,6 +67,7 @@ export async function setLocale(locale: Locale): Promise<void> {
   try {
     localStorage.setItem(STORAGE_KEY, locale);
     // Mirror the choice to a cookie so SSR can render the same locale.
+    // biome-ignore lint/suspicious/noDocumentCookie: intentionally mirroring the locale for SSR
     document.cookie = `${STORAGE_KEY}=${encodeURIComponent(locale)}; Path=/; Max-Age=31536000; SameSite=Lax`;
   } catch {
     /* ignore */
@@ -89,7 +90,12 @@ export function t(key: string, params?: Record<string, string | number>): string
 }
 
 export function getLocale(): Locale {
-  return currentLocale;
+  // On SSR the request-scoped resolver from hooks.server.ts is the source of
+  // truth (it already drives t()); consult it first so locale-dependent markup
+  // agrees with the translated strings. The browser never installs a resolver,
+  // so it keeps using currentLocale.
+  const scoped = localeResolver?.() ?? null;
+  return scoped ? scoped.locale : currentLocale;
 }
 
 export async function initI18n(): Promise<void> {

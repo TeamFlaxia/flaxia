@@ -1,4 +1,6 @@
 <script lang="ts">
+import { page } from '$app/state';
+import { renderBreadcrumbJsonLd, renderCollectionPageJsonLd } from '../../lib/seo-jsonld.ts';
 // biome-ignore lint/correctness/noUnusedImports: Svelte prop used in markup
 import ArcadeView from '../../lib/svelte/ArcadeView.svelte';
 import SsrOnly from '../../lib/svelte/SsrOnly.svelte';
@@ -11,9 +13,33 @@ const CANONICAL_URL = `${SITE_ORIGIN}/arcade`;
 const OG_IMAGE = `${SITE_ORIGIN}/og-default-v2.png`;
 
 let { data }: PageProps = $props();
+
+const jsonLd = $derived.by(() => {
+  const baseUrl = page.url.origin;
+  const url = `${baseUrl}/arcade`;
+  return [
+    renderCollectionPageJsonLd({
+      name: 'Flaxia Arcade',
+      description: DESCRIPTION,
+      url,
+      items: data.games.map((game) => ({
+        name: game.title,
+        url: `${baseUrl}/arcade/${encodeURIComponent(game.postId)}`,
+      })),
+    }),
+    renderBreadcrumbJsonLd(
+      [
+        { label: 'Home', url: `${baseUrl}/home` },
+        { label: 'Arcade', url },
+      ],
+      baseUrl,
+    ),
+  ].join('\n');
+});
 </script>
 
 <svelte:head>
+  {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={DESCRIPTION} />
   <meta property="og:title" content={META_TITLE} />
   <meta property="og:description" content={DESCRIPTION} />

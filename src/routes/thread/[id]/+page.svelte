@@ -3,6 +3,7 @@ import { onMount } from 'svelte';
 import { page } from '$app/state';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
 import { navigate } from '../../../lib/navigation.ts';
+import { asSeoPostRow, renderBlogPostingJsonLd, renderBreadcrumbJsonLd } from '../../../lib/seo-jsonld.ts';
 import SsrPostList from '../../../lib/svelte/SsrPostList.svelte';
 import { getSessionUser } from '../../../lib/svelte/session.ts';
 import ThreadPage from '../../../lib/svelte/ThreadPage.svelte';
@@ -28,6 +29,28 @@ const ogImage = $derived.by(() => {
   const imageKey = post.gif_key && !/^(audio|video)\//.test(post.gif_key) ? post.gif_key : post.avatar_key;
   return imageKey ? `${SITE_ORIGIN}/api/images/${encodeURIComponent(imageKey)}` : DEFAULT_OG_IMAGE;
 });
+const jsonLd = $derived.by(() => {
+  const root = data.root;
+  if (!root) return '';
+  const postUrl = `${page.url.origin}${page.url.pathname}`;
+  return [
+    renderBlogPostingJsonLd(
+      asSeoPostRow(root),
+      root.display_name || root.username,
+      `${page.url.origin}/users/${encodeURIComponent(root.username)}`,
+      postUrl,
+      description,
+      root.thumbnail_key ? ogImage : undefined,
+    ),
+    renderBreadcrumbJsonLd(
+      [
+        { label: 'Home', url: `${page.url.origin}/home` },
+        { label: 'Thread', url: postUrl },
+      ],
+      page.url.origin,
+    ),
+  ].join('\n');
+});
 let currentUser = $state<unknown>(null);
 onMount(() => {
   currentUser = getSessionUser() ?? null;
@@ -35,6 +58,7 @@ onMount(() => {
 </script>
 
 <svelte:head>
+  {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={description} />
   <meta property="og:title" content={metaTitle} />
   <meta property="og:description" content={description} />

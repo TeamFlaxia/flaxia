@@ -1,6 +1,12 @@
 <script lang="ts">
 import { page } from '$app/state';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
+import {
+  asSeoPostRow,
+  renderBlogPostingJsonLd,
+  renderBreadcrumbJsonLd,
+  renderCollectionPageJsonLd,
+} from '../../../lib/seo-jsonld.ts';
 // biome-ignore lint/correctness/noUnusedImports: Svelte prop used in markup
 import ArcadeView from '../../../lib/svelte/ArcadeView.svelte';
 import SsrOnly from '../../../lib/svelte/SsrOnly.svelte';
@@ -32,9 +38,35 @@ const ogImage = $derived.by(() => {
   }
   return DEFAULT_OG_IMAGE;
 });
+
+const jsonLd = $derived.by(() => {
+  const baseUrl = page.url.origin;
+  const url = `${baseUrl}${page.url.pathname}`;
+  const authorName = data.game?.username || data.post?.username || '';
+  const breadcrumb = renderBreadcrumbJsonLd(
+    [
+      { label: 'Home', url: `${baseUrl}/home` },
+      { label: 'Arcade', url: `${baseUrl}/arcade` },
+      { label: gameTitle, url },
+    ],
+    baseUrl,
+  );
+  const content = data.post
+    ? renderBlogPostingJsonLd(
+        asSeoPostRow(data.post),
+        authorName,
+        authorName ? `${baseUrl}/users/${encodeURIComponent(authorName)}` : url,
+        url,
+        description,
+        data.game?.thumbnailKey || data.post.thumbnail_key ? ogImage : undefined,
+      )
+    : renderCollectionPageJsonLd({ name: gameTitle, description, url });
+  return [content, breadcrumb].join('\n');
+});
 </script>
 
 <svelte:head>
+  {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={description} />
   <meta property="og:title" content={metaTitle} />
   <meta property="og:description" content={description} />

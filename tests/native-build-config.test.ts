@@ -54,3 +54,22 @@ test('build:native emits the static native Vite build for webDir dist/', async (
   const capacitor = await readFile(new URL('../capacitor.config.ts', import.meta.url), 'utf8');
   assert.match(capacitor, /webDir:\s*'dist'/);
 });
+
+test('cap:build:android:release builds static dist/ web assets before cap sync', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  const script = pkg.scripts['cap:build:android:release'] ?? '';
+  assert.ok(script, 'missing cap:build:android:release script');
+
+  assert.doesNotMatch(
+    script,
+    /npm run build\s*&&/,
+    'cap:build:android:release must not run plain npm run build before cap sync; that emits SSR output into .svelte-kit/cloudflare, not dist/',
+  );
+  assert.match(
+    script,
+    /npm run (?:build:native|build:desktop)\s*&&/,
+    'cap:build:android:release must build the static SPA into dist/ before cap sync',
+  );
+});

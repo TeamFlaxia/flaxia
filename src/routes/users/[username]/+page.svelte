@@ -2,6 +2,7 @@
 import { onMount } from 'svelte';
 import { page } from '$app/state';
 import { navigate } from '../../../lib/navigation.ts';
+import { renderBreadcrumbJsonLd, renderPersonJsonLd, type UserRow } from '../../../lib/seo-jsonld.ts';
 import AvatarBadge from '../../../lib/svelte/AvatarBadge.svelte';
 import ProfilePage from '../../../lib/svelte/ProfilePage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
@@ -27,6 +28,26 @@ const ogImage = $derived(
     ? `${SITE_ORIGIN}/api/images/${encodeURIComponent(String(ssrUser.avatar_key))}`
     : DEFAULT_OG_IMAGE,
 );
+const jsonLd = $derived.by(() => {
+  const user = data.user;
+  if (!user || !username) return '';
+  const profileUrl = `${page.url.origin}/users/${encodeURIComponent(username)}`;
+  const seoUser = {
+    ...user,
+    display_name: String(user.display_name || username),
+    bio: String(user.bio ?? ''),
+  } as unknown as UserRow;
+  return [
+    renderPersonJsonLd(seoUser, profileUrl),
+    renderBreadcrumbJsonLd(
+      [
+        { label: 'Home', url: `${page.url.origin}/home` },
+        { label: seoUser.display_name, url: profileUrl },
+      ],
+      page.url.origin,
+    ),
+  ].join('\n');
+});
 let currentUser = $state<unknown>(null);
 onMount(() => {
   currentUser = getSessionUser() ?? null;
@@ -34,6 +55,7 @@ onMount(() => {
 </script>
 
 <svelte:head>
+  {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={description} />
   <meta property="og:title" content={metaTitle} />
   <meta property="og:description" content={description} />
