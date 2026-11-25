@@ -97,10 +97,12 @@ test('docs and legal components never fetch content in an effect', async () => {
     assert.doesNotMatch(source, /\$effect\s*\(/, `${file} must not fetch in an effect`);
     assert.doesNotMatch(source, /\bfetch\s*\(/, `${file} must render loaded data instead of fetching`);
     assert.doesNotMatch(source, /<title\b/i, `${file} must not add a second <title>`);
-    assert.doesNotMatch(
+    // The layout suppresses generic OG tags on these owned-meta routes, so the
+    // component is the single place that may emit them.
+    assert.match(
       source,
       /og:title|og:description|twitter:title|twitter:description/i,
-      `${file} must not duplicate layout OG tags`,
+      `${file} must emit its own share tags`,
     );
     assert.match(source, /<link rel="canonical"/, `${file} must emit its canonical URL`);
     assert.match(source, /<meta name="description"/, `${file} must emit its description`);

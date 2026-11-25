@@ -44,6 +44,11 @@ Client (browser / crawler / no-JS)
   iframes are allowlisted by hash as well.
 - **Data saver stays client-side for media** (`src/lib/settings.ts`), while SSR
   guarantees the initial document already contains readable content.
+- **One origin.** `SEO_ORIGIN` in `src/lib/seo-jsonld.ts` is the single production
+  origin for canonical links, `og:url` and every JSON-LD URL. Head metadata must
+  import it rather than repeating `https://flaxia.app`; canonicals stay path-only
+  (origin + `page.url.pathname`) so query strings and the local dev host never
+  leak into crawler metadata.
 
 ## Routes with SSR data
 
@@ -82,3 +87,15 @@ adapter-cloudflare cannot express `:param` rules in `_routes.json`.
   hydration without mismatch warnings or page errors.
 - Disable JavaScript in the browser and reload: the feed, thread and profile are
   readable, and the "Loading Flaxia…" spinner no longer exists.
+
+The browser suite reads the built app: `npm run test:ssr:browser` does not build,
+so run `npm run build` first. CI's `ssr-browser` job builds once explicitly and
+then invokes the script; the script must not rebuild it a second time.
+
+## Known caveats
+
+- `/legal` is a static 308 to `/privacy` in `_redirects`, so it works on
+  Cloudflare Pages but 404s under plain `vite dev` (which does not apply Pages
+  redirects and has no SvelteKit route for `/legal`). Use `npm run dev` /
+  `npm run dev:test` (Pages dev against the built output) when exercising it;
+  no catch-all route is added for this legacy alias.

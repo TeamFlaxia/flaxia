@@ -71,6 +71,13 @@ function renderTimeCalls(source: string): string[] {
   return offenders;
 }
 
+test('mail children initialise after the session prop arrives, not in onMount', async () => {
+  for (const file of ['src/lib/svelte/MailPage.svelte', 'src/lib/svelte/MailSettingsPage.svelte']) {
+    const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+    assert.match(source, /\$effect\(\(\)\s*=>\s*\{[\s\S]{0,120}currentUser/, `${file} must react to the session prop`);
+  }
+});
+
 test('SSR pages do not read the client-only session during render', async () => {
   for (const file of FILES) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');

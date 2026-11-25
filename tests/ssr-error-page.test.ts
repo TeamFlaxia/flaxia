@@ -29,7 +29,12 @@ test('+error.svelte emits SEO-safe head metadata', async () => {
   assert.match(source, /<meta\s+name="description"/, 'the error page needs a description');
   assert.match(
     source,
-    /<link\s+rel="canonical"\s+href="https:\/\/flaxia\.app\/home"\s*\/>/,
+    /canonicalUrl\s*=\s*`\$\{SEO_ORIGIN\}\/home`/,
+    'the error canonical must derive from the shared production origin',
+  );
+  assert.match(
+    source,
+    /<link\s+rel="canonical"\s+href=\{canonicalUrl\}\s*\/>/,
     'the error page canonical must point to /home, not self-reference the failing URL',
   );
   assert.match(source, /import\s+\{\s*page\s*\}\s+from\s+'\$app\/state'/, 'use the reactive page state');

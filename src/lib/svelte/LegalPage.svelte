@@ -3,6 +3,7 @@ import type { LegalArticleContent } from '../docs/ssr-content.ts';
 import { t } from '../i18n.ts';
 import { ALL_PAGES, LEGAL_PAGES, type LegalPageType } from '../legal/pages.ts';
 import { navigate } from '../navigation.ts';
+import { SEO_ORIGIN } from '../seo-jsonld.ts';
 
 let { type, data }: { type: LegalPageType; data?: LegalArticleContent } = $props();
 
@@ -19,6 +20,14 @@ function go(path: string): void {
   {#if data}
     <meta name="description" content={data.description} />
     <link rel="canonical" href={data.canonical} />
+    <meta property="og:url" content={data.canonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={data.description} />
+    <meta property="og:image" content={`${SEO_ORIGIN}/og-default-v2.png`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={data.description} />
+    <meta name="twitter:image" content="https://flaxia.app/og-default-v2.png" />
   {/if}
 </svelte:head>
 

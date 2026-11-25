@@ -69,8 +69,10 @@ async function activate(): Promise<void> {
   }
 }
 
-onMount(() => {
-  void refresh();
+// MailView adopts the session in its own onMount, which may run after this
+// child's; react to the prop so the settings still load once it is available.
+$effect(() => {
+  if (currentUser) void refresh();
 });
 
 const usedBytes = $derived(Math.max(0, quota?.storage_bytes ?? 0));

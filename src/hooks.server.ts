@@ -15,7 +15,13 @@ const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
 
 const VARY_ACCEPT_LANGUAGE = /(?:^|,)\s*accept-language\s*(?:,|$)/i;
 
-export function withSecurityHeaders(response: Response): Response {
+const LOCALE_COOKIE_OPTIONS = {
+  path: '/',
+  maxAge: 31536000,
+  sameSite: 'lax',
+} as const;
+
+export function withSecurityHeaders(response: Response, setCookie?: string): Response {
   // 101 responses carry a WebSocket and cannot be reconstructed with new headers.
   if (response.status === 101) return response;
   const headers = new Headers(response.headers);
@@ -33,6 +39,8 @@ export function withSecurityHeaders(response: Response): Response {
     else if (!VARY_ACCEPT_LANGUAGE.test(vary)) headers.set('vary', `${vary}, Accept-Language`);
     if (!headers.has('cache-control')) headers.set('cache-control', 'private, no-store');
   }
+
+  if (setCookie) headers.append('set-cookie', setCookie);
 
   return new Response(response.body, {
     status: response.status,
@@ -136,20 +144,6 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   const localeName = pickLocale(event.request);
-  // First paint must match the locale SSR picked. Persist it so every later
-  // request (including shared links with no Accept-Language) stays on the
-  // same locale instead of flipping on hydration.
-  // API and WebSocket responses must not carry a locale cookie: on a 101
-  // upgrade a Set-Cookie header breaks the handshake, and endpoint clients
-  // have no need for a UI locale.
-  const isApiOrSocket = event.url.pathname.startsWith('/api/') || event.request.headers.get('upgrade') === 'websocket';
-  if (!isApiOrSocket && !localeFromCookie(event.request.headers.get('cookie') ?? '')) {
-    event.cookies.set('flaxia_locale', localeName, {
-      path: '/',
-      maxAge: 31536000,
-      sameSite: 'lax',
-    });
-  }
   // A missing/corrupt locale asset must degrade to translation keys, never 500.
   const locale = await loadLocale(localeName, event.fetch).catch(
     (): LocaleData => ({ locale: localeName, strings: {}, fallback: {} }),
@@ -157,5 +151,26 @@ export const handle: Handle = async ({ event, resolve }) => {
   const response = await localeStore.run(locale, () =>
     resolve(event, { transformPageChunk: ({ html }) => applyHtmlLang(html, localeName) }),
   );
-  return withSecurityHeaders(response);
+
+  // The first paint must match the locale SSR picked, but only a rendered HTML
+  // page is allowed to persist it. Data endpoints (sitemap.xml, WebFinger,
+  // host-meta, /api/*) can be publicly cached; a Set-Cookie there would let an
+  // edge cache replay one visitor's locale to everyone. A 101 upgrade must not
+  // be reconstructed or gain headers at all.
+  const isApiOrSocket = event.url.pathname.startsWith('/api/') || event.request.headers.get('upgrade') === 'websocket';
+  const isHtmlPage = (response.headers.get('content-type') ?? '').toLowerCase().includes('text/html');
+  const persistedLocale = localeFromCookie(event.request.headers.get('cookie') ?? '');
+  const shouldPersistLocale = !isApiOrSocket && response.status !== 101 && isHtmlPage && !persistedLocale;
+
+  let setCookie: string | undefined;
+  if (shouldPersistLocale) {
+    // cookies.set() is illegal after resolve() (it breaks the native SPA's
+    // prerendered fallback), and SvelteKit has already flushed pending cookies
+    // by now. Serialize the value directly onto the final response instead.
+    setCookie =
+      typeof event.cookies.serialize === 'function'
+        ? event.cookies.serialize('flaxia_locale', localeName, LOCALE_COOKIE_OPTIONS)
+        : `flaxia_locale=${encodeURIComponent(localeName)}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly`;
+  }
+  return withSecurityHeaders(response, setCookie);
 };

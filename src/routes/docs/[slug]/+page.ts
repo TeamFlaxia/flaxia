@@ -1,17 +1,12 @@
 import { error } from '@sveltejs/kit';
-import {
-  buildDocsArticleContent,
-  type DocsPageContent,
-  fetchDocsManifest,
-  findDoc,
-  preferredFile,
-} from '../../../lib/docs/ssr-content.ts';
+import { buildDocsArticleContent, fetchDocsManifest, findDoc, preferredFile } from '../../../lib/docs/ssr-content.ts';
 import { getLocale } from '../../../lib/i18n.ts';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ data, fetch, params, parent }) => {
-  // Prefer the serialized server result on hydration (see /docs/+page.ts).
-  if (data && 'kind' in data) return data as DocsPageContent;
+export const load: PageLoad = async ({ fetch, params, parent }) => {
+  // A universal load re-runs on hydration: `data` is the parent layout's data,
+  // not the page's own previous result. SvelteKit replays serialized SSR
+  // fetches, so the same fetch calls produce the same data as the server.
   await parent();
 
   const { slug } = params;

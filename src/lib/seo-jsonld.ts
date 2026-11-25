@@ -1,20 +1,19 @@
-// Crawler-facing schema.org metadata for SvelteKit SSR. Every block is an
-// `application/ld+json` script produced by renderJsonLd, which escapes `<`,
-// `>`, `&` and U+2028/9 so user-controlled text can never close the element.
+// App-side adapter for crawler-facing schema.org metadata. The canonical
+// serializers live in shared/seo-jsonld.ts so the Pages Functions renderer can
+// use them without importing browser code from src/. This module keeps the
+// public API the Svelte routes already import unchanged.
+
+import type { PostRow } from '../../functions/lib/render-html.ts';
 import {
-  type PostRow,
   renderBlogPostingJsonLd,
   renderJsonLd,
   renderPersonJsonLd,
   renderWebSiteJsonLd,
-  type UserRow,
-} from '../../functions/lib/render-html.ts';
+} from '../../shared/seo-jsonld.ts';
 import type { Post } from '../../shared/types/post.ts';
 
-export type { PostRow, UserRow };
-// renderBlogPostingJsonLd accepts an explicit `headline` (post/game title) and
-// `image`; it falls back to a content excerpt, never just the author name.
-export { renderBlogPostingJsonLd, renderPersonJsonLd, renderWebSiteJsonLd };
+export type { PostRow, UserRow } from '../../functions/lib/render-html.ts';
+export { renderBlogPostingJsonLd, renderJsonLd, renderPersonJsonLd, renderWebSiteJsonLd };
 
 /** Single production origin for canonical, og:url and every JSON-LD URL. */
 export const SEO_ORIGIN = 'https://flaxia.app';
@@ -79,6 +78,9 @@ export function asSeoPostRow(post: Post): PostRow {
     payload_key: post.payload_key ?? null,
     swf_key: post.swf_key ?? null,
     thumbnail_key: post.thumbnail_key ?? null,
+    // The thread endpoint returns this game-specific column; keep it on the
+    // SEO row even though the shared Post type does not declare it yet.
+    game_description: (post as Post & { game_description?: string | null }).game_description ?? null,
     hashtags: post.hashtags ?? '',
     parent_id: post.parent_id ?? null,
     root_id: post.root_id ?? null,

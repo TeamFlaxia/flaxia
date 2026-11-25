@@ -10,9 +10,10 @@
 import MarkdownIt from 'markdown-it';
 import { markdownToHtml } from '../legal/markdown.ts';
 import { LEGAL_PAGES, type LegalPageType } from '../legal/pages.ts';
+import { SEO_ORIGIN } from '../seo-jsonld.ts';
 import { type DocEntry, type DocsManifest, preferredFile, preferredTitle } from './manifest.ts';
 
-export const SITE_ORIGIN = 'https://flaxia.app';
+export const SITE_ORIGIN = SEO_ORIGIN;
 
 export function siteCanonical(pathname: string): string {
   return `${SITE_ORIGIN}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;

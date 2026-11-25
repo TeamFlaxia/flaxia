@@ -82,7 +82,7 @@ test('layout emits one path-only canonical, matching og:url, and one guarded tit
   );
   assert.match(
     layout,
-    /https:\/\/flaxia\.app\$\{page\.url\.pathname\}/,
+    /\$\{SEO_ORIGIN\}\$\{page\.url\.pathname\}/,
     'canonical/og:url must be path-only on the production origin',
   );
   assert.match(layout, /property="og:url"\s+content=\{canonicalUrl\}/, 'og:url must reuse the canonical URL');

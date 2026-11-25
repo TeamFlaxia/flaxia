@@ -13,15 +13,18 @@
 # static hash-free policy.
 /sandbox/*
   Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
-  X-Content-Type-Options: nosniff
 
 /404.html
   Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
-  X-Content-Type-Options: nosniff
 
 # Export popup only: cross-origin isolation for the multithreaded ffmpeg core.
 # Deliberately NOT site-wide — COEP would break third-party iframes and images.
+# Pages redirects the .html URL (308) to the clean URL, so both need the headers.
 /export-popup.html
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+
+/export-popup
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
 
@@ -29,11 +32,9 @@
 # the version (v0.10.0-0), so it is safe to cache forever.
 /crowd/*
   Cache-Control: public, max-age=31536000, immutable
-  X-Content-Type-Options: nosniff
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
-  X-Content-Type-Options: nosniff
 
 /assets/*.js
   Content-Type: application/javascript
@@ -41,20 +42,15 @@
 # Ad network MIME type fixes
 /AdServer/js/*.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /AdServer/*.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /usync.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /async_usersync
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /showad.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff

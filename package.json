@@ -50,7 +50,7 @@
     "test:render:browser": "npm run build:render && node --test tests/render.browser.mjs",
     "test:styles:browser": "npm run build:native && node --test tests/styles.browser.mjs",
     "test:app:browser": "npm run build:native && node --test tests/app-shell.browser.mjs",
-    "test:ssr:browser": "npm run build && node --test tests/ssr-hydration.browser.mjs",
+    "test:ssr:browser": "node --test tests/ssr-hydration.browser.mjs",
     "test:billing": "node --test --experimental-strip-types tests/billing.test.ts",
     "test:maps": "node --test --experimental-strip-types tests/maps.test.ts",
     "test:mail": "node --test --experimental-strip-types tests/mail-*.test.ts",

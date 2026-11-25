@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { test } from 'node:test';
+import { renderJsonLd } from '../functions/lib/render-html.ts';
 import { BASE_URL, seedUserAndLogin } from './helpers/setup.ts';
 
 const SSR_URL = process.env.FLAXIA_SSR_URL || BASE_URL;
@@ -128,8 +129,10 @@ test('game SEO helpers are SSR-safe and shared with the Svelte routes', async ()
   assert.match(source, /export function buildGameDescription/, 'buildGameDescription must be restored for SSR');
   assert.doesNotMatch(source, /\bdocument\b|\bwindow\b/, 'game SEO helpers must not use browser globals');
 
-  const renderer = await readFile(new URL('../functions/lib/render-html.ts', import.meta.url), 'utf8');
-  const blogPosting = renderer.slice(renderer.indexOf('export function renderBlogPostingJsonLd'));
+  // The serializer moved to shared/ so functions/ can use it without importing
+  // browser code from src/; the app module is now a thin adapter.
+  const serializer = await readFile(new URL('../shared/seo-jsonld.ts', import.meta.url), 'utf8');
+  const blogPosting = serializer.slice(serializer.indexOf('export function renderBlogPostingJsonLd'));
   assert.match(blogPosting.slice(0, 800), /headline:/, 'BlogPosting must carry a headline');
   assert.doesNotMatch(
     blogPosting.slice(0, 800),
@@ -137,10 +140,38 @@ test('game SEO helpers are SSR-safe and shared with the Svelte routes', async ()
     'headline must not be just the author',
   );
 
+  const adapter = await readFile(new URL('../src/lib/seo-jsonld.ts', import.meta.url), 'utf8');
+  for (const helper of ['renderJsonLd', 'renderBlogPostingJsonLd', 'renderPersonJsonLd', 'renderWebSiteJsonLd']) {
+    assert.match(adapter, new RegExp(`\\b${helper}\\b`), `${helper} must stay exported from the app adapter`);
+  }
+  assert.match(adapter, /from ['"][^'"]*shared\/seo-jsonld\.ts['"]/, 'adapter must re-export shared helpers');
+
   for (const path of ['src/routes/thread/[id]/+page.svelte', 'src/routes/arcade/[id]/+page.svelte']) {
     const page = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
     assert.match(page, /buildGameTitle/, `${path} must use buildGameTitle`);
     assert.match(page, /buildGameDescription/, `${path} must use buildGameDescription`);
+  }
+});
+
+test('render-html stays under the file-size ratchet and still exports escaped JSON-LD', async () => {
+  const renderer = await readFile(new URL('../functions/lib/render-html.ts', import.meta.url), 'utf8');
+  const lines = renderer.replace(/\n$/, '').split('\n').length;
+  assert.ok(lines <= 780, `render-html.ts must be <= 780 lines (got ${lines})`);
+
+  for (const helper of ['renderJsonLd', 'renderBlogPostingJsonLd', 'renderPersonJsonLd', 'renderWebSiteJsonLd']) {
+    assert.match(
+      renderer,
+      new RegExp(`\\b${helper}\\b`),
+      `${helper} must remain importable from render-html.ts for compatibility`,
+    );
+  }
+
+  // Moving the helpers must not weaken the escaping that keeps user text from
+  // breaking out of the <script> element.
+  const html = renderJsonLd({ name: '</script><script>alert(1)</script>', sep: '\u2028\u2029', amp: '&' });
+  assert.ok(!html.includes('</script><script>'), 'JSON-LD values must not close the script element');
+  for (const escaped of ['\\u003c', '\\u003e', '\\u0026', '\\u2028', '\\u2029']) {
+    assert.ok(html.includes(escaped), `JSON-LD must escape ${escaped}`);
   }
 });
 
@@ -186,21 +217,34 @@ test('src emits ld+json only through the escaped renderJsonLd helper', async () 
     }),
   );
 
-  const withLd = [...sources].filter(([, source]) => source.includes('application/ld+json'));
-  assert.ok(withLd.length > 0, 'src must contain at least one application/ld+json occurrence');
+  // The only raw ld+json script element lives in the shared serializer, which
+  // both the app adapter and functions/ import. No src file may hand-write one.
+  const sharedSerializer = await readFile(new URL('../shared/seo-jsonld.ts', import.meta.url), 'utf8');
+  assert.equal(
+    (sharedSerializer.match(/<script\b/g) ?? []).length,
+    1,
+    'shared/seo-jsonld.ts may only hand-write the script element inside renderJsonLd',
+  );
+  const serializer = sharedSerializer.slice(sharedSerializer.indexOf('export function renderJsonLd'));
+  assert.match(
+    serializer.slice(0, 900),
+    /<script type="application\/ld\+json">/,
+    'the single script element must belong to renderJsonLd',
+  );
 
   // Files that emit JSON-LD may only inject a helper-produced jsonLd string
   // via {@html}; a raw script element or user data in the expression would
   // let stored text break out of the <script> element.
-  const ldFiles = [...sources].filter(
-    ([, source]) => source.includes('application/ld+json') || /seo-jsonld/.test(source),
-  );
-  for (const [name, source] of ldFiles) {
+  const ldFiles = [...sources].filter(([, source]) => /\{@html\s+jsonLd\w*\}/.test(source));
+  assert.ok(ldFiles.length > 0, 'src must render helper-produced jsonLd via {@html}');
+  for (const [name, source] of sources) {
     assert.doesNotMatch(
       source,
       /<script\b[^>]*application\/ld\+json/,
       `${name}: ld+json must come from the escaping helper, not a hand-written script`,
     );
+  }
+  for (const [name, source] of ldFiles) {
     for (const match of source.matchAll(/\{@html\s+([^}]+)\}/g)) {
       const expression = match[1].trim();
       assert.match(
@@ -208,10 +252,6 @@ test('src emits ld+json only through the escaped renderJsonLd helper', async () 
         /^jsonLd\w*$/,
         `${name}: {@html} must only render a helper-produced jsonLd string, got: ${expression}`,
       );
-    }
-    if (name.includes('seo-jsonld')) {
-      assert.match(source, /renderJsonLd\(/, 'ld+json data must be serialized by renderJsonLd');
-      assert.doesNotMatch(source, /<script\b/, 'seo-jsonld must not hand-write script elements');
     }
   }
   for (const [name, source] of sources) {

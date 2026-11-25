@@ -3,6 +3,7 @@ import { FOOTER_PAGES } from '../docs/manifest.ts';
 import type { DocsPageContent } from '../docs/ssr-content.ts';
 import { t } from '../i18n.ts';
 import { navigate } from '../navigation.ts';
+import { SEO_ORIGIN } from '../seo-jsonld.ts';
 
 let { data }: { data?: DocsPageContent } = $props();
 
@@ -20,6 +21,14 @@ function go(path: string): void {
   {#if data}
     <meta name="description" content={description} />
     <link rel="canonical" href={canonical} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={`${SEO_ORIGIN}/og-default-v2.png`} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content="https://flaxia.app/og-default-v2.png" />
   {/if}
 </svelte:head>
 

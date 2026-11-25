@@ -12,6 +12,7 @@ import {
 import { type DevicePlatform, detectDevicePlatform } from '../../lib/device-platform.ts';
 import { t } from '../../lib/i18n.ts';
 import { type IconName, iconMarkup } from '../../lib/icons.ts';
+import { SEO_ORIGIN } from '../seo-jsonld.ts';
 
 const PLATFORM_ICONS: Record<AppPlatform, IconName> = {
   android: 'smartphone',
@@ -40,7 +41,7 @@ const heroTitle = $derived(
     : t('app_download.available_for_devices'),
 );
 // Must match the canonical URL emitted by the root layout on every origin.
-const canonicalUrl = 'https://flaxia.app/download';
+const canonicalUrl = `${SEO_ORIGIN}/download`;
 
 let windowsUrl = $state(APP_RELEASES_URL);
 

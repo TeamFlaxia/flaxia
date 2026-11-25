@@ -66,7 +66,7 @@ const PRIVATE_ROUTE_IDS: ReadonlySet<string> = new Set([
   '/admin/[tab]',
 ]);
 const SITE_DESCRIPTION = 'The SNS where your posts are playable.';
-const DEFAULT_OG_IMAGE = 'https://flaxia.app/og-default-v2.png';
+const DEFAULT_OG_IMAGE = `${SEO_ORIGIN}/og-default-v2.png`;
 
 let localeVersion = $state(0);
 
@@ -86,7 +86,7 @@ function siteDescription(): string {
 
 // Path-only canonical URL on the production origin: query strings and the
 // local/dev origin must never leak into canonical or og:url.
-const canonicalUrl = $derived(`https://flaxia.app${page.url.pathname}`);
+const canonicalUrl = $derived(`${SEO_ORIGIN}${page.url.pathname}`);
 const routeId = $derived(page.route?.id ?? '');
 const hasRouteTitle = $derived(OWN_TITLE_ROUTES.has(routeId));
 const hasOwnMeta = $derived(OWN_META_ROUTES.has(routeId));

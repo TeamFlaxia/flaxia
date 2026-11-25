@@ -128,9 +128,11 @@ different build (static SPA into `dist/`) for Capacitor and Tauri only — never
 deploy that directory to Pages.
 
 ```bash
-# CONTENT_ORIGIN / SANDBOX_ORIGIN are read by vite.config.ts at BUILD time,
-# so set them on npm run build (as the deploy workflow does), not on deploy.
-CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app npm run build
+# vite.config.ts bakes both origins into the bundle at BUILD time. The deploy
+# workflow sets SANDBOX_ORIGIN only; production builds therefore leave
+# CONTENT_ORIGIN empty. Set CONTENT_ORIGIN on the build command explicitly if a
+# build needs it — changing it at deploy time cannot affect a built bundle.
+SANDBOX_ORIGIN=https://sandbox.flaxia.app npm run build
 npm run deploy
 
 # `npm run deploy` runs:

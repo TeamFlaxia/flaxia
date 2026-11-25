@@ -8,6 +8,7 @@
   "admin_alerts.nsfw_success": "Post marked as NSFW.",
   "admin_alerts.nsfw_error": "Could not mark the post. Check the post ID and your admin access.",
   "_comment": "Flaxia UI strings - English",
+  "site.description": "The SNS where your posts are playable.",
   "nav.home": "Home",
   "nav.explore": "Explore",
   "nav.arcade": "Arcade",

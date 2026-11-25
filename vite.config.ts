@@ -140,11 +140,13 @@ export default defineConfig({
     docsManifestPlugin(),
     {
       // vite dev has no _headers — apply the isolation headers the export
-      // popup needs (SharedArrayBuffer / core-mt) only on that path.
+      // popup needs (SharedArrayBuffer / core-mt) to both the clean URL and
+      // the .html document Pages redirects away from.
       name: 'export-popup-dev-headers',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          if (req.url?.startsWith('/export-popup.html')) {
+          const path = (req.url ?? '').split('?')[0];
+          if (path === '/export-popup' || path.startsWith('/export-popup.html')) {
             res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
             res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
           }

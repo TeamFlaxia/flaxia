@@ -33,7 +33,12 @@ test('both server and browser use the shared cookie parser', async () => {
 
 test('SSR persists the negotiated locale in the cookie and varies HTML by Accept-Language', async () => {
   const hook = await readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
-  assert.match(hook, /cookies\.set\(\s*['"]flaxia_locale['"]/, 'SSR must persist the negotiated locale');
+  assert.match(
+    hook,
+    /cookies\.serialize\(\s*['"]flaxia_locale['"]/,
+    'SSR must serialize the negotiated locale onto the HTML response',
+  );
+  assert.doesNotMatch(hook, /cookies\.set\(\s*['"]flaxia_locale['"]/, 'no cookies.set after resolve()');
   assert.match(hook, /Accept-Language/, 'HTML must vary by the header used to negotiate the locale');
   assert.match(hook, /['"]text\/html['"]/, 'Vary must only apply to HTML responses');
 

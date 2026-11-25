@@ -125,19 +125,68 @@ test('handle applies the SSR locale to both the html tag and translations', asyn
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
 });
 
+type CookieCall = { name: string; value: string; options?: unknown };
+
+function serializeCookie(name: string, value: string, options: Record<string, unknown> = {}): string {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    `Path=${String(options.path ?? '/')}`,
+    ...(typeof options.maxAge === 'number' ? [`Max-Age=${options.maxAge}`] : []),
+    ...(typeof options.sameSite === 'string' ? [`SameSite=${options.sameSite}`] : []),
+    'HttpOnly',
+  ];
+  return parts.join('; ');
+}
+
 function cookieEvent(request: Request, fetchImpl: typeof fetch = localeFetch) {
-  const setCalls: Array<{ name: string; value: string; options?: unknown }> = [];
+  const setCalls: CookieCall[] = [];
+  const pending = new Map<string, CookieCall>();
   const event = {
     url: new URL(request.url),
     request,
     fetch: fetchImpl,
     cookies: {
-      set: (name: string, value: string, options?: unknown) => setCalls.push({ name, value, options }),
+      set: (name: string, value: string, options?: unknown) => {
+        setCalls.push({ name, value, options });
+        pending.set(`${name}=${value}`, { name, value, options });
+      },
       get: () => undefined,
       delete: () => undefined,
+      serialize: serializeCookie,
     },
   };
-  return { event, setCalls };
+  // SvelteKit flushes cookies.set() into the response while resolve() settles,
+  // *before* the handle hook regains control. Mirror that here so the tests
+  // catch cookies that are set too late to reach the browser.
+  function finalize(response: Response): Response {
+    if (pending.size === 0 || response.status === 101) return response;
+    const headers = new Headers(response.headers);
+    for (const { name, value, options } of pending.values()) {
+      headers.append('set-cookie', serializeCookie(name, value, options as Record<string, unknown>));
+    }
+    pending.clear();
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  return { event, setCalls, finalize };
+}
+
+type Resolver = (
+  event: unknown,
+  opts?: { transformPageChunk?: (chunk: { html: string; done: boolean }) => string | Promise<string> },
+) => Promise<Response> | Response;
+
+/** Exercise handle with SvelteKit's resolve-time cookie finalization in place. */
+async function handleLikeKit(request: Request, resolveImpl: Resolver, fetchImpl: typeof fetch = localeFetch) {
+  const { event, setCalls, finalize } = cookieEvent(request, fetchImpl);
+  const response = await handle({
+    event,
+    resolve: async (resolvedEvent, opts) => finalize(await resolveImpl(resolvedEvent, opts)),
+  } as unknown as Parameters<typeof handle>[0]);
+  return { response, setCalls };
 }
 
 function resolveHtml(
@@ -154,11 +203,30 @@ test('handle issues flaxia_locale from Accept-Language when the cookie is absent
   const { event, setCalls } = cookieEvent(request);
   const response = await handle({ event, resolve: resolveHtml } as unknown as Parameters<typeof handle>[0]);
 
-  assert.deepEqual(
-    setCalls.map(({ name, value }) => [name, value]),
-    [['flaxia_locale', 'ja']],
-  );
+  assert.match(response.headers.get('set-cookie') ?? '', /^flaxia_locale=ja;/);
   assert.equal(response.headers.get('vary'), 'Accept-Language');
+});
+
+test('locale persistence never calls cookies.set after the response was generated', async () => {
+  const request = new Request('https://flaxia.app/home', { headers: { 'accept-language': 'ja' } });
+  const event = {
+    url: new URL(request.url),
+    request,
+    fetch: localeFetch,
+    cookies: {
+      set: () => {
+        throw new Error('cookies.set called after the response was generated');
+      },
+      get: () => undefined,
+      delete: () => undefined,
+      serialize: (name: string, value: string) => `${name}=${value}; Path=/; SameSite=Lax`,
+    },
+  };
+  const response = await handle({
+    event,
+    resolve: (_event: unknown) => Promise.resolve(new Response(String('html'), { headers: htmlHeaders() })),
+  } as unknown as Parameters<typeof handle>[0]);
+  assert.match(response.headers.get('set-cookie') ?? '', /flaxia_locale=ja/);
 });
 
 test('handle does not set a locale cookie on API or WebSocket upgrade requests', async () => {
@@ -166,13 +234,72 @@ test('handle does not set a locale cookie on API or WebSocket upgrade requests',
     const request = new Request(url, {
       headers: { 'accept-language': 'ja', ...(url.includes('/ws/') ? { upgrade: 'websocket' } : {}) },
     });
-    const { event, setCalls } = cookieEvent(request);
-    await handle({
-      event,
-      resolve: () => Promise.resolve(new Response('ok')),
-    } as unknown as Parameters<typeof handle>[0]);
+    const { response, setCalls } = await handleLikeKit(request, () => Promise.resolve(new Response('ok')));
     assert.deepEqual(setCalls, [], `${new URL(url).pathname} must not receive a Set-Cookie`);
+    assert.equal(response.headers.get('set-cookie'), null, `${new URL(url).pathname} must not receive a Set-Cookie`);
   }
+});
+
+test('public non-page endpoints get no locale cookie and keep their own cache policy', async () => {
+  const endpoints = [
+    {
+      url: 'https://flaxia.app/sitemap.xml',
+      contentType: 'application/xml; charset=utf-8',
+      cacheControl: 'public, max-age=3600',
+    },
+    {
+      url: 'https://flaxia.app/.well-known/webfinger',
+      contentType: 'application/jrd+json; charset=utf-8',
+      cacheControl: 'public, max-age=300',
+    },
+    {
+      url: 'https://flaxia.app/.well-known/host-meta',
+      contentType: 'application/xrd+xml; charset=utf-8',
+      cacheControl: 'public, max-age=300',
+    },
+  ];
+
+  for (const { url, contentType, cacheControl } of endpoints) {
+    const request = new Request(url, { headers: { 'accept-language': 'ja' } });
+    const { response, setCalls } = await handleLikeKit(request, () =>
+      Promise.resolve(
+        new Response('payload', { headers: { 'Content-Type': contentType, 'Cache-Control': cacheControl } }),
+      ),
+    );
+
+    assert.deepEqual(setCalls, [], `${new URL(url).pathname} must not call cookies.set`);
+    assert.equal(response.headers.get('set-cookie'), null, `${new URL(url).pathname} must not carry a locale cookie`);
+    assert.equal(response.headers.get('cache-control'), cacheControl);
+    assert.equal(response.headers.get('vary'), null, 'non-HTML responses keep their own cache policy');
+  }
+});
+
+test('HTML navigations persist the locale cookie on the final HTML response', async () => {
+  const request = requestWith({ 'accept-language': 'ja,en;q=0.9' });
+  const { response } = await handleLikeKit(request, resolveHtml);
+
+  assert.match(response.headers.get('set-cookie') ?? '', /^flaxia_locale=ja;/);
+  assert.equal(response.headers.get('vary'), 'Accept-Language');
+  assert.match(response.headers.get('cache-control') ?? '', /private, no-store/);
+});
+
+test('a 101 WebSocket upgrade response is returned untouched', async () => {
+  const request = new Request('https://flaxia.app/ws', {
+    headers: { 'accept-language': 'ja', upgrade: 'websocket' },
+  });
+  // Response() cannot construct 1xx statuses; SvelteKit forwards the platform's
+  // upgrade response verbatim, so model it with the minimal shape used here.
+  const upgrade = {
+    status: 101,
+    statusText: 'Switching Protocols',
+    headers: new Headers({ upgrade: 'websocket', connection: 'Upgrade' }),
+    body: null,
+  } as unknown as Response;
+  const { response, setCalls } = await handleLikeKit(request, () => Promise.resolve(upgrade));
+
+  assert.equal(response, upgrade, '101 responses must not be reconstructed');
+  assert.deepEqual(setCalls, []);
+  assert.equal(response.headers.get('set-cookie'), null);
 });
 
 test('handle keeps an existing locale cookie and still varies HTML by Accept-Language', async () => {
@@ -186,11 +313,10 @@ test('handle keeps an existing locale cookie and still varies HTML by Accept-Lan
 
 test('handle tolerates a malformed locale cookie without a 500', async () => {
   const request = requestWith({ cookie: 'flaxia_locale=%', 'accept-language': 'ja' });
-  const { event, setCalls } = cookieEvent(request);
-  const response = await handle({ event, resolve: resolveHtml } as unknown as Parameters<typeof handle>[0]);
+  const { response } = await handleLikeKit(request, resolveHtml);
 
   assert.equal(response.status, 200);
-  assert.equal(setCalls[0]?.value, 'ja');
+  assert.match(response.headers.get('set-cookie') ?? '', /^flaxia_locale=ja;/);
   assert.equal(response.headers.get('vary'), 'Accept-Language');
 });
 
