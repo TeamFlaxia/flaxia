@@ -10,7 +10,7 @@
   "functions/api/routes/tests.ts": 554,
   "functions/api/routes/vault.ts": 808,
   "functions/lib/activitypub/handlers.ts": 912,
-  "functions/lib/auth.ts": 633,
+  "functions/lib/auth.ts": 639,
   "functions/lib/crowd.ts": 1517,
   "functions/lib/flaxia-auth.ts": 678,
   "functions/lib/render-html.ts": 746,

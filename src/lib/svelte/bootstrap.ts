@@ -70,23 +70,9 @@ export function initShellBootstrap(): void {
 
   const nativeClient = isNativeApp();
   const nativeFetch = createNativeFetch(window.fetch.bind(window));
-  const probeConnectivity = async (): Promise<boolean> => {
-    try {
-      const response = await nativeFetch('/api/me', {
-        cache: 'no-store',
-        credentials: 'include',
-        signal: AbortSignal.timeout(15000),
-      });
-      try {
-        await response.body?.cancel();
-      } catch {
-        // The response already proved connectivity.
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  // No connectivity probe here: the old one hit `/api/me` with `no-store`,
+  // triggering a second full auth chain on native boot. navigator.onLine and
+  // the first real API response still drive the offline banner/recovery.
   window.fetch = nativeClient
     ? createOfflineFetch(nativeFetch, {
         store: createOfflineStore(),
@@ -94,7 +80,6 @@ export function initShellBootstrap(): void {
         apiOrigin: API_ORIGIN,
         isOnline: () => navigator.onLine !== false,
         setOffline,
-        probe: probeConnectivity,
       })
     : nativeFetch;
   if (nativeClient) window.fetch = initOfflineGames(nativeFetch).wrap(window.fetch);

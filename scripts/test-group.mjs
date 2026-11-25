@@ -62,6 +62,10 @@ const groups = {
     'query-indexes-0146',
     'ssr-click-anchor',
     'thread-enrichment-parallel',
+    // Click-latency PR B regression suites.
+    'auth-hot-path',
+    'handle-fetch-cache',
+    'optimistic-thread',
   ],
   'auth-vault': [
     'auth',

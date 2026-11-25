@@ -212,8 +212,14 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     `)
       .bind(identity.user_id)
       .first<User>();
-    if (!user || !(await recoverDirectCredentialChange(env, token, identity.user_id))) return null;
-    const emailState = await recoverDirectEmail(env, token, identity.user_id);
+    if (!user) return null;
+    // Independent Auth recovery scans; running them together halves the serial
+    // latency of every authenticated grant request.
+    const [credentialOk, emailState] = await Promise.all([
+      recoverDirectCredentialChange(env, token, identity.user_id),
+      recoverDirectEmail(env, token, identity.user_id),
+    ]);
+    if (!credentialOk) return null;
     if (emailState === 'unavailable') return null;
     if (emailState === 'ok') {
       user = await env.DB.prepare(`
