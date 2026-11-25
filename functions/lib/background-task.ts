@@ -5,7 +5,7 @@ interface WaitUntilContext {
 /**
  * Run a side effect after the HTTP response has been returned.
  *
- * Cloudflare's ExecutionContext.waitUntil keeps the task alive beyond the
+ * The platform's `waitUntil` hook keeps the task alive beyond the
  * response so the work is never silently dropped. When no execution context
  * exists (e.g. Hono `app.request` in unit tests) the task still runs and its
  * errors are logged instead of failing the request.
@@ -15,7 +15,7 @@ export function waitUntil(c: unknown, task: () => Promise<unknown>, label: strin
   try {
     execCtx = (c as WaitUntilContext).executionCtx;
   } catch {
-    // Hono throws when invoked without an ExecutionContext; there is no
+    // Hono throws when invoked without a platform execution context; there is no
     // post-response lifetime to attach to in that case.
   }
   const promise = Promise.resolve()

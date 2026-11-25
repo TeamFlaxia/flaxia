@@ -17,7 +17,10 @@ test('root route redirects to the home feed', async () => {
   const root = await read('src/routes/+page.ts');
   assert.match(root, /redirect\(308, '\/home'\)/);
   const layout = await read('src/routes/+layout.ts');
-  assert.match(layout, /initShellBootstrap/);
+  assert.match(layout, /bootShell/);
+  // Shell side effects moved to a non-blocking helper.
+  const boot = await read('src/lib/svelte/shell-boot.ts');
+  assert.match(boot, /initShellBootstrap/);
 });
 
 test('explore route renders the Svelte component directly', async () => {

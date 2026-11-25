@@ -1,3 +1,12 @@
+import {
+  type AuthIdentity,
+  forgetAllIntrospection,
+  forgetIntrospection,
+  introspectionKey,
+  readIntrospection,
+  writeIntrospection,
+} from './auth-introspection-cache.ts';
+
 const AUTH_ORIGIN = 'https://auth.flaxia.app';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -255,57 +264,7 @@ export async function completeAuthLink(
   }
 }
 
-type AuthIdentity = { user_id: string; expires_at: string };
-type CachedIntrospection = { identity: AuthIdentity; cachedAt: number };
-
-// Resolve the same grant many times during a request (middleware + handlers +
-// session checks). A short-lived in-isolate cache keeps the auth-service round
-// trip to one per grant. Only successful answers are cached, never rejections;
-// an entry is scoped to the Auth binding so a different issuer can never reuse
-// it, and the raw grant is hashed before it is used as a key.
-const INTROSPECT_CACHE_TTL_MS = 30_000;
-const INTROSPECT_CACHE_MAX = 512;
-const introspectCache = new WeakMap<object, Map<string, CachedIntrospection>>();
-
-async function grantCacheKey(grant: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(grant)));
-  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function introspectCacheScope(env: AuthEnv): Map<string, CachedIntrospection> | null {
-  const service = env.AUTH_SERVICE;
-  if (!service) return null;
-  let cache = introspectCache.get(service);
-  if (!cache) {
-    cache = new Map<string, CachedIntrospection>();
-    introspectCache.set(service, cache);
-  }
-  return cache;
-}
-
-function readIntrospectCache(env: AuthEnv, key: string, now: number): AuthIdentity | null {
-  const cache = env.AUTH_SERVICE ? introspectCache.get(env.AUTH_SERVICE) : undefined;
-  const entry = cache?.get(key);
-  if (!entry) return null;
-  if (now - entry.cachedAt >= INTROSPECT_CACHE_TTL_MS || Date.parse(entry.identity.expires_at) <= now) {
-    cache?.delete(key);
-    return null;
-  }
-  return entry.identity;
-}
-
-// Revoke immediately forgets the cached answer for that grant in this isolate.
-export async function forgetIntrospection(env: AuthEnv, grant: string): Promise<void> {
-  if (!TOKEN.test(grant) || !env.AUTH_SERVICE) return;
-  introspectCache.get(env.AUTH_SERVICE)?.delete(await grantCacheKey(grant));
-}
-
-// Bulk revocation / account deletion cannot enumerate every grant from here,
-// so drop the whole issuer's cache to avoid a stale success surviving its TTL.
-export function forgetAllIntrospection(env: AuthEnv): void {
-  if (!env.AUTH_SERVICE) return;
-  introspectCache.get(env.AUTH_SERVICE)?.clear();
-}
+// Introspection cache lives in auth-introspection-cache.ts (imported above).
 
 // Resolve an application grant against Auth directly. The grant is an opaque
 // bearer capability held in the browser cookie; it is never looked up in the
@@ -313,8 +272,8 @@ export function forgetAllIntrospection(env: AuthEnv): void {
 export async function introspectAuthGrant(env: AuthEnv, grant: string): Promise<AuthIdentity | null> {
   if (!TOKEN.test(grant)) return null;
   const now = Date.now();
-  const key = await grantCacheKey(grant);
-  const cached = readIntrospectCache(env, key, now);
+  const key = await introspectionKey(grant);
+  const cached = readIntrospection(env, key, now);
   if (cached) return cached;
   try {
     const response = await postAuth(env, '/api/flaxia/introspect', { grant });
@@ -330,17 +289,7 @@ export async function introspectAuthGrant(env: AuthEnv, grant: string): Promise<
     )
       return null;
     const identity: AuthIdentity = { user_id: body.user_id, expires_at: body.expires_at };
-    const cache = introspectCacheScope(env);
-    if (cache) {
-      // Re-insert to refresh LRU order, then evict the oldest entries.
-      cache.delete(key);
-      cache.set(key, { identity, cachedAt: Date.now() });
-      while (cache.size > INTROSPECT_CACHE_MAX) {
-        const oldest = cache.keys().next().value;
-        if (oldest === undefined) break;
-        cache.delete(oldest);
-      }
-    }
+    await writeIntrospection(env, key, identity);
     return identity;
   } catch {
     return null;

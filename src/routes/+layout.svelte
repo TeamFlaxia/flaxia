@@ -70,10 +70,6 @@ const SITE_DESCRIPTION = 'The SNS where your posts are playable.';
 const DEFAULT_OG_IMAGE = `${SEO_ORIGIN}/og-default-v2.png`;
 
 let localeVersion = $state(0);
-// Route components read the session snapshot once in onMount. The shell boot
-// resolves it after mount, so remount children once when it settles to give
-// them the signed-in state without blocking initial hydration.
-let sessionVersion = $state(0);
 
 // Called from the template (the render path) so it may read reactive page
 // state; a module-level evaluation would trip Svelte's state_read_outside_render.
@@ -117,7 +113,6 @@ onMount(() => {
   void bootShell()
     .then(() => {
       localeVersion += 1;
-      sessionVersion += 1;
       sync();
     })
     .catch(() => {
@@ -156,6 +151,4 @@ onMount(() => {
   {/if}
 </svelte:head>
 
-{#key sessionVersion}
-  {@render children()}
-{/key}
+{@render children()}

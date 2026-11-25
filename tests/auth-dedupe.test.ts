@@ -33,9 +33,12 @@ test('the fallback resolver lives in the shared helpers, not in the hot handlers
 });
 
 test('auth introspection has a bounded, short-lived in-isolate cache', () => {
-  const cacheSource = read('functions/lib/auth.ts') + read('functions/lib/flaxia-auth.ts');
+  const cacheSource =
+    read('functions/lib/auth.ts') +
+    read('functions/lib/flaxia-auth.ts') +
+    read('functions/lib/auth-introspection-cache.ts');
   const expectations: Array<[RegExp, string]> = [
-    [/new Map\s*</, 'a Map-based introspection cache is required'],
+    [/new Map\(/, 'a Map-based introspection cache is required'],
     [/30_000/, 'the cache TTL must be short (~30s)'],
     [/TTL/i, 'the cache must have an explicit TTL'],
     [/MAX/i, 'the cache must be bounded'],
