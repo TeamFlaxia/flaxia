@@ -56,6 +56,12 @@ const groups = {
     'text-links-navigation',
     'thread-no-duplicate-fetch',
     'waitUntil-behavior',
+    // Click-latency PR A regression suites.
+    'click-leak-fixes',
+    'nav-progress',
+    'query-indexes-0146',
+    'ssr-click-anchor',
+    'thread-enrichment-parallel',
   ],
   'auth-vault': [
     'auth',

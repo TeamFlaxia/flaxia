@@ -462,6 +462,9 @@ games.get('/games', async (c) => {
     }
 
     if (trending) {
+      // 0146's expression index is the only B-tree that can serve this ORDER BY;
+      // force it here or the planner falls back to 0052's engagement index.
+      sql = sql.replace('FROM posts p', 'FROM posts p INDEXED BY idx_posts_games_trending');
       sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC';
     } else {
       sql += ' ORDER BY p.created_at DESC';

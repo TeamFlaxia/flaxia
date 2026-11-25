@@ -243,10 +243,11 @@ profiles.get('/users/:username/followers', async (c) => {
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at, ${USER_TITLE_COLUMNS}
-      FROM follows f
-      JOIN users u ON f.follower_id = u.id
+      FROM users u
       ${USER_TITLE_JOIN}
-      WHERE f.followee_id = ?
+      WHERE EXISTS (
+        SELECT 1 FROM follows f WHERE f.follower_id = u.id AND f.followee_id = ?
+      )
     `;
 
     const params: Array<string | null> = [user.id as string];
@@ -354,10 +355,11 @@ profiles.get('/users/:username/following', async (c) => {
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at, ${USER_TITLE_COLUMNS}
-      FROM follows f
-      JOIN users u ON f.followee_id = u.id
+      FROM users u
       ${USER_TITLE_JOIN}
-      WHERE f.follower_id = ?
+      WHERE EXISTS (
+        SELECT 1 FROM follows f WHERE f.followee_id = u.id AND f.follower_id = ?
+      )
     `;
 
     const params: Array<string | null> = [user.id as string];

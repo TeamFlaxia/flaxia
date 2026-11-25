@@ -109,6 +109,10 @@ jobs:
       - run: node --test tests/app-shell.browser.mjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+      # Reads the same dist build as app-shell; no rebuild here.
+      - run: node --test tests/perf-timeline.browser.mjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
 
   ssr-browser:
     runs-on: ubuntu-latest

@@ -1,10 +1,25 @@
 /* Server-rendered fallback content (see functions/lib/render-html.ts). */
 .ssr-post {
+  position: relative;
   background: var(--bg-primary);
   border-radius: 12px;
   padding: 16px;
   margin-bottom: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+/* Stretch the existing thread link over the card so SSR posts are clickable
+   before hydration — no JS, no extra wrapper (nested anchors are invalid). */
+.ssr-view-post::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+/* Real links inside the card stay above that overlay. */
+.ssr-post-header a,
+.ssr-hashtag {
+  position: relative;
+  z-index: 2;
 }
 .ssr-post-header {
   display: flex;

@@ -328,7 +328,9 @@ test('feed game cards start playing when the preview is clicked', async () => {
 
 test('the mobile nav drawer closes on every client navigation', async () => {
   const layout = await read('src/routes/+layout.svelte');
-  assert.match(layout, /beforeNavigate\(\(\) => closeLeftNav\(\)\)/);
+  // beforeNavigate now also starts the navigation progress bar, so the
+  // callback has a block body; the drawer close must still be first.
+  assert.match(layout, /beforeNavigate\(\(\) => \{[\s\S]{0,80}?closeLeftNav\(\)/);
 });
 
 test('icon-only nav rails narrow the sidebar too', async () => {
