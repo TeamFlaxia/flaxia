@@ -31,11 +31,12 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`;
 
   // Add static pages
+  // Only advertise routes that render real content. `/legal` has no route and
+  // `/explore` renders a nav-only SSR body, so neither belongs in the sitemap.
   const staticPages = [
     { loc: `${baseUrl}/home`, changefreq: 'daily', priority: '1.0' },
     { loc: `${baseUrl}/arcade`, changefreq: 'weekly', priority: '0.9' },
-    { loc: `${baseUrl}/explore`, changefreq: 'weekly', priority: '0.5' },
-    { loc: `${baseUrl}/legal`, changefreq: 'monthly', priority: '0.5' },
+    { loc: `${baseUrl}/privacy`, changefreq: 'monthly', priority: '0.5' },
   ];
 
   // Get current timestamp for static pages

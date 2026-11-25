@@ -12,7 +12,12 @@ import {
 import type { Post } from '../../shared/types/post.ts';
 
 export type { PostRow, UserRow };
+// renderBlogPostingJsonLd accepts an explicit `headline` (post/game title) and
+// `image`; it falls back to a content excerpt, never just the author name.
 export { renderBlogPostingJsonLd, renderPersonJsonLd, renderWebSiteJsonLd };
+
+/** Single production origin for canonical, og:url and every JSON-LD URL. */
+export const SEO_ORIGIN = 'https://flaxia.app';
 
 export interface BreadcrumbItem {
   label: string;

@@ -2,6 +2,7 @@
 import { onMount } from 'svelte';
 import { page } from '$app/state';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { buildGameDescription, buildGameTitle } from '../../../lib/game-seo.ts';
 import { navigate } from '../../../lib/navigation.ts';
 import { asSeoPostRow, renderBlogPostingJsonLd, renderBreadcrumbJsonLd } from '../../../lib/seo-jsonld.ts';
 import SsrPostList from '../../../lib/svelte/SsrPostList.svelte';
@@ -15,10 +16,22 @@ const DEFAULT_OG_IMAGE = `${SITE_ORIGIN}/og-default-v2.png`;
 let { data }: PageProps = $props();
 
 const ssrPosts = $derived(data.root ? [data.root, ...data.replies] : []);
-const description = $derived(
-  (data.root ? stripPostColors(data.root.text) : '').replace(/\s+/g, ' ').trim().slice(0, 120) || 'A post on Flaxia',
-);
-const metaTitle = $derived(`Flaxia - ${description}`);
+const gamePost = $derived(Boolean(data.root?.payload_key || data.root?.swf_key));
+const postTitle = $derived(data.root ? buildGameTitle(stripPostColors(data.root.text)) : 'Flaxia');
+const description = $derived.by(() => {
+  const root = data.root;
+  if (!root) return 'A post on Flaxia';
+  const plain = stripPostColors(root.text).replace(/\s+/g, ' ').trim();
+  if (!gamePost) return plain.slice(0, 120) || 'A post on Flaxia';
+  return buildGameDescription({
+    gameDescription: (root as { game_description?: string | null }).game_description,
+    title: postTitle,
+    typeLabel: root.swf_key ? 'Flash' : 'Game',
+    authorName: root.display_name || root.username,
+    text: stripPostColors(root.text),
+  });
+});
+const metaTitle = $derived(`Flaxia - ${postTitle}`);
 const canonicalUrl = $derived(
   page.params.id ? `${SITE_ORIGIN}/thread/${encodeURIComponent(page.params.id)}` : page.url.href,
 );
@@ -32,22 +45,23 @@ const ogImage = $derived.by(() => {
 const jsonLd = $derived.by(() => {
   const root = data.root;
   if (!root) return '';
-  const postUrl = `${page.url.origin}${page.url.pathname}`;
+  const postUrl = canonicalUrl;
   return [
     renderBlogPostingJsonLd(
       asSeoPostRow(root),
       root.display_name || root.username,
-      `${page.url.origin}/users/${encodeURIComponent(root.username)}`,
+      `${SITE_ORIGIN}/users/${encodeURIComponent(root.username)}`,
       postUrl,
       description,
-      root.thumbnail_key ? ogImage : undefined,
+      ogImage,
+      postTitle,
     ),
     renderBreadcrumbJsonLd(
       [
-        { label: 'Home', url: `${page.url.origin}/home` },
+        { label: 'Home', url: `${SITE_ORIGIN}/home` },
         { label: 'Thread', url: postUrl },
       ],
-      page.url.origin,
+      SITE_ORIGIN,
     ),
   ].join('\n');
 });
@@ -58,6 +72,7 @@ onMount(() => {
 </script>
 
 <svelte:head>
+  <title>{metaTitle}</title>
   {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={description} />
   <meta property="og:title" content={metaTitle} />

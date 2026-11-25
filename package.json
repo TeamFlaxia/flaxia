@@ -15,7 +15,7 @@
     "dev:api": "npm run migrate:local && wrangler pages dev .svelte-kit/cloudflare --binding ADMIN_USERNAMES=remydrescarlet --port 8787 --binding ENVIRONMENT=development --binding WEB_INDEX_ENABLED=1 --binding AUTH_AUTHORITY_MODE=off --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@notif-stream",
     "dev:local": "vite --host",
     "dev:all": "npm run migrate:local && npm run build && (trap 'kill 0 2>/dev/null' EXIT; vite --host & wrangler pages dev .svelte-kit/cloudflare --binding ADMIN_USERNAMES=remydrescarlet --port 8787 --binding ENVIRONMENT=development --binding WEB_INDEX_ENABLED=1 --binding AUTH_AUTHORITY_MODE=off --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@notif-stream & wait)",
-    "build": "svelte-kit sync && node scripts/build-maplibre-worker.mjs && npm run build:sdk && npm run build:game-sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && vite build && node --experimental-strip-types scripts/postbuild.mjs",
+    "build": "svelte-kit sync && node scripts/docs-manifest.mjs && node scripts/build-maplibre-worker.mjs && npm run build:sdk && npm run build:game-sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && vite build && node --experimental-strip-types scripts/postbuild.mjs",
     "build:desktop": "npm run build:native && node scripts/build-native-crowd.mjs",
     "build:sdk": "vite build --config packages/multiplayer/vite.config.ts && node scripts/embed-multiplayer-sdk.mjs",
     "build:game-sdk": "vite build --config packages/game-sdk/vite.config.ts && node scripts/embed-game-sdk.mjs",
@@ -50,7 +50,7 @@
     "test:render:browser": "npm run build:render && node --test tests/render.browser.mjs",
     "test:styles:browser": "npm run build:native && node --test tests/styles.browser.mjs",
     "test:app:browser": "npm run build:native && node --test tests/app-shell.browser.mjs",
-    "test:ssr:browser": "node --test tests/ssr-hydration.browser.mjs",
+    "test:ssr:browser": "npm run build && node --test tests/ssr-hydration.browser.mjs",
     "test:billing": "node --test --experimental-strip-types tests/billing.test.ts",
     "test:maps": "node --test --experimental-strip-types tests/maps.test.ts",
     "test:mail": "node --test --experimental-strip-types tests/mail-*.test.ts",
@@ -78,7 +78,7 @@
     "build:game-loader": "node scripts/patch-native-bridges.mjs && node scripts/build-game-loader.mjs && node scripts/build-offline-game.mjs",
     "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs tests/offline-games.browser.mjs",
     "prepublishOnly": "node -e \"console.error('npm publishing is disabled; use the GitHub Release tarball'); process.exit(1)\"",
-    "build:native": "svelte-kit sync && node scripts/build-maplibre-worker.mjs && npm run build:sdk && npm run build:game-sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && BUILD_TARGET=native vite build"
+    "build:native": "svelte-kit sync && node scripts/docs-manifest.mjs && node scripts/build-maplibre-worker.mjs && npm run build:sdk && npm run build:game-sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && BUILD_TARGET=native vite build"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",

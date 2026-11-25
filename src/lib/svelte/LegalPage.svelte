@@ -1,51 +1,26 @@
 <script lang="ts">
-import { getLocale, t } from '../i18n.ts';
-import { markdownToHtml } from '../legal/markdown.ts';
-import { ALL_PAGES, fetchLegalMarkdown, LEGAL_PAGES, type LegalPageType } from '../legal/pages.ts';
+import type { LegalArticleContent } from '../docs/ssr-content.ts';
+import { t } from '../i18n.ts';
+import { ALL_PAGES, LEGAL_PAGES, type LegalPageType } from '../legal/pages.ts';
 import { navigate } from '../navigation.ts';
 
-let { type }: { type: LegalPageType } = $props();
+let { type, data }: { type: LegalPageType; data?: LegalArticleContent } = $props();
 
-let title = $state('');
-let effectiveDate = $state<string | null>(null);
-let bodyHtml = $state('');
-let error = $state(false);
+const title = $derived(data?.title ?? t(LEGAL_PAGES[type].titleKey));
+const effectiveDate = $derived(data?.effectiveDate ?? null);
+const bodyHtml = $derived(data?.bodyHtml ?? '');
 
 function go(path: string): void {
   void navigate(path);
 }
-
-$effect(() => {
-  const page = LEGAL_PAGES[type];
-  let cancelled = false;
-  title = t(page.titleKey);
-  error = false;
-  bodyHtml = '';
-  effectiveDate = null;
-
-  void (async () => {
-    let markdown: string;
-    try {
-      markdown = await fetchLegalMarkdown(page.fileName, getLocale());
-    } catch {
-      try {
-        markdown = await fetchLegalMarkdown(page.fileName, 'en');
-      } catch {
-        if (!cancelled) error = true;
-        return;
-      }
-    }
-    if (cancelled) return;
-    const match = markdown.match(/^Effective Date:\s*(.+)$/m);
-    effectiveDate = match?.[1] ?? null;
-    bodyHtml = markdownToHtml(markdown.replace(/^Effective Date:.+\n?/m, '').trim());
-  })();
-
-  return () => {
-    cancelled = true;
-  };
-});
 </script>
+
+<svelte:head>
+  {#if data}
+    <meta name="description" content={data.description} />
+    <link rel="canonical" href={data.canonical} />
+  {/if}
+</svelte:head>
 
 <div class="legal-page">
   <div class="legal-content-wrapper">
@@ -67,14 +42,14 @@ $effect(() => {
     </header>
 
     <article class="legal-content">
-      {#if error}
+      {#if !data}
         <div class="legal-error">{t('legal.load_failed')}</div>
       {:else}
         <h1 class="legal-title fx-display">{title}</h1>
         {#if effectiveDate}
           <div class="legal-effective-date">{t('legal.effective_date', { date: effectiveDate })}</div>
         {/if}
-        <!-- The markdown transform escapes all input before emitting tags. -->
+        <!-- The pure markdown transform escapes all input before emitting tags. -->
         <div class="legal-body">{@html bodyHtml}</div>
       {/if}
     </article>

@@ -202,6 +202,41 @@ describe('security guards', () => {
     }
   });
 
+  it('covers static HTML documents with a narrow CSP', () => {
+    // /sandbox/index.html and /404.html are served as static assets, so the
+    // per-request CSP emitted by SvelteKit never reaches them. Neither document
+    // contains inline scripts, so a static header needs no hashes.
+    const headers = readFileSync(join(ROOT, '_headers'), 'utf8');
+    const blocks = new Map<string, string>();
+    let current: string | null = null;
+    for (const line of headers.split('\n')) {
+      if (line.startsWith('/')) {
+        current = line.trim();
+        blocks.set(current, '');
+      } else if (line.startsWith('  ') && current) {
+        blocks.set(current, `${blocks.get(current) ?? ''}${line}\n`);
+      } else if (line.trim() && !line.trim().startsWith('#')) {
+        current = null;
+      }
+    }
+
+    for (const path of ['/sandbox/*', '/404.html']) {
+      const block = blocks.get(path) ?? '';
+      assert.ok(block, `_headers must cover ${path}`);
+      assert.match(block, /Content-Security-Policy:\s*[^\n]+/, `${path} must send a CSP`);
+      for (const directive of [
+        "default-src 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'self'",
+        "script-src 'none'",
+      ]) {
+        assert.ok(block.includes(directive), `${path} CSP must include ${directive}`);
+      }
+      assert.doesNotMatch(block, /allow-same-origin/, `${path} CSP must not relax the sandbox boundary`);
+    }
+  });
+
   it('does not log session tokens, signed requests, or push response bodies', () => {
     // Global side effects (formerly main.ts) now live across the Svelte shell
     // and the split-out lib modules, so scan all of src instead of one file.

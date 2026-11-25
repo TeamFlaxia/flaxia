@@ -23,3 +23,19 @@ test('all SSR data loads use private, no-store', async () => {
     assert.doesNotMatch(source, /s-maxage/, `${file} must not advertise an edge cache lifetime`);
   }
 });
+
+test('the SSR hook applies a central private/no-store policy to HTML', async () => {
+  const hook = await readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
+  assert.match(hook, /text\/html/, 'the cache policy must be limited to HTML responses');
+  assert.match(hook, /headers\.has\(['"]cache-control['"]\)/, 'an explicit Cache-Control must be respected');
+  assert.match(hook, /['"]private, no-store['"]/, 'HTML without Cache-Control must not be shared');
+
+  // The hook is not allowed to override the five data routes that already set
+  // their own header; those are covered by the behavioural tests in
+  // tests/ssr-hooks.test.ts and the per-route assertions above.
+  assert.doesNotMatch(
+    hook,
+    /headers\.set\(['"]cache-control['"], ['"]public/,
+    'SSR HTML must never opt in to shared caching',
+  );
+});

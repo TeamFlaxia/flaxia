@@ -104,6 +104,78 @@ async function sourceFiles(dir: string): Promise<string[]> {
   return files.flat();
 }
 
+function metaContent(html: string, attribute: 'property' | 'name', key: string): string | null {
+  for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
+    if (!new RegExp(`${attribute}=["']${key}["']`, 'i').test(tag)) continue;
+    const content = tag.match(/content=["']([^"']*)["']/i);
+    if (content) return content[1];
+  }
+  return null;
+}
+
+function canonical(html: string): string | null {
+  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
+    if (!/rel=["']canonical["']/i.test(tag)) continue;
+    const href = tag.match(/href=["']([^"']*)["']/i);
+    if (href) return href[1];
+  }
+  return null;
+}
+
+test('game SEO helpers are SSR-safe and shared with the Svelte routes', async () => {
+  const source = await readFile(new URL('../src/lib/game-seo.ts', import.meta.url), 'utf8');
+  assert.match(source, /export function buildGameTitle/, 'buildGameTitle must be restored for SSR');
+  assert.match(source, /export function buildGameDescription/, 'buildGameDescription must be restored for SSR');
+  assert.doesNotMatch(source, /\bdocument\b|\bwindow\b/, 'game SEO helpers must not use browser globals');
+
+  const renderer = await readFile(new URL('../functions/lib/render-html.ts', import.meta.url), 'utf8');
+  const blogPosting = renderer.slice(renderer.indexOf('export function renderBlogPostingJsonLd'));
+  assert.match(blogPosting.slice(0, 800), /headline:/, 'BlogPosting must carry a headline');
+  assert.doesNotMatch(
+    blogPosting.slice(0, 800),
+    /headline:\s*`\$\{authorName\} on Flaxia`/,
+    'headline must not be just the author',
+  );
+
+  for (const path of ['src/routes/thread/[id]/+page.svelte', 'src/routes/arcade/[id]/+page.svelte']) {
+    const page = await readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+    assert.match(page, /buildGameTitle/, `${path} must use buildGameTitle`);
+    assert.match(page, /buildGameDescription/, `${path} must use buildGameDescription`);
+  }
+});
+
+test('BlogPosting JSON-LD uses one origin, the post headline and the og:image', async () => {
+  const { id, text } = await seedPost();
+  const html = await ssrHtml(`/thread/${id}`);
+  const post = ldBlocks(html).find((block) => block.value['@type'] === 'BlogPosting');
+  assert.ok(post, '/thread/[id] must emit BlogPosting JSON-LD');
+
+  const headline = String(post.value.headline ?? '');
+  assert.ok(headline, 'headline must be present');
+  assert.ok(
+    headline.includes(text) || text.includes(headline),
+    `headline must be the post title/excerpt, got: ${headline}`,
+  );
+  assert.doesNotMatch(headline, /^.+ on Flaxia$/, 'headline must not be only the author name');
+
+  assert.equal(post.value.image, metaContent(html, 'property', 'og:image'), 'JSON-LD image must match og:image');
+  assert.equal(post.value.url, `https://flaxia.app/thread/${id}`, 'JSON-LD URL must use the production origin');
+  assert.equal(metaContent(html, 'property', 'og:url'), `https://flaxia.app/thread/${id}`, 'og:url must match JSON-LD');
+  assert.equal(canonical(html), `https://flaxia.app/thread/${id}`, 'canonical must match JSON-LD');
+});
+
+test('arcade game JSON-LD description, headline and URLs agree with the page head', async () => {
+  const { id, text } = await seedPost();
+  const html = await ssrHtml(`/arcade/${id}`);
+  const post = ldBlocks(html).find((block) => block.value['@type'] === 'BlogPosting');
+  assert.ok(post, `/arcade/${id} must emit BlogPosting JSON-LD, got types: ${typesOf(html).join(', ') || 'none'}`);
+  assert.match(String(post.value.description), /Flaxia Arcade/, 'game description must mention Flaxia Arcade');
+  assert.match(String(post.value.headline), new RegExp(text.split(' ')[1] ?? text), 'headline must use the game title');
+  assert.equal(post.value.url, `https://flaxia.app/arcade/${id}`);
+  assert.equal(post.value.image, metaContent(html, 'property', 'og:image'));
+  assert.equal(canonical(html), `https://flaxia.app/arcade/${id}`);
+});
+
 test('src emits ld+json only through the escaped renderJsonLd helper', async () => {
   const srcRoot = new URL('../src/', import.meta.url);
   const files = await sourceFiles(srcRoot.pathname);
@@ -151,10 +223,11 @@ test('src emits ld+json only through the escaped renderJsonLd helper', async () 
 
 test('root layout leaves the head to +error.svelte on error responses', async () => {
   const layout = await readFile(new URL('../src/routes/+layout.svelte', import.meta.url), 'utf8');
-  assert.match(layout, /page\.status\s*>=\s*400/, 'layout must detect error responses from page.status');
+  const script = layout.match(/<script[\s\S]*?<\/script>/)?.[0] ?? '';
+  assert.doesNotMatch(script, /page\.status/, 'page.status must not be read at module level');
   const head = layout.match(/<svelte:head>([\s\S]*?)<\/svelte:head>/)?.[1] ?? '';
-  const guard = head.indexOf('{#if !isError}');
-  assert.ok(guard >= 0, 'layout head must be guarded by !isError');
+  const guard = head.indexOf('{#if page.status < 400}');
+  assert.ok(guard >= 0, 'layout head must be guarded by the render-path page.status check');
   for (const marker of ['<title', '{@html jsonLd}', '<meta']) {
     assert.ok(
       head.indexOf(marker) > guard,

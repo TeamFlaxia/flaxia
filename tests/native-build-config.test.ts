@@ -73,3 +73,35 @@ test('cap:build:android:release builds static dist/ web assets before cap sync',
     'cap:build:android:release must build the static SPA into dist/ before cap sync',
   );
 });
+
+test('cap:sync applies the native bridge patches in both Android jobs', async () => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  assert.match(
+    pkg.scripts['cap:sync'] ?? '',
+    /patch-native-bridges\.mjs[\s\S]*&&[\s\S]*npx cap sync/,
+    'cap:sync must patch bridges before copying web assets',
+  );
+  for (const { workflow, job } of CAPACITOR_JOBS) {
+    const section = jobSection(await readFile(new URL(workflow, import.meta.url), 'utf8'), job);
+    assert.match(section, /npm run cap:sync\b/, `${job} must use the patching cap:sync flow`);
+    assert.doesNotMatch(section, /\bnpx cap sync android\b/, `${job} bypasses the native bridge patches`);
+  }
+});
+
+test('release Tauri jobs rely on tauri.conf beforeBuildCommand instead of a plain build', async () => {
+  const release = await readFile(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
+  for (const job of ['tauri-linux', 'tauri-windows']) {
+    const section = jobSection(release, job);
+    const buildIndex = section.indexOf('npm run tauri:build');
+    assert.notEqual(buildIndex, -1, `${job} must run tauri:build`);
+    assert.doesNotMatch(
+      section.slice(0, buildIndex),
+      /(?:^|[\s'"])npm run build(?:\s|$)/,
+      `${job} runs a redundant plain npm run build before tauri:build`,
+    );
+  }
+  const tauri = await readFile(new URL('../src-tauri/tauri.conf.base.json', import.meta.url), 'utf8');
+  assert.match(tauri, /"beforeBuildCommand":\s*"npm run build:(?:desktop|native)"/);
+});

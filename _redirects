@@ -3,3 +3,4 @@
 # because @sveltejs/adapter-cloudflare cannot express them in _routes.json.
 /whitepaper /docs/whitepaper 308
 / /home 301
+/legal /privacy 308

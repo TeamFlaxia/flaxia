@@ -8,6 +8,16 @@
 # hashes match the rendered inline scripts. A static header here would
 # intersect with that policy and block the hashed bootstrap scripts.
 
+# These static documents bypass the SvelteKit worker, so they do not receive
+# its per-request CSP. Neither contains inline scripts, which lets them use a
+# static hash-free policy.
+/sandbox/*
+  Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
+
+/404.html
+  Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'
+  X-Content-Type-Options: nosniff
 
 # Export popup only: cross-origin isolation for the multithreaded ffmpeg core.
 # Deliberately NOT site-wide — COEP would break third-party iframes and images.

@@ -30,3 +30,17 @@ test('both server and browser use the shared cookie parser', async () => {
   const hook = await readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
   assert.match(hook, /localeFromCookie\(/, 'SSR hook must use the same cookie parser');
 });
+
+test('SSR persists the negotiated locale in the cookie and varies HTML by Accept-Language', async () => {
+  const hook = await readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
+  assert.match(hook, /cookies\.set\(\s*['"]flaxia_locale['"]/, 'SSR must persist the negotiated locale');
+  assert.match(hook, /Accept-Language/, 'HTML must vary by the header used to negotiate the locale');
+  assert.match(hook, /['"]text\/html['"]/, 'Vary must only apply to HTML responses');
+
+  // Behavioural coverage (cookie issuance, malformed cookies, no 500) lives in
+  // tests/ssr-hooks.test.ts; this guard keeps the SSR/browser contract visible
+  // next to the shared cookie parser.
+  const i18n = await readFile(new URL('../src/lib/i18n.ts', import.meta.url), 'utf8');
+  const setLocale = i18n.slice(i18n.indexOf('export async function setLocale'), i18n.indexOf('export function t('));
+  assert.match(setLocale, /document\.cookie/, 'browser locale changes must mirror back to the SSR cookie');
+});

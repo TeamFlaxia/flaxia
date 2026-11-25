@@ -70,7 +70,8 @@ adapter-cloudflare cannot express `:param` rules in `_routes.json`.
 ## Verification
 
 - `npm run typecheck`
-- `npm run build` → `.svelte-kit/cloudflare/_worker.js`
+- `npm run build` → `.svelte-kit/cloudflare/_worker.js` (Cloudflare Pages);
+  `npm run build:native` → `dist/` (static SPA for Capacitor/Tauri)
 - `npm run dev:test` (port 8788) then `curl` `/home`, `/thread/:id`,
   `/users/:username`, `/arcade` and check that the HTML contains post text and
   `Content-Security-Policy: ... 'sha256-...'`.

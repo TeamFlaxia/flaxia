@@ -106,11 +106,18 @@ export function renderBlogPostingJsonLd(
   postUrl: string,
   description?: string,
   image?: string,
+  headline?: string,
 ): string {
   return renderJsonLd({
     '@context': 'https://schema.org',
     '@type': 'BlogPosting',
-    headline: `${authorName} on Flaxia`,
+    // The headline is the post/game title (or a content excerpt), never just
+    // the author name — schema.org treats it as the article's title.
+    headline:
+      headline ||
+      description ||
+      stripPostColors(post.text).split('\n')[0].trim().slice(0, 110) ||
+      `${authorName} on Flaxia`,
     description: description || post.game_description || stripPostColors(post.text).slice(0, 200),
     image: image || undefined,
     url: postUrl,

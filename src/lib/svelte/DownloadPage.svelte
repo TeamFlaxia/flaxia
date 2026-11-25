@@ -9,7 +9,7 @@ import {
   recommendedAppPlatform,
   resolveWindowsMsiUrl,
 } from '../../lib/app-download.ts';
-import { detectDevicePlatform } from '../../lib/device-platform.ts';
+import { type DevicePlatform, detectDevicePlatform } from '../../lib/device-platform.ts';
 import { t } from '../../lib/i18n.ts';
 import { type IconName, iconMarkup } from '../../lib/icons.ts';
 
@@ -28,17 +28,24 @@ function iconHtml(name: IconName, size = 16): string {
   return iconMarkup(name, { width: String(size), height: String(size) });
 }
 
-const device = detectDevicePlatform();
-const recommended = recommendedAppPlatform(device);
-const recommendedLabel = recommended ? t(PLATFORM_LABEL_KEYS[recommended]) : null;
-const platforms = orderAppPlatforms(device);
-const heroTitle = recommendedLabel
-  ? t('app_download.recommended_for_device', { platform: recommendedLabel })
-  : t('app_download.available_for_devices');
+// navigator is unavailable during SSR. Start neutral so the server HTML and
+// the first client render agree, then adopt the real device in onMount.
+let device = $state<DevicePlatform>('other');
+const recommended = $derived(recommendedAppPlatform(device));
+const recommendedLabel = $derived(recommended ? t(PLATFORM_LABEL_KEYS[recommended]) : null);
+const platforms = $derived(orderAppPlatforms(device));
+const heroTitle = $derived(
+  recommendedLabel
+    ? t('app_download.recommended_for_device', { platform: recommendedLabel })
+    : t('app_download.available_for_devices'),
+);
+// Must match the canonical URL emitted by the root layout on every origin.
+const canonicalUrl = 'https://flaxia.app/download';
 
 let windowsUrl = $state(APP_RELEASES_URL);
 
 onMount(() => {
+  device = detectDevicePlatform();
   void resolveWindowsMsiUrl().then((url) => {
     if (url) windowsUrl = url;
   });
@@ -47,7 +54,7 @@ onMount(() => {
 
 <svelte:head>
   <meta name="description" content={t('app_download.subtitle')} />
-  <meta property="og:url" content="{typeof window !== 'undefined' ? window.location.origin : ''}/download" />
+  <meta property="og:url" content={canonicalUrl} />
 </svelte:head>
 
 <div class="download-page">

@@ -95,27 +95,65 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
   const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
-  assert.doesNotMatch(headers, /^\s*Content-Security-Policy:/m, 'a static CSP would intersect the nonce policy');
+  // A site-wide static CSP would intersect the per-request nonce policy, but
+  // static documents that bypass the worker still need one of their own.
+  const staticCspPaths = [...headers.matchAll(/^(\S+)\s*\n\s*Content-Security-Policy:/gm)].map((m) => m[1]);
+  assert.ok(!staticCspPaths.includes('/*'), 'a static /* CSP would intersect the nonce policy');
+  for (const path of staticCspPaths) {
+    assert.match(
+      path,
+      /^\/(?:sandbox\/\*|404\.html|export-popup(?:\.html)?)$/,
+      `static CSP is only for worker-bypassing assets, got ${path}`,
+    );
+  }
 });
 
-test('bundles stay within budget (initial entry + total JS)', async () => {
-  const assets = new URL('../dist/assets/', import.meta.url);
-  let files: string[];
-  try {
-    files = await readdir(assets);
-  } catch {
-    console.log('skip: dist/ not built (run npm run build first)');
+test('bundles stay within budget (initial entry + total JS)', async (t) => {
+  // Every CI job that runs `npm run build` has the SvelteKit client output.
+  // `dist/` is produced by `npm run build:native`, which platform-ui never
+  // runs, so check the SSR output first and only then the native output.
+  const candidates = [
+    new URL('../.svelte-kit/output/client/_app/immutable/', import.meta.url),
+    new URL('../dist/_app/immutable/', import.meta.url),
+  ];
+  let immutable: URL | undefined;
+  for (const candidate of candidates) {
+    try {
+      if ((await stat(candidate)).isDirectory()) {
+        immutable = candidate;
+        break;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (!immutable) {
+    t.skip('no SvelteKit client JS built (run npm run build first)');
     return;
   }
-  const js = files.filter((f) => f.endsWith('.js'));
-  let total = 0;
-  let entry = 0;
-  for (const f of js) {
-    const size = (await stat(new URL(f, assets))).size;
-    total += size;
-    if (/^main-[A-Za-z0-9_-]+\.js$/.test(f)) entry = size;
+
+  // SvelteKit emits entry/start + entry/app instead of Vite's main-*.js. Both
+  // are fetched on the first page load; chunks/ and nodes/ hold lazy routes.
+  async function sizes(dir: URL): Promise<{ entry: number; total: number }> {
+    let entry = 0;
+    let total = 0;
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const path = new URL(`${item.name}${item.isDirectory() ? '/' : ''}`, dir);
+      if (item.isDirectory()) {
+        const nested = await sizes(path);
+        entry += nested.entry;
+        total += nested.total;
+      } else if (item.name.endsWith('.js')) {
+        const size = (await stat(path)).size;
+        total += size;
+        if (dir.pathname.endsWith('/entry/')) entry += size;
+      }
+    }
+    return { entry, total };
   }
-  assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
+
+  const { entry, total } = await sizes(immutable);
+  assert.ok(entry > 0, `expected a client entry bundle under ${immutable.pathname}`);
   assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
   // The budget counts lazy chunks too. MapLibre (engine + worker) is only
   // fetched when /maps opens, but it is still part of the shipped client JS.

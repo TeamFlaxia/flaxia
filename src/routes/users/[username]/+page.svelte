@@ -31,7 +31,7 @@ const ogImage = $derived(
 const jsonLd = $derived.by(() => {
   const user = data.user;
   if (!user || !username) return '';
-  const profileUrl = `${page.url.origin}/users/${encodeURIComponent(username)}`;
+  const profileUrl = `${SITE_ORIGIN}/users/${encodeURIComponent(username)}`;
   const seoUser = {
     ...user,
     display_name: String(user.display_name || username),
@@ -41,10 +41,10 @@ const jsonLd = $derived.by(() => {
     renderPersonJsonLd(seoUser, profileUrl),
     renderBreadcrumbJsonLd(
       [
-        { label: 'Home', url: `${page.url.origin}/home` },
+        { label: 'Home', url: `${SITE_ORIGIN}/home` },
         { label: seoUser.display_name, url: profileUrl },
       ],
-      page.url.origin,
+      SITE_ORIGIN,
     ),
   ].join('\n');
 });
@@ -55,6 +55,7 @@ onMount(() => {
 </script>
 
 <svelte:head>
+  <title>{metaTitle}</title>
   {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={description} />
   <meta property="og:title" content={metaTitle} />

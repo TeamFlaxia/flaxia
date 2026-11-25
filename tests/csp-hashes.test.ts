@@ -34,11 +34,12 @@ test('SvelteKit CSP allows Google Fonts and jsDelivr font assets', async () => {
 
 test('the static _headers file does not shadow the SvelteKit CSP', async () => {
   const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
-  assert.doesNotMatch(
-    headers,
-    /^\s*Content-Security-Policy:/m,
-    'a static CSP header would intersect with the per-request hash policy',
-  );
+  // Only hash-free static HTML assets may have a path-scoped static CSP; a
+  // site-wide one would intersect with the per-request hash policy.
+  const siteWide = headers.match(/^\/\*\n(?:[ \t]+[^\n]*\n)+/m)?.[0] ?? '';
+  assert.doesNotMatch(siteWide, /Content-Security-Policy:/, 'no site-wide static CSP');
+  const scoped = [...headers.matchAll(/^(\/\S+)\n\s+Content-Security-Policy:/gm)].map((m) => m[1]);
+  assert.ok(scoped.includes('/sandbox/*') && scoped.includes('/404.html'));
   assert.match(headers, /X-Frame-Options: DENY/);
   assert.match(headers, /X-Content-Type-Options: nosniff/);
   assert.match(headers, /Strict-Transport-Security/);

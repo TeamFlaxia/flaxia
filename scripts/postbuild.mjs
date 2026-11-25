@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { WORKER_PATCH_MARKER } from './dev-worker-watch.mjs';
 import { writeDocsManifest } from './docs-manifest.mjs';
 
 // adapter-cloudflare writes `_routes.json` before postbuild adds static files.
@@ -26,6 +27,23 @@ export function ensureStaticRouteExclusions(
   writeFileSync(routesFile, `${JSON.stringify(routes, null, 2)}\n`);
 }
 
+/**
+ * `writeDocsManifest()` creates docs/index.json after the adapter froze the
+ * worker's `assets` Set. Pages routes bypass the worker thanks to _routes.json,
+ * but SvelteKit's SSR `event.fetch('/docs/index.json')` is handled in-process
+ * by the worker, so the manifest must also be in that Set.
+ */
+export function ensureDocsAssetInWorker(outDir) {
+  const workerFile = join(outDir, '_worker.js');
+  if (!existsSync(workerFile)) throw new Error(`${workerFile} missing — is this an adapter-cloudflare output?`);
+  const worker = readFileSync(workerFile, 'utf-8');
+  if (worker.includes('"docs/index.json"')) return false;
+  const marker = 'const assets = new Set([';
+  if (!worker.includes(marker)) throw new Error('adapter-cloudflare worker template changed: missing assets Set');
+  writeFileSync(workerFile, worker.replace(marker, `${marker}"docs/index.json",`));
+  return true;
+}
+
 const hashBody = (body) => `'sha256-${createHash('sha256').update(body).digest('base64')}'`;
 const inlineBodies = (file) => {
   if (!existsSync(file)) return [];
@@ -35,34 +53,26 @@ const inlineBodies = (file) => {
     .map(([, , body]) => body);
 };
 
-async function main() {
-  const out = '.svelte-kit/cloudflare';
-  if (!existsSync(out)) throw new Error(`${out} missing — did the adapter-cloudflare build run?`);
+/**
+ * Inject `platform.env` / `platform.context` into adapter-cloudflare's worker.
+ * Returns true when the worker was patched, false when it already had the
+ * patch. An already-patched worker is never reopened: the second run would
+ * duplicate the import, the AsyncLocalStorage const and the closure.
+ */
+export function ensureWorkerPlatformPatch(outDir) {
+  const workerFile = join(outDir, '_worker.js');
+  if (!existsSync(workerFile)) throw new Error(`${workerFile} missing — is this an adapter-cloudflare output?`);
+  let worker = readFileSync(workerFile, 'utf-8');
 
-  // The pinned Crowd node bundle is loaded with a runtime dynamic import
-  // (/crowd/v<version>-0/index.js), never bundled.
-  const { CROWD_NODE_VERSION } = await import('../shared/crowd-node.ts');
-  const crowdSrc = 'node_modules/@flaxia/node/dist';
-  if (!existsSync(crowdSrc)) throw new Error('@flaxia/node is not installed; run npm install');
-  const crowdDest = join(out, `crowd/v${CROWD_NODE_VERSION}-0`);
-  cpSync(crowdSrc, crowdDest, {
-    recursive: true,
-    filter: (src) => !/(^|[\\/])__tests__([\\/]|$)/.test(src) && !/\.d\.ts(\.map)?$/.test(src) && !/\.map$/.test(src),
-  });
-  console.log(`Post-build: copied Crowd node ${CROWD_NODE_VERSION} to ${crowdDest}`);
-
-  // The export popup is a standalone HTML entry outside the SvelteKit router.
-  if (existsSync('export-popup.html')) {
-    copyFileSync('export-popup.html', join(out, 'export-popup.html'));
-  }
+  // Same marker as scripts/dev-worker-watch.mjs: an unpatched worker is the
+  // only one that may be rewritten.
+  if (worker.includes(WORKER_PATCH_MARKER)) return false;
 
   // adapter-cloudflare@8 targets Pages and its worker template drops the
   // `ctx` argument, so `event.platform` never reaches SvelteKit. The legacy API
   // needs `platform.env` (bindings) and `platform.context.waitUntil` (ActivityPub
   // delivery, background scanning). Inject both through AsyncLocalStorage so
   // concurrent requests in one isolate cannot see each other's context.
-  const workerFile = join(out, '_worker.js');
-  let worker = readFileSync(workerFile, 'utf-8');
   const workerPatches = [
     [
       "import { env } from 'cloudflare:workers';",
@@ -88,7 +98,41 @@ async function main() {
     worker = worker.replace(from, to);
   }
   writeFileSync(workerFile, worker);
-  console.log('Post-build: injected platform env/context into _worker.js');
+  return true;
+}
+
+async function main() {
+  const out = '.svelte-kit/cloudflare';
+  if (!existsSync(out)) throw new Error(`${out} missing — did the adapter-cloudflare build run?`);
+
+  // The pinned Crowd node bundle is loaded with a runtime dynamic import
+  // (/crowd/v<version>-0/index.js), never bundled.
+  const { CROWD_NODE_VERSION } = await import('../shared/crowd-node.ts');
+  const crowdSrc = 'node_modules/@flaxia/node/dist';
+  if (!existsSync(crowdSrc)) throw new Error('@flaxia/node is not installed; run npm install');
+  const crowdDest = join(out, `crowd/v${CROWD_NODE_VERSION}-0`);
+  cpSync(crowdSrc, crowdDest, {
+    recursive: true,
+    filter: (src) => !/(^|[\\/])__tests__([\\/]|$)/.test(src) && !/\.d\.ts(\.map)?$/.test(src) && !/\.map$/.test(src),
+  });
+  console.log(`Post-build: copied Crowd node ${CROWD_NODE_VERSION} to ${crowdDest}`);
+
+  // The export popup is a standalone HTML entry outside the SvelteKit router.
+  if (existsSync('export-popup.html')) {
+    copyFileSync('export-popup.html', join(out, 'export-popup.html'));
+  }
+
+  // postbuild runs again after each dev hot rebuild, so patching must be
+  // idempotent: applying twice duplicates the import/const and leaves a worker
+  // with two __als declarations.
+  if (ensureWorkerPlatformPatch(out)) {
+    console.log('Post-build: injected platform env/context into _worker.js');
+  } else {
+    console.log('Post-build: platform env/context already present in _worker.js');
+  }
+  if (ensureDocsAssetInWorker(out)) {
+    console.log('Post-build: added docs/index.json to the worker asset set');
+  }
 
   // The docs manifest is generated after the adapter copies `public/`.
   writeDocsManifest(join(out, 'docs'));

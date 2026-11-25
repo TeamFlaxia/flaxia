@@ -121,16 +121,23 @@ DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール�
 
 ## Main Pages Deployment
 
-```bash
-# Build and deploy to Cloudflare Pages
-npm run build && npm run deploy
+`npm run build` uses `@sveltejs/adapter-cloudflare`: it writes `_worker.js` and
+the static assets to `.svelte-kit/cloudflare`, which is also
+`pages_build_output_dir` in `wrangler.toml`. `npm run build:native` is a
+different build (static SPA into `dist/`) for Capacitor and Tauri only — never
+deploy that directory to Pages.
 
-# This runs:
-# CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app \
-#   wrangler pages deploy dist
+```bash
+# CONTENT_ORIGIN / SANDBOX_ORIGIN are read by vite.config.ts at BUILD time,
+# so set them on npm run build (as the deploy workflow does), not on deploy.
+CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app npm run build
+npm run deploy
+
+# `npm run deploy` runs:
+#   wrangler pages deploy .svelte-kit/cloudflare
 ```
 
-The build output is in `dist/`.
+The Pages build output is in `.svelte-kit/cloudflare/`.
 
 ## Crowd integration secrets
 

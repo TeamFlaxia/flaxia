@@ -1,5 +1,4 @@
 <script lang="ts">
-import { page } from '$app/state';
 import { renderBreadcrumbJsonLd, renderCollectionPageJsonLd } from '../../lib/seo-jsonld.ts';
 // biome-ignore lint/correctness/noUnusedImports: Svelte prop used in markup
 import ArcadeView from '../../lib/svelte/ArcadeView.svelte';
@@ -15,7 +14,9 @@ const OG_IMAGE = `${SITE_ORIGIN}/og-default-v2.png`;
 let { data }: PageProps = $props();
 
 const jsonLd = $derived.by(() => {
-  const baseUrl = page.url.origin;
+  // One origin for canonical, og:url and JSON-LD so the same entity never has
+  // two URLs (localhost in dev/test pages vs production in crawled pages).
+  const baseUrl = SITE_ORIGIN;
   const url = `${baseUrl}/arcade`;
   return [
     renderCollectionPageJsonLd({
@@ -39,6 +40,7 @@ const jsonLd = $derived.by(() => {
 </script>
 
 <svelte:head>
+  <title>{META_TITLE}</title>
   {#if jsonLd}{@html jsonLd}{/if}
   <meta name="description" content={DESCRIPTION} />
   <meta property="og:title" content={META_TITLE} />

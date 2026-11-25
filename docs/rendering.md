@@ -331,12 +331,14 @@ npx playwright install chromium firefox
 npm run test:render:browser
 RENDER_BROWSER=firefox npm run test:render:browser
 
-# Built-CSS layer/geometry smoke (uses dist/assets/main-*.css)
+# Built-CSS layer/geometry smoke (uses the native build's CSS in
+# dist/_app/immutable/assets/, produced by npm run build:native)
 npm run test:styles:browser
 STYLES_BROWSER=firefox npm run test:styles:browser
 STYLES_BROWSER=webkit npm run test:styles:browser
 
-# Real-app shell smoke: boots dist/ with a stubbed /api and blocked third parties
+# Real-app shell smoke: boots the npm run build:native output in dist/
+# with a stubbed /api and blocked third parties
 npm run test:app:browser
 APP_BROWSER=firefox npm run test:app:browser
 ```

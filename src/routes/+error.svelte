@@ -10,7 +10,7 @@ const message = $derived(page.error?.message || (status === 404 ? 'Not Found' : 
   <title>Flaxia - {status}</title>
   <meta name="description" content="Flaxia could not load this page ({status}). {message}" />
   <meta name="robots" content="noindex, nofollow" />
-  <link rel="canonical" href={page.url.href} />
+  <link rel="canonical" href="https://flaxia.app/home" />
 </svelte:head>
 
 <main class="main-content" aria-labelledby="error-heading">

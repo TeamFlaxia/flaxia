@@ -1,8 +1,10 @@
 // Docs manifest shared by the dev middleware, the build plugin and postbuild.
-// The Vite plugin's closeBundle can run before adapter-static finishes writing
-// dist/, so `scripts/postbuild.mjs` writes the same file again afterwards.
+// The Vite plugin's closeBundle can run before adapter-cloudflare finishes
+// writing .svelte-kit/cloudflare, so `scripts/postbuild.mjs` writes the same
+// file again afterwards.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function scanMarkdownFiles(dir) {
   const results = [];
@@ -51,4 +53,10 @@ export function buildDocsManifest(docsDir = join(process.cwd(), 'public/docs')) 
 export function writeDocsManifest(outDir) {
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, 'index.json'), JSON.stringify(buildDocsManifest()));
+}
+
+// Generate before `vite build` so SvelteKit's manifest.assets includes the file;
+// SSR's event.fetch() only serves assets known at build time.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  writeDocsManifest(join(process.cwd(), 'public/docs'));
 }

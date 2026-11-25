@@ -13,6 +13,8 @@ const SECURITY_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ['Strict-Transport-Security', 'max-age=31536000; includeSubDomains'],
 ];
 
+const VARY_ACCEPT_LANGUAGE = /(?:^|,)\s*accept-language\s*(?:,|$)/i;
+
 export function withSecurityHeaders(response: Response): Response {
   // 101 responses carry a WebSocket and cannot be reconstructed with new headers.
   if (response.status === 101) return response;
@@ -20,6 +22,18 @@ export function withSecurityHeaders(response: Response): Response {
   for (const [name, value] of SECURITY_HEADERS) {
     if (!headers.has(name)) headers.set(name, value);
   }
+
+  // SSR HTML is built with the viewer's Accept-Language and cookies (which are
+  // forwarded to the internal API). Caches must neither share it keyed only on
+  // the URL nor ignore the header that selected its locale/translations.
+  // Data endpoints (which already set Cache-Control) keep their own policy.
+  if ((headers.get('content-type') ?? '').toLowerCase().includes('text/html')) {
+    const vary = headers.get('vary');
+    if (!vary) headers.set('vary', 'Accept-Language');
+    else if (!VARY_ACCEPT_LANGUAGE.test(vary)) headers.set('vary', `${vary}, Accept-Language`);
+    if (!headers.has('cache-control')) headers.set('cache-control', 'private, no-store');
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -84,23 +98,24 @@ function previewNotFound(): Response {
   );
 }
 
-async function loadLocale(locale: string, fetchFn: typeof fetch): Promise<LocaleData> {
+export async function loadLocale(locale: string, fetchFn: typeof fetch): Promise<LocaleData> {
   let promise = localeCache.get(locale);
   if (!promise) {
     promise = (async () => {
       const read = async (name: string): Promise<Record<string, string>> => {
-        try {
-          const response = await fetchFn(`/locales/${name}.json`);
-          if (!response.ok) return {};
-          return (await response.json()) as Record<string, string>;
-        } catch {
-          return {};
-        }
+        const response = await fetchFn(`/locales/${name}.json`);
+        if (!response.ok) throw new Error(`Failed to load locale ${name}: ${response.status}`);
+        return (await response.json()) as Record<string, string>;
       };
       const [strings, fallback] = await Promise.all([read(locale), read('en')]);
       return { locale, strings, fallback };
     })();
     localeCache.set(locale, promise);
+    // A transient read failure must not be cached forever in this isolate.
+    // Only a successful load remains in the map; the next request retries.
+    void promise.catch(() => {
+      if (localeCache.get(locale) === promise) localeCache.delete(locale);
+    });
   }
   return promise;
 }
@@ -121,7 +136,24 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   const localeName = pickLocale(event.request);
-  const locale = await loadLocale(localeName, event.fetch);
+  // First paint must match the locale SSR picked. Persist it so every later
+  // request (including shared links with no Accept-Language) stays on the
+  // same locale instead of flipping on hydration.
+  // API and WebSocket responses must not carry a locale cookie: on a 101
+  // upgrade a Set-Cookie header breaks the handshake, and endpoint clients
+  // have no need for a UI locale.
+  const isApiOrSocket = event.url.pathname.startsWith('/api/') || event.request.headers.get('upgrade') === 'websocket';
+  if (!isApiOrSocket && !localeFromCookie(event.request.headers.get('cookie') ?? '')) {
+    event.cookies.set('flaxia_locale', localeName, {
+      path: '/',
+      maxAge: 31536000,
+      sameSite: 'lax',
+    });
+  }
+  // A missing/corrupt locale asset must degrade to translation keys, never 500.
+  const locale = await loadLocale(localeName, event.fetch).catch(
+    (): LocaleData => ({ locale: localeName, strings: {}, fallback: {} }),
+  );
   const response = await localeStore.run(locale, () =>
     resolve(event, { transformPageChunk: ({ html }) => applyHtmlLang(html, localeName) }),
   );

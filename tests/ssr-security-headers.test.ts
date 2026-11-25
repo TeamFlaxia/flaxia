@@ -62,7 +62,13 @@ test('OGP game player responses allow same-origin arcade embedding', async () =>
 
 test('main CSP applies to legacy paths; game previews use sandbox.flaxia.app', async () => {
   const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
-  assert.doesNotMatch(headers, /^\/sandbox(?:\/\*)?$/m, 'main-origin sandbox exceptions must stay retired');
+  // The old main-origin sandbox *route* exception is retired; the static
+  // sandbox assets may only receive a script-free defensive CSP.
+  assert.match(
+    headers,
+    /^\/sandbox\/\*\n\s+Content-Security-Policy:[^\n]*script-src 'none'/m,
+    'sandbox static assets must have a script-free CSP',
+  );
   assert.match(headers, /X-Frame-Options: DENY/);
 
   const legacyPage = await readFile(new URL('../public/sandbox/index.html', import.meta.url), 'utf8');
@@ -117,7 +123,12 @@ test('sandbox policies separate permissive games from the pinned PDF viewer', as
 test('SvelteKit emits the main policy; no static header or inline handlers shadow it', async () => {
   const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
   const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
-  assert.doesNotMatch(headers, /^\s*Content-Security-Policy:/m);
+  // SvelteKit owns the site-wide policy; static CSPs must be path-scoped to
+  // hash-free HTML assets (sandbox shell, 404, export popup).
+  const scopedPaths = [...headers.matchAll(/^(\/\S+)\n\s+Content-Security-Policy:/gm)].map((m) => m[1]);
+  assert.deepEqual(scopedPaths.sort(), ['/404.html', '/sandbox/*']);
+  const siteWide = headers.match(/^\/\*\n(?:[ \t]+[^\n]*\n)+/m)?.[0] ?? '';
+  assert.doesNotMatch(siteWide, /Content-Security-Policy:/, 'no site-wide static CSP');
   assert.match(config, /'script-src-attr': \['none'\]/);
   assert.doesNotMatch(config, /'unsafe-eval'/);
   assert.doesNotMatch(config, /script-src[^\]]*'unsafe-inline'/);

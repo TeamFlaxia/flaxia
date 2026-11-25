@@ -44,20 +44,20 @@ jobs:
           npm run dev:test > /tmp/auth-it-app.log 2>&1 &
           trap 'jobs -pr | xargs -r kill; cat /tmp/auth-it-{auth,app}.log' EXIT
           for i in $(seq 1 90); do
-            if curl -fsS "$FLAXIA_AUTH_TEST_URL/health" >/dev/null && curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log; then break; fi
+            if curl -fsS "$FLAXIA_AUTH_TEST_URL/health" >/dev/null && curl -fsS "$FLAXIA_APP_TEST_URL/home" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log; then break; fi
             sleep 1
           done
           curl -fsS "$FLAXIA_AUTH_TEST_URL/health" >/dev/null
-          curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
+          curl -fsS "$FLAXIA_APP_TEST_URL/home" >/dev/null
           grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log
           node --experimental-strip-types --test tests/integration/flaxia-auth.worker.test.ts
           npx wrangler pages dev .svelte-kit/cloudflare --port 8794 --inspector-port 0 --binding ENVIRONMENT=test --binding BASE_URL=http://localhost:8794 --binding AUTH_AUTHORITY_MODE=flaxia-auth --do NOTIFICATION_STREAM=NotificationStream@notif-stream --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker > /tmp/auth-it-direct.log 2>&1 &
           export FLAXIA_APP_TEST_URL=http://localhost:8794 FLAXIA_DIRECT_AUTH_TEST=1
           for i in $(seq 1 90); do
-            if curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log; then break; fi
+            if curl -fsS "$FLAXIA_APP_TEST_URL/home" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log; then break; fi
             sleep 1
           done
-          curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
+          curl -fsS "$FLAXIA_APP_TEST_URL/home" >/dev/null
           grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log
           node --experimental-strip-types --test tests/integration/flaxia-auth-direct.worker.test.ts
 
@@ -125,18 +125,25 @@ jobs:
       # Use the runner's installed Chrome; avoid OS package/browser downloads.
       - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
       - name: Verify SSR content survives hydration in a real browser
+        env:
+          # The browser test must fail (not skip) when the SSR server is down.
+          FLAXIA_SSR_REQUIRE_SERVER: '1'
         run: |
-          set -o pipefail
+          set -euo pipefail
           npm run dev:do &
           DO_PID=$!
           npm run dev:multiplayer &
           MP_PID=$!
           npm run dev:test &
           SERVER_PID=$!
+          trap 'kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 90); do
             if curl -fsS http://localhost:8788/home > /dev/null 2>&1; then break; fi
             sleep 1
           done
+          # Breaking out of the loop is not an assertion: fail the job when no
+          # server answered, instead of running a test that would skip itself.
+          curl -fsS http://localhost:8788/home >/dev/null
           EXIT_CODE=0
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/flaxia-browser-tools/node_modules/playwright/index.mjs" \
           CHROMIUM_EXECUTABLE=/usr/bin/google-chrome \
@@ -215,7 +222,7 @@ jobs:
           SERVER_PID=$!
           SERVER_READY=false
           for i in $(seq 1 60); do
-            if curl -s http://localhost:8788 > /dev/null 2>&1; then
+            if curl -s http://localhost:8788/home > /dev/null 2>&1; then
               echo "Server ready after ${i}s"
               SERVER_READY=true
               break
