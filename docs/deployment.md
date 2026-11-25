@@ -19,7 +19,7 @@ repo:
 
 | Component | Config | Deployment Command |
 |---|---|---|
-| Main Pages (SPA + API) | `wrangler.toml` | `npm run deploy` |
+| Main Pages (SvelteKit SSR + API) | `wrangler.toml` | `npm run deploy` |
 | Auth Worker (`flaxia-auth`, separate repo) | `../flaxia-auth/wrangler.jsonc` | run from the `TeamFlaxia/flaxia-auth` repo |
 | Mail Worker (`flaxia-mail`, separate repo; no `workers.dev` route) | `../flaxia-mail/worker/wrangler.toml` | deploy from the `TeamFlaxia/flaxia-mail` repo |
 | Queue Worker (ActivityPub delivery, `flaxia-ap-delivery`) | `wrangler.worker.toml`, `functions/queue-worker.ts` | GitHub Actions `deploy-queue` |
@@ -121,16 +121,25 @@ DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール�
 
 ## Main Pages Deployment
 
-```bash
-# Build and deploy to Cloudflare Pages
-npm run build && npm run deploy
+`npm run build` uses `@sveltejs/adapter-cloudflare`: it writes `_worker.js` and
+the static assets to `.svelte-kit/cloudflare`, which is also
+`pages_build_output_dir` in `wrangler.toml`. `npm run build:native` is a
+different build (static SPA into `dist/`) for Capacitor and Tauri only — never
+deploy that directory to Pages.
 
-# This runs:
-# CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app \
-#   wrangler pages deploy dist
+```bash
+# vite.config.ts bakes both origins into the bundle at BUILD time. The deploy
+# workflow sets SANDBOX_ORIGIN only; production builds therefore leave
+# CONTENT_ORIGIN empty. Set CONTENT_ORIGIN on the build command explicitly if a
+# build needs it — changing it at deploy time cannot affect a built bundle.
+SANDBOX_ORIGIN=https://sandbox.flaxia.app npm run build
+npm run deploy
+
+# `npm run deploy` runs:
+#   wrangler pages deploy .svelte-kit/cloudflare
 ```
 
-The build output is in `dist/`.
+The Pages build output is in `.svelte-kit/cloudflare/`.
 
 ## Crowd integration secrets
 

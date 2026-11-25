@@ -1,7 +1,7 @@
 name = "flaxia"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
-pages_build_output_dir = "dist"
+pages_build_output_dir = ".svelte-kit/cloudflare"
 
 [[durable_objects.bindings]]
 name = "NOTIFICATION_STREAM"

@@ -21,7 +21,9 @@ let pendingDraftId = view === 'compose' ? takePendingDraftId() || undefined : un
 // biome-ignore lint/correctness/noUnusedVariables: Svelte shorthand prop in markup
 let navProps = $state<Record<string, unknown>>({});
 
-const currentUser = $derived((getSessionUser() ?? null) as { id: string; username: string } | null);
+// The session only exists in the browser. Starting from null keeps SSR and
+// the first client render identical; onMount adopts the real session.
+let currentUser = $state<{ id: string; username: string } | null>(null);
 
 onMount(() => {
   void (async () => {
@@ -33,6 +35,7 @@ onMount(() => {
       void navigate('/explore', { replaceState: true });
       return;
     }
+    currentUser = user;
     navProps = {
       activeItem: 'mail',
       currentUser: user,

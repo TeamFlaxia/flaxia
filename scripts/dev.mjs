@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { watchWorkerPatch } from './dev-worker-watch.mjs';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -220,8 +221,21 @@ async function main() {
     return;
   }
   console.log('[dev] Building Flaxia…');
+  // SvelteKit freezes its asset manifest during vite build; SSR fetch() of
+  // /docs/index.json needs the file in public/ before that happens.
+  if ((await run('node', ['scripts/docs-manifest.mjs'])) !== 0) {
+    console.error('[dev] Failed to generate the docs manifest.');
+    shutdown(1);
+    return;
+  }
   if ((await run('npx', ['vite', 'build'])) !== 0) {
     console.error('[dev] Flaxia build failed.');
+    shutdown(1);
+    return;
+  }
+  // Copy the Crowd bundle and inject platform env/context into the worker.
+  if ((await run('node', ['--experimental-strip-types', 'scripts/postbuild.mjs'])) !== 0) {
+    console.error('[dev] Flaxia post-build failed.');
     shutdown(1);
     return;
   }
@@ -230,7 +244,7 @@ async function main() {
     'wrangler',
     'pages',
     'dev',
-    'dist',
+    '.svelte-kit/cloudflare',
     '--port',
     String(flaxiaPort),
     '--inspector-port',
@@ -270,6 +284,10 @@ async function main() {
   if (hot) {
     console.log('[dev] Watching Vite builds…');
     spawnTracked('npx', ['vite', 'build', '--watch'], { label: 'vite build --watch' });
+    // A watch rebuild overwrites _worker.js with the unpatched adapter template.
+    watchWorkerPatch(join(ROOT, '.svelte-kit/cloudflare/_worker.js'), () =>
+      run('node', ['--experimental-strip-types', 'scripts/postbuild.mjs']),
+    );
   }
 }
 

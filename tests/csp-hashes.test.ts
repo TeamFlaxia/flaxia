@@ -1,40 +1,51 @@
-// F2 guard: CSP hashes are derived from the inline scripts, not hand-maintained.
-// This recomputes the known sources and checks both CSP copies still allow them.
+// SvelteKit owns the page CSP: `csp.mode = 'hash'` emits a hash for every
+// inline script, so the same policy works for SSR and the static native build.
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { SECURITY_HEADERS } from '../functions/lib/ssr-security-headers.ts';
-import { ADSENSE_INLINE_BOOTSTRAP } from '../src/lib/adsense-bootstrap.ts';
-import { FLASH_PLAYER_BOOTSTRAP } from '../src/lib/flash-player-document.ts';
+import { appHtmlInlineScriptHashes } from '../scripts/app-html-hashes.mjs';
 
-const hashOf = (body) => `'sha256-${createHash('sha256').update(body).digest('base64')}'`;
+test('SvelteKit CSP is hash-based and covers app.html inline scripts', async () => {
+  const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  assert.match(config, /csp:\s*\{[\s\S]*?mode:\s*'hash'/, 'hash mode works for SSR and prerender');
+  assert.ok(config.includes('appHtmlInlineScriptHashes()'), 'app.html scripts must be hashed');
+  assert.ok(config.includes('inlineScriptHash(ADSENSE_INLINE_BOOTSTRAP)'));
+  assert.ok(config.includes('inlineScriptHash(FLASH_PLAYER_BOOTSTRAP)'));
 
-const inlineBodies = (html) =>
-  [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
-    .filter(([, attrs]) => !/\bsrc\s*=/.test(attrs) && !/application\/ld\+json/i.test(attrs))
-    .map(([, , body]) => body);
+  const hashes = appHtmlInlineScriptHashes(new URL('../src/app.html', import.meta.url).pathname);
+  assert.ok(hashes.length > 0, 'app.html should keep the theme boot script');
+  for (const hash of hashes) assert.match(hash, /^'sha256-[A-Za-z0-9+/]+=*'$/);
+});
 
-test('generated CSP hashes cover every known inline script', async () => {
-  const expected = new Set([hashOf(ADSENSE_INLINE_BOOTSTRAP), hashOf(FLASH_PLAYER_BOOTSTRAP)]);
-  for (const file of ['index.html', 'export-popup.html']) {
-    const html = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
-    for (const body of inlineBodies(html)) expected.add(hashOf(body));
+test('SvelteKit CSP allows Google Fonts and jsDelivr font assets', async () => {
+  const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  const cspStart = config.indexOf('csp: {');
+  assert.ok(cspStart !== -1, 'csp block must exist');
+  // Only inspect the sveltekit({ csp: ... }) section so other policies in the
+  // config cannot accidentally satisfy this check.
+  const csp = config.slice(cspStart, config.indexOf('docsManifestPlugin()', cspStart));
+  const fontSrc = csp.match(/['"]font-src['"]\s*:\s*\[([^\]]*)\]/);
+  assert.ok(fontSrc, "csp.directives must declare 'font-src'");
+  const sources = [...fontSrc[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  for (const source of ['self', 'https://cdn.jsdelivr.net', 'https://fonts.gstatic.com', 'blob:']) {
+    assert.ok(sources.includes(source), `font-src must allow ${source}`);
   }
+});
 
-  const csp = SECURITY_HEADERS.find(([name]) => name === 'Content-Security-Policy')?.[1];
-  assert.ok(csp, 'Content-Security-Policy header missing');
-  for (const hash of expected) {
-    assert.ok(csp.includes(hash), `CSP is missing ${hash} — run npm run build to regenerate it`);
-  }
+test('the static _headers file does not shadow the SvelteKit CSP', async () => {
+  const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
+  // Only hash-free static HTML assets may have a path-scoped static CSP; a
+  // site-wide one would intersect with the per-request hash policy.
+  const siteWide = headers.match(/^\/\*\n(?:[ \t]+[^\n]*\n)+/m)?.[0] ?? '';
+  assert.doesNotMatch(siteWide, /Content-Security-Policy:/, 'no site-wide static CSP');
+  const scoped = [...headers.matchAll(/^(\/\S+)\n\s+Content-Security-Policy:/gm)].map((m) => m[1]);
+  assert.ok(scoped.includes('/sandbox/*') && scoped.includes('/404.html'));
+  assert.match(headers, /X-Frame-Options: DENY/);
+  assert.match(headers, /X-Content-Type-Options: nosniff/);
+  assert.match(headers, /Strict-Transport-Security/);
+});
 
-  const headers = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
-  const staticCsp = headers.match(/^\s*Content-Security-Policy: (.+)$/m)?.[1];
-  assert.equal(staticCsp, csp, 'public/_headers and ssr-security-headers.ts must stay in sync');
-
-  // The allowlist must be exactly the generated set plus the SvelteKit
-  // bootstrap hash, which only exists in the built output. A stale hash left
-  // behind by an earlier build must fail this check.
-  const listed = [...csp.matchAll(/'sha256-[^']+'/g)].map((m) => m[0]);
-  assert.ok(listed.length <= expected.size + 1, 'CSP hash allowlist must not accumulate stale entries');
+test('app.html inline scripts do not depend on a prerender-unsafe nonce', async () => {
+  const html = await readFile(new URL('../src/app.html', import.meta.url), 'utf8');
+  assert.doesNotMatch(html, /%sveltekit\.nonce%/, 'nonce placeholders break adapter-static fallbacks');
 });

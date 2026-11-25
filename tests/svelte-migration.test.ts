@@ -14,8 +14,8 @@ test('billing result routes render the Svelte component', async () => {
 });
 
 test('root route redirects to the home feed', async () => {
-  const root = await read('src/routes/+page.svelte');
-  assert.match(root, /location\.replace\('\/home'\)/);
+  const root = await read('src/routes/+page.ts');
+  assert.match(root, /redirect\(308, '\/home'\)/);
   const layout = await read('src/routes/+layout.ts');
   assert.match(layout, /initShellBootstrap/);
 });
@@ -216,13 +216,16 @@ test('F8 routes use the shell with correct rails', async () => {
 });
 
 test('docs routes cover the index and article slugs', async () => {
+  // Docs content is resolved in universal loads now, so it exists in SSR HTML.
+  const content = await read('src/lib/docs/ssr-content.ts');
+  assert.match(content, /fetchDocsManifest/);
+  assert.match(content, /markdown-it/);
   const component = await read('src/lib/svelte/DocsPage.svelte');
-  assert.match(component, /fetchDocsManifest/);
-  assert.match(component, /DOMPurify/);
+  assert.doesNotMatch(component, /\$effect/, 'the docs component must not fetch during render');
   const index = await read('src/routes/docs/+page.svelte');
   const article = await read('src/routes/docs/[slug]/+page.svelte');
   assert.match(index, /lib\/svelte\/DocsPage\.svelte/);
-  assert.match(article, /slug=\{page\.params\.slug\}/);
+  assert.match(article, /lib\/svelte\/DocsPage\.svelte/);
 });
 
 test('remote profile route renders the Svelte component directly', async () => {
@@ -235,8 +238,10 @@ test('remote profile route renders the Svelte component directly', async () => {
 });
 
 test('legal pages render the Svelte component directly', async () => {
+  const content = await read('src/lib/docs/ssr-content.ts');
+  assert.match(content, /markdownToHtml/, 'legal markdown is rendered in the SSR load');
   const component = await read('src/lib/svelte/LegalPage.svelte');
-  assert.match(component, /markdownToHtml/);
+  assert.doesNotMatch(component, /\$effect/, 'the legal component must not fetch during render');
   assert.match(component, /legal-footer-links/);
   for (const route of ['terms', 'privacy', 'child-safety', 'about']) {
     const source = await read(`src/routes/${route}/+page.svelte`);
@@ -274,7 +279,8 @@ test('billing result keeps its legacy classes and copy in Svelte', async () => {
 test('SvelteKit body renders inside #app so legacy CSS selectors apply', async () => {
   const app = await read('src/app.html');
   assert.match(app, /<div id="app">[\s\S]*%sveltekit\.body%[\s\S]*<\/div>/);
-  assert.match(app, /id="initial-feed-skeleton"/, 'first-fold placeholder must reserve height before mount');
+  // SSR sends real content, so the client-only spinner/skeleton must be gone.
+  assert.doesNotMatch(app, /id="initial-loader"|id="initial-feed-skeleton"/);
 });
 
 test('legacy entry points use the unified navigation function', async () => {
@@ -392,10 +398,8 @@ test('avatars and action states stay visible without coloured halos', async () =
 });
 
 test('Crowd can fetch its data: WASM while the centre column grows without a rail', async () => {
-  const headers = await read('public/_headers');
-  assert.match(headers, /connect-src [^;]*data:/);
-  const ssr = await read('functions/lib/ssr-security-headers.ts');
-  assert.match(ssr, /connect-src [^;]*data:/);
+  const config = await read('vite.config.ts');
+  assert.match(config, /'connect-src': \['self', 'https:', 'wss:', 'blob:', 'data:'\]/);
   const overrides = await read('src/styles/legacy/overrides.css');
   assert.match(overrides, /#app \.main-content \{[^}]*max-width: 600px/);
   assert.match(overrides, /#app \.right-panel \{[^}]*width: 350px/);
@@ -405,7 +409,7 @@ test('Crowd can fetch its data: WASM while the centre column grows without a rai
 test('the document title follows the route', async () => {
   const layout = await read('src/routes/+layout.svelte');
   assert.match(layout, /pageTitle\(page\.url\.pathname\)/);
-  assert.match(layout, /<svelte:head>[\s\S]*<title>\{documentTitle\}<\/title>/);
+  assert.match(layout, /<svelte:head>[\s\S]*<title>\{routeTitle\(\)\}<\/title>/);
   const titles = await read('src/lib/page-title.ts');
   assert.match(titles, /thread\.title/);
   assert.match(titles, /nav\.settings/);
@@ -421,7 +425,8 @@ test('the dev crowd node bundle is served same-origin', async () => {
   const config = await read('vite.config.ts');
   assert.match(config, /crowd-node-dev/);
   assert.ok(config.includes('node_modules/@flaxia/node/dist'));
-  assert.doesNotMatch(config, /unpkg\.com/);
+  const devPlugin = config.slice(config.indexOf('crowd-node-dev'));
+  assert.doesNotMatch(devPlugin, /unpkg\.com/, 'the crowd node must load from node_modules, not a CDN');
 });
 
 test('client error hook is safe against patched console methods', async () => {
@@ -430,10 +435,10 @@ test('client error hook is safe against patched console methods', async () => {
   assert.match(hook, /__flaxiaLastError/);
   assert.match(hook, /source\.error/, 'log the real error, not the removed message/status properties');
   assert.match(hook, /source\.kind/, 'keep the SvelteKit error kind');
-  const headers = await read('public/_headers');
-  assert.doesNotMatch(headers, /script-src-elem[^;]*'unsafe-inline'/);
-  assert.match(headers, /script-src [^;]*'sha256-/);
-  assert.match(headers, /static\.cloudflareinsights\.com/);
+  const config = await read('vite.config.ts');
+  assert.doesNotMatch(config, /script-src-elem/);
+  assert.match(config, /inlineScriptHash\(/);
+  assert.match(config, /static\.cloudflareinsights\.com/);
 });
 
 test('engagement endpoints expose canonical is_* fields for the Svelte cards', async () => {

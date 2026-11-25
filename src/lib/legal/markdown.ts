@@ -1,6 +1,25 @@
 // Pure legal markdown → HTML transform (the markdown is escaped before any
 // substitution, so the result is safe to render with {@html}).
 
+// Only navigational URLs may become an href. `&<>` are escaped before this
+// point, but quotes are not, and browsers ignore leading whitespace/control
+// characters when parsing a URL scheme — normalise before checking it.
+const ALLOWED_HREF = /^(?:https?:|mailto:|\/|#)/;
+
+function isAllowedHref(url: string): boolean {
+  let start = 0;
+  while (start < url.length) {
+    const code = url.charCodeAt(start);
+    if (code > 0x20 && !/\s/.test(url.charAt(start))) break;
+    start += 1;
+  }
+  return ALLOWED_HREF.test(url.slice(start).toLowerCase());
+}
+
+function escapeHrefAttribute(url: string): string {
+  return url.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 export function markdownToHtml(markdown: string): string {
   let html = markdown;
 
@@ -42,7 +61,12 @@ export function markdownToHtml(markdown: string): string {
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match: string, label: string, url: string) => {
+    // Disallowed schemes (javascript:, data:, vbscript:, ...) lose the anchor
+    // entirely; a legal link keeps the exact markup it always had.
+    if (!isAllowedHref(url)) return label;
+    return `<a href="${escapeHrefAttribute(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
 
   html = html.replace(/^\s*\d+\.\s+(.+)$/gm, '<li>$1</li>');
   html = html.replace(/^\s*-\s+(.+)$/gm, '<li>$1</li>');

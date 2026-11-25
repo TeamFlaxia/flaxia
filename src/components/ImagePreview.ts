@@ -1,5 +1,5 @@
 import { mount, unmount } from 'svelte';
-import { GifPreviewProps } from '../../shared/types/post.ts';
+import type { GifPreviewProps } from '../../shared/types/post.ts';
 import { t } from '../lib/i18n.js';
 import { openImageLightbox } from '../lib/media/image-lightbox.ts';
 import { nativeApiHref } from '../lib/native-api.js';

@@ -8,6 +8,7 @@
   "admin_alerts.nsfw_success": "NSFW規制を適用しました。",
   "admin_alerts.nsfw_error": "適用できませんでした。投稿IDと管理者権限を確認してください。",
   "_comment": "Flaxia UI strings - Japanese",
+  "site.description": "ゲームやアプリをそのまま投稿できるSNS",
   "nav.home": "ホーム",
   "nav.explore": "探す",
   "nav.arcade": "アーケード",

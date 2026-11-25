@@ -15,6 +15,7 @@ import { shareArcadeGame, shareArcadeScore } from '../../arcade/share.ts';
 import { loadLegacyGameStorage } from '../../game-storage-broker.ts';
 import { t } from '../../i18n.ts';
 import { navigate } from '../../navigation.ts';
+import { signalSsrHandover } from '../../ssr-handover.ts';
 import { showToast } from '../../toast.ts';
 import { markRecommendationProfileDirty } from '../../vault/recommendation-profile.ts';
 import ArcadeHeader from './ArcadeHeader.svelte';
@@ -103,6 +104,7 @@ async function start(): Promise<void> {
     empty = true;
     return;
   }
+  signalSsrHandover();
   await showIndex(feed.index);
 }
 

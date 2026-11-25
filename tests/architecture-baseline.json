@@ -52,7 +52,6 @@
   "functions/api/routes/users/security.ts": ["c.env"],
   "functions/api/routes/users/social.ts": ["c.env"],
   "functions/api/routes/vault.ts": ["D1Database", "D1PreparedStatement", "c.env"],
-  "functions/arcade/[id].ts": ["D1Database"],
   "functions/lib/account-deletion.ts": ["D1PreparedStatement"],
   "functions/lib/activitypub/delivery.ts": ["D1Database"],
   "functions/lib/activitypub/fetch.ts": ["KVNamespace"],
@@ -84,11 +83,7 @@
   "functions/lib/trust.ts": ["D1Database"],
   "functions/lib/web-index.ts": ["D1Database", "R2Bucket", "Vectorize"],
   "functions/lib/wvfs-zip-server.ts": ["R2Bucket", "R2Object"],
-  "functions/pages/_index.ts": ["D1Database"],
-  "functions/pages/arcade.ts": ["D1Database"],
-  "functions/pages/home.ts": ["D1Database"],
   "functions/sitemap.xml.ts": ["D1Database", "ExecutionContext", "R2Bucket", "c.env"],
-  "functions/thread/[id].ts": ["D1Database"],
-  "functions/users/[username].ts": ["D1Database", "KVNamespace", "c.env"],
+  "src/routes/api/[...path]/+server.ts": ["ExecutionContext"],
   "src/lib/game-loader-routes.ts": ["c.env"]
 }

@@ -1,9 +1,10 @@
 <script lang="ts">
 import { onMount } from 'svelte';
+import { page } from '$app/state';
 import { ensureBottomNav, getBottomNav } from '../../lib/bottom-nav-setup.ts';
 import { leftNavCallbacks } from '../../lib/left-nav-handlers.ts';
 import { navigate } from '../../lib/navigation.ts';
-import { parseCurrentRoute } from '../../lib/router.ts';
+import { parseCurrentRoute, parseRoute } from '../../lib/router.ts';
 import { viewToBottomNavId, viewToPath } from '../../lib/view-nav.ts';
 import LeftNav from './LeftNav.svelte';
 import RightPanel from './RightPanel.svelte';
@@ -26,11 +27,14 @@ let {
 } = $props();
 
 // Routes set navProps after their async setup. Merge a synchronous fallback so
-// the first render already has the signed-in user and working nav handlers —
-// otherwise the nav flashes the guest state on every navigation.
+// the first render already has working nav handlers. `mounted` starts false so
+// the SSR HTML and the first client render agree (the session is client-only).
+let mounted = $state(false);
 const fallbackNavProps = () => ({
-  activeItem: parseCurrentRoute()?.view ?? 'home',
-  currentUser: getSessionUser() ?? undefined,
+  // The window.location-based helper is undefined during SSR; the pure parser
+  // with the request URL highlights the same item before and after hydration.
+  activeItem: parseRoute(page.url.pathname, page.url.search)?.view ?? 'home',
+  currentUser: mounted ? (getSessionUser() ?? undefined) : undefined,
   ...leftNavCallbacks({
     navigate: (view: string, postId?: string, username?: string) => {
       void navigate(viewToPath(view, postId, username));
@@ -51,6 +55,7 @@ $effect(() => {
 });
 
 onMount(() => {
+  mounted = true;
   void ensureBottomNav({
     navigate: (view, postId, username) => {
       void navigate(viewToPath(view, postId, username));

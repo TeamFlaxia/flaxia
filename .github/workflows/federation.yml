@@ -41,7 +41,7 @@ jobs:
           set -o pipefail
           # The peer runs on the host network, so it reaches the instance and
           # the other way round.
-          npx wrangler pages dev dist \
+          npx wrangler pages dev .svelte-kit/cloudflare \
             --binding ADMIN_USERNAMES=remydrescarlet \
             --d1=DB_TEST \
             --port 8788 \
@@ -57,13 +57,13 @@ jobs:
             --binding CROWD_WEBHOOK_SIGNING_SECRET=test-webhook-signing-secret \
             > /tmp/federation-app.log 2>&1 &
           for i in $(seq 1 60); do
-            if curl -fsS http://localhost:8788/ > /dev/null 2>&1; then
+            if curl -fsS http://localhost:8788/home > /dev/null 2>&1; then
               echo "The instance is ready after ${i}s"
               break
             fi
             sleep 1
           done
-          curl -fsS http://localhost:8788/ > /dev/null
+          curl -fsS http://localhost:8788/home > /dev/null
       - name: Compare the federation with the peer
         env:
           FLAXIA_FEDERATION_PEER: gotosocial

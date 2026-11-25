@@ -3,7 +3,6 @@ import type { Post } from '../../../shared/types/post.ts';
 import { createPostCard } from '../../components/PostCard.ts';
 import { createReplyComposer } from '../../components/ReplyComposer.ts';
 import { createReplyNode } from '../../components/ReplyNode.ts';
-import { updateMetaTags } from '../seo-meta.ts';
 import { buildTree, type PostNode } from '../thread.ts';
 
 export { buildTree, type PostNode };
@@ -67,10 +66,8 @@ export function mountReplyComposer(
   return { element: host, focus: () => composer.focus(), destroy: () => composer.destroy() };
 }
 
-export function updateThreadMeta(post: Post): void {
-  updateMetaTags({
-    title: `Flaxia - @${post.username}`,
-    description: (post.text || '').slice(0, 120) || 'Flaxia thread',
-    url: `${typeof window !== 'undefined' ? window.location.origin : ''}/thread/${post.id}`,
-  });
-}
+// SvelteKit's per-route <svelte:head> owns the thread metadata on both the
+// server and the client. Rewriting document.title / og tags after hydration
+// made the client head disagree with the SSR head, so this is intentionally a
+// no-op kept for existing callers.
+export function updateThreadMeta(_post: Post): void {}

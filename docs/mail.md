@@ -60,7 +60,7 @@ end-to-end encrypted anywhere in the UI or docs.
 | Auth identity | Auth is the authoritative credential source (see `docs/auth-authority-transition.md`); username-first (`/^[A-Za-z0-9_]{1,20}$/`, case-insensitive), email optional and unverified. |
 | Username changes | No rename endpoint exists today. Mail addresses therefore remain stable; if rename is added later, old addresses must stay as aliases. |
 | E2EE | Personal Vault exists (`docs/e2ee.md`); reuse its VK, device approval, and vault-item storage. |
-| API/UI | Hono router in `functions/api/[[route]].ts`; SPA routes in `src/routes/*` (SvelteKit); left nav in `src/lib/svelte/LeftNav.svelte`. |
+| API/UI | Hono router in `functions/api/[[route]].ts`; routes in `src/routes/*` (SvelteKit); left nav in `src/lib/svelte/LeftNav.svelte`. |
 
 ### Hard platform constraints
 

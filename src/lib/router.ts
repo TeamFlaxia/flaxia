@@ -232,5 +232,6 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
 
 /** Parse the browser's current URL (bootstrap wrapper around parseRoute). */
 export function parseCurrentRoute(): RouteInfo | null {
+  if (typeof window === 'undefined') return null;
   return parseRoute(window.location.pathname, window.location.search);
 }

@@ -84,64 +84,14 @@ export function assetUrl(baseUrl: string, key: string): string {
   return `${baseUrl}/api/images/${key}`;
 }
 
-export function renderJsonLd(data: Record<string, unknown>): string {
-  // JSON.stringify does not escape `<`, so a value containing `</script>`
-  // closes the script element and turns the rest of the JSON into markup
-  // (stored XSS in every SSR page that embeds user data). Escaping the HTML
-  // metacharacters — and U+2028/U+2029, which are valid JSON but invalid in
-  // JavaScript string literals — keeps the payload inert inside the element.
-  const json = JSON.stringify(data)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-  return `<script type="application/ld+json">${json}</script>`;
-}
-
-export function renderBlogPostingJsonLd(
-  post: PostRow,
-  authorName: string,
-  authorUrl: string,
-  postUrl: string,
-  description?: string,
-  image?: string,
-): string {
-  return renderJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'BlogPosting',
-    headline: `${authorName} on Flaxia`,
-    description: description || post.game_description || stripPostColors(post.text).slice(0, 200),
-    image: image || undefined,
-    url: postUrl,
-    datePublished: post.created_at,
-    author: {
-      '@type': 'Person',
-      name: authorName,
-      url: authorUrl,
-    },
-  });
-}
-
-export function renderPersonJsonLd(user: UserRow, profileUrl: string): string {
-  return renderJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'Person',
-    name: user.display_name,
-    alternateName: `@${user.username}`,
-    description: user.bio ? user.bio.slice(0, 200) : undefined,
-    url: profileUrl,
-  });
-}
-
-export function renderWebSiteJsonLd(siteName: string, url: string): string {
-  return renderJsonLd({
-    '@context': 'https://schema.org',
-    '@type': 'WebSite',
-    name: siteName,
-    url,
-  });
-}
+// JSON-LD serialization lives in the platform-neutral shared/ boundary. Keep
+// the re-exports so older functions/lib callers and tests work unchanged.
+export {
+  renderBlogPostingJsonLd,
+  renderJsonLd,
+  renderPersonJsonLd,
+  renderWebSiteJsonLd,
+} from '../../shared/seo-jsonld.ts';
 
 export function renderHtmlShell(content: string, options: HtmlShellOptions): string {
   const {
@@ -593,10 +543,20 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   return head;
 }
 
-function formatDate(iso: string): string {
+// Locale-specific copy for the no-JS card. The locale JSON files are owned by
+// another agent, so these two strings live here until a `post.view_post` key
+// is available through t().
+const VIEW_POST_LABELS: Record<string, string> = { en: 'View post', ja: '投稿を見る' };
+const DATE_LOCALES: Record<string, string> = { en: 'en-US', ja: 'ja-JP' };
+function localeBase(locale: string): string {
+  return locale.toLowerCase().split('-')[0];
+}
+
+function formatDate(iso: string, locale = 'en'): string {
   try {
     const d = new Date(iso);
-    return d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' });
+    const tag = DATE_LOCALES[localeBase(locale)] ?? 'en-US';
+    return d.toLocaleDateString(tag, { year: 'numeric', month: 'short', day: 'numeric' });
   } catch {
     return iso;
   }
@@ -721,7 +681,7 @@ export function renderUserTitle(
   return `<span class="ssr-user-title"${tooltip}>${icon}${icon ? ' ' : ''}${escapeHtml(titleName)}</span>`;
 }
 
-export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
+export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false, locale = 'en'): string {
   const postUrl = `${baseUrl}/thread/${post.id}`;
   const profileUrl = `${baseUrl}/users/${post.username}`;
   const avatarSrc = post.avatar_key ? assetUrl(baseUrl, post.avatar_key) : `${baseUrl}/default-avatar.png`;
@@ -743,8 +703,8 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
       ${renderPostMedia(post.gif_key, post.thumbnail_key, post.payload_key, post.swf_key, baseUrl, post.text)}
     </div>
     <div class="ssr-post-meta">
-      <time datetime="${escapeHtml(post.created_at)}">${formatDate(post.created_at)}</time>
-      <a href="${escapeHtml(postUrl)}">View post</a>
+      <time datetime="${escapeHtml(post.created_at)}">${formatDate(post.created_at, locale)}</time>
+      <a href="${escapeHtml(postUrl)}">${escapeHtml(VIEW_POST_LABELS[localeBase(locale)] ?? VIEW_POST_LABELS.en)}</a>
     </div>
     <div class="ssr-post-stats">
       <span>${renderFreshIcon()} ${post.fresh_count}</span>
@@ -754,14 +714,20 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
   </article>`;
 }
 
-export function renderPostList(posts: PostRow[], baseUrl: string): string {
+export function renderPostList(posts: PostRow[], baseUrl: string, locale = 'en'): string {
   if (posts.length === 0) {
     return '<div class="ssr-empty">No posts yet.</div>';
   }
-  return posts.map((p) => renderPostArticle(p, baseUrl)).join('\n');
+  return posts.map((p) => renderPostArticle(p, baseUrl, false, locale)).join('\n');
 }
 
-export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: number, followerCount: number): string {
+export function renderProfileHeader(
+  user: UserRow,
+  baseUrl: string,
+  postCount: number,
+  followerCount: number,
+  locale = 'en',
+): string {
   const avatarSrc = user.avatar_key ? assetUrl(baseUrl, user.avatar_key) : `${baseUrl}/default-avatar.png`;
 
   return `<header class="ssr-profile-header">
@@ -774,7 +740,7 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
       <span>👥 ${followerCount} followers</span>
     </div>
     <div class="ssr-post-meta" style="margin-top:8px;justify-content:center">
-      Joined <time datetime="${escapeHtml(user.created_at)}">${formatDate(user.created_at)}</time>
+      Joined <time datetime="${escapeHtml(user.created_at)}">${formatDate(user.created_at, locale)}</time>
     </div>
   </header>`;
 }

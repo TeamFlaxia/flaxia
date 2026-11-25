@@ -10,7 +10,7 @@ SNS where posts are living, interactive applications. "Twitter with Flash inside
 |---|---|
 | Runtime | Cloudflare Pages + Workers (edge-first, no Node.js server) |
 | API | Hono (`hono/cloudflare-pages`), mounted from `functions/api/[[route]].ts` |
-| Frontend | Vanilla TypeScript SPA (Vite build, no framework) |
+| Frontend | SvelteKit 5 with SSR (`@sveltejs/adapter-cloudflare`) |
 | Database | Cloudflare D1 (SQLite) |
 | Storage | Cloudflare R2 |
 | KV | Cloudflare KV (game cache) |
@@ -39,19 +39,22 @@ CI run with npm).
 
 ```
 /
-├── functions/                 # Cloudflare Pages Functions
+├── functions/                 # Server modules (bundled into the adapter's _worker.js)
 │   ├── api/[[route]].ts       # Thin Hono router that mounts route modules
 │   ├── api/routes/*.ts        # Feature routers (posts, media, stamps, ...)
 │   ├── api/billing/[[route]].ts  # Stripe subscription checkout/webhook/portal
 │   ├── api/market/checkout.ts    # Flax-market checkout (backend only)
 │   └── lib/                   # Server-side helpers (auth, billing, crowd, ...)
-├── src/                       # Client-side SPA
-│   ├── components/            # UI components (PostCard, Timeline, SettingsPage, ...)
+├── src/                       # SvelteKit app
+│   ├── routes/                # Pages (+page.svelte) and endpoints (+server.ts)
+│   ├── hooks.server.ts        # Security headers, locale bootstrap, AP redirects
+│   ├── components/            # Legacy DOM factories used by the Svelte cards
 │   ├── lib/render/            # App re-export boundary for flaxia-render
 │   ├── lib/layout/            # Reserved layout boxes (.fx-box)
 │   ├── lib/                   # Utilities (i18n, bridge, zip, settings, ...)
 │   └── types/                 # TypeScript type definitions
 ├── public/                    # Static assets + locales/{en,ja}.json
+├── _headers / _redirects      # Pages static headers/redirects (project root)
 ├── packages/                  # In-app SDK bundles built with Vite (no npm publish)
 │   ├── flaxia-render/          # flaxia-render — fine-grained UI renderer
 │   ├── game-sdk/              # @flaxia/game-sdk — Flaxia Game API wrapper (canonical)
@@ -65,6 +68,14 @@ CI run with npm).
 └── docs/                      # Developer documentation (see docs/billing.md)
     └── developer/             # External developer docs (Game API, SDK, REST API, publishing)
 ```
+
+> **Cloudflare Pages + adapter-cloudflare.** The adapter compiles the app into a
+> single `_worker.js`; Cloudflare Pages ignores the root `functions/` directory
+> when that file exists. `functions/` therefore holds server modules that are
+> *imported* by `src/routes/**/+server.ts` and `src/hooks.server.ts`, not
+> file-routed Pages Functions. New HTTP endpoints go in `src/routes/**/+server.ts`;
+> new server helpers can live in `functions/lib/` or `src/lib/server/`.
+
 
 ## Code Conventions
 - TypeScript strict mode — no `any` escape hatches

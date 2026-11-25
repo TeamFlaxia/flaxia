@@ -3,16 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Flaxia</title>
-  <meta name="description" content="The SNS where your posts are playable.">
-  <meta property="og:title" content="Flaxia">
-  <meta property="og:description" content="The SNS where your posts are playable.">
-  <meta property="og:image" content="https://flaxia.app/og-default-v2.png">
-  <meta property="og:url" content="https://flaxia.app">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Flaxia">
-  <meta name="twitter:description" content="The SNS where your posts are playable.">
-  
   <link rel="preconnect" href="https://flaxia.app">
   <link rel="dns-prefetch" href="/api">
   
@@ -238,83 +228,11 @@
     }
   </style>
   
-  <script>
-    (function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const langParam = urlParams.get('lang');
-      const userLang = langParam || navigator.language || navigator.userLanguage || 'en';
-      const isJapanese = userLang.startsWith('ja');
-      
-      const metaTags = {
-        title: isJapanese ? 'Flaxia' : 'Flaxia',
-        description: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.',
-        ogTitle: isJapanese ? 'Flaxia' : 'Flaxia',
-        ogDescription: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.',
-        twitterTitle: isJapanese ? 'Flaxia' : 'Flaxia',
-        twitterDescription: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.',
-        ogImage: 'https://flaxia.app/og-default-v2.png',
-        ogUrl: 'https://flaxia.app',
-        twitterCard: 'summary_large_image'
-      };
-      
-      document.title = metaTags.title;
-      const setMeta = (selector, attr, value) => {
-        const el = document.querySelector(selector);
-        if (el) el.setAttribute(attr, value);
-      };
-      setMeta('meta[name="description"]', 'content', metaTags.description);
-      setMeta('meta[property="og:title"]', 'content', metaTags.ogTitle);
-      setMeta('meta[property="og:description"]', 'content', metaTags.ogDescription);
-      setMeta('meta[property="og:image"]', 'content', metaTags.ogImage);
-      setMeta('meta[property="og:url"]', 'content', metaTags.ogUrl);
-      setMeta('meta[name="twitter:card"]', 'content', metaTags.twitterCard);
-      setMeta('meta[name="twitter:title"]', 'content', metaTags.twitterTitle);
-      setMeta('meta[name="twitter:description"]', 'content', metaTags.twitterDescription);
-      
-      document.documentElement.lang = isJapanese ? 'ja' : 'en';
-    })();
-  </script>
-
 %sveltekit.head%
 </head>
 <body>
-  <!-- Initial loading indicator -->
-  <div class="initial-loader" id="initial-loader">
-    <div class="initial-loader-content">
-      <div class="initial-loader-spinner"></div>
-      <div>Loading Flaxia...</div>
-    </div>
-  </div>
   <div id="app">
-    <!-- Static feed placeholder: reserves the first-fold height so the app
-         mounting on a slow client does not shift the page (CLS). -->
-    <div id="initial-feed-skeleton" aria-hidden="true">
-      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
-      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
-      <div class="skeleton-card"><div class="skeleton-header"><div class="skeleton-avatar"></div><div class="skeleton-user"><div class="skeleton-line skeleton-line--name"></div><div class="skeleton-line skeleton-line--time"></div></div></div><div class="skeleton-text"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line skeleton-line--short"></div></div><div class="skeleton-media"></div><div class="skeleton-actions"><div class="skeleton-action"></div><div class="skeleton-action"></div><div class="skeleton-action"></div></div></div>
-    </div>
     %sveltekit.body%
   </div>
-  
-  <script>
-    // Hide the initial loader only once the Svelte app has mounted, so a slow
-    // client never sees (or records a layout shift for) a blank page.
-    (function () {
-      var done = false;
-      function hide() {
-        if (done) return;
-        done = true;
-        var loader = document.getElementById('initial-loader');
-        if (loader) {
-          loader.style.opacity = '0';
-          loader.style.transition = 'opacity 0.3s ease';
-          setTimeout(function () { loader.remove(); }, 300);
-        }
-      }
-      window.addEventListener('flaxia:app-ready', hide);
-      // Safety net: never leave the loader up forever if the app fails to boot.
-      setTimeout(hide, 3000);
-    })();
-  </script>
 </body>
 </html>

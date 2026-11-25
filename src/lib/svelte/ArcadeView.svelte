@@ -21,7 +21,8 @@ type ArcadeUser = {
 
 // The root layout load resolves the session before the route mounts, so the
 // first feed request already knows whether recommendations are available.
-let currentUser = $state<ArcadeUser | undefined>(getSessionUser() ?? undefined);
+// Start undefined so SSR and the first client render match.
+let currentUser = $state<ArcadeUser | undefined>(undefined);
 let navProps: Record<string, unknown> = $state({});
 
 onMount(() => {

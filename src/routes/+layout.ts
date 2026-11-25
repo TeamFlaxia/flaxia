@@ -1,4 +1,5 @@
-export const ssr = false;
+// Native shells build with adapter-static and a client-only SPA.
+export const ssr = import.meta.env.BUILD_TARGET !== 'native';
 export const prerender = false;
 
 // Legacy components call t() while building their DOM, so locale strings must

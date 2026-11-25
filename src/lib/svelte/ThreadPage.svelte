@@ -5,6 +5,7 @@ import { formatCount } from '../format.ts';
 import { t } from '../i18n.ts';
 import { navigate } from '../navigation.ts';
 import { getReplyStyle } from '../settings.ts';
+import { signalSsrHandover } from '../ssr-handover.ts';
 import {
   buildTree,
   mountReplyComposer,
@@ -152,6 +153,7 @@ async function loadThread(): Promise<void> {
     }
     replies = threadReplies;
     renderEntries();
+    signalSsrHandover();
   } catch {
     errorMessage = t('thread.load_failed');
   } finally {

@@ -20,6 +20,7 @@ import {
   type ProfileModalUser,
   showLogoutConfirm,
 } from '../profile/modals.ts';
+import { signalSsrHandover } from '../ssr-handover.ts';
 import { mountPostCard } from '../timeline/cards.ts';
 
 interface CurrentUser {
@@ -218,6 +219,7 @@ function mountList(tab: Tab, host: HTMLDivElement | undefined): void {
     showPinOption: own && tab === 'posts',
     onTogglePin: own && tab === 'posts' ? (id) => void togglePin(id) : undefined,
   });
+  if (tab === 'posts') signalSsrHandover();
 }
 
 function selectTab(tab: Tab): void {

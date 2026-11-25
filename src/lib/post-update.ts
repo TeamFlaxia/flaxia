@@ -1,4 +1,4 @@
-import { Post } from '../../shared/types/post.ts';
+import type { Post } from '../../shared/types/post.ts';
 
 type PostCardLike = { updatePost: (update: Partial<Post>) => void };
 

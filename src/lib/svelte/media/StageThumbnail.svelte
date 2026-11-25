@@ -16,8 +16,9 @@ interface Props {
 let { postId, label, onActivate }: Props = $props();
 
 // Data-saver: skip thumbnail bytes for ZIP/SWF — the play overlay already
-// requires a tap, so the poster is pure prefetch cost.
-const skipThumbnail = isDataSaverEnabled();
+// requires a tap, so the poster is pure prefetch cost. The preference lives in
+// localStorage, so start neutral and defer to onMount to avoid an SSR mismatch.
+let skipThumbnail = $state(false);
 let effectiveLabel = $derived(label.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u, ''));
 
 let img = $state<HTMLImageElement>();
@@ -25,7 +26,11 @@ let loaded = $state(false);
 let failed = $state(false);
 
 onMount(() => {
-  if (skipThumbnail || !img) return;
+  if (isDataSaverEnabled()) {
+    skipThumbnail = true;
+    return;
+  }
+  if (!img) return;
   setOfflineImage(img, nativeApiHref(`/api/thumbnail/${postId}`));
 });
 

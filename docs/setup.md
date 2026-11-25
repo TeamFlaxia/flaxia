@@ -50,7 +50,7 @@ npm run dev:hot
 # UI-only: no Auth, login disabled (use when you do not need a session)
 npm run dev:guest
 
-# API-only dev (skip the Vite rebuild, use existing dist/)
+# API-only dev (skip the Vite rebuild, serve the existing .svelte-kit/cloudflare/)
 npm run dev:api
 ```
 

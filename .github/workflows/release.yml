@@ -150,7 +150,7 @@ jobs:
             patchelf
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci --ignore-scripts
-      - run: npm run build
+      # tauri.conf.base.json runs npm run build:desktop via beforeBuildCommand.
       - run: npm run tauri:build
         env:
           TAURI_TARGET_PLATFORM: linux
@@ -180,7 +180,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci --ignore-scripts
-      - run: npm run build
+      # tauri.conf.base.json runs npm run build:desktop via beforeBuildCommand.
       - run: npm run tauri:build
         env:
           TAURI_TARGET_PLATFORM: windows
@@ -234,9 +234,11 @@ jobs:
       - run: npm ci
         env:
           HUSKY: 0
-      - run: npm run build
+      - run: npm run build:native
       - run: npx cap add android
-      - run: npx cap sync android
+      # Same flow as native-android.yml: cap:sync patches the native bridges
+      # before copying dist/, so the release AAB cannot miss that patch.
+      - run: npm run cap:sync
         env:
           CAPACITOR_PLATFORM: android
       - name: Register flaxia:// deep link and verify it

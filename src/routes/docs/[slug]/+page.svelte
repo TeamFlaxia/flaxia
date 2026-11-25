@@ -1,6 +1,8 @@
 <script lang="ts">
-import { page } from '$app/state';
 import DocsPage from '../../../lib/svelte/DocsPage.svelte';
+import type { PageProps } from './$types';
+
+let { data }: PageProps = $props();
 </script>
 
-<DocsPage slug={page.params.slug} />
+<DocsPage {data} />

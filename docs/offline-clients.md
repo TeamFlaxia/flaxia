@@ -5,10 +5,12 @@ including all lazy modules and locale files. Startup no longer requires
 flaxia.app to be reachable. A first launch without saved content shows an
 explanation rather than waiting indefinitely for the timeline.
 
-Tauri builds use `npm run build:desktop` to include the pinned Crowd runtime,
-its workers, and inference modules under `/native-crowd/`. This adds about
-129 MiB of uncompressed desktop assets. Web and Capacitor builds use
-`npm run build` and do not include this desktop runtime.
+Tauri builds use `npm run build:desktop` (which runs `npm run build:native`)
+to include the pinned Crowd runtime, its workers, and inference modules under
+`/native-crowd/`. This adds about 129 MiB of uncompressed desktop assets.
+Capacitor uses `npm run build:native`; both produce the static SPA in `dist/`.
+The web app uses `npm run build`, which produces the SvelteKit SSR output in
+`.svelte-kit/cloudflare/` for Cloudflare Pages; native clients do not use it.
 
 After an online visit, native clients can read the saved timeline, previously
 opened threads and replies, game listings, and saved image previews/avatars.
@@ -135,7 +137,7 @@ tell a stale `navigator.onLine` apart from a genuine outage.
 ## Verification
 
 Run the offline-client, native-fetch, native-api, and capacitor-security-config
-Node test suites, npm run typecheck, npm run lint, and npm run build.
+Node test suites, npm run typecheck, npm run lint, and npm run build:native.
 On actual native devices, sign in online, open feeds/images/threads, terminate
 the app, enable airplane mode, and reopen it. Verify saved content, cold-start
 empty state, mutations failing without replay, reconnect, account switching,

@@ -70,46 +70,90 @@ test('setup docs point the migration steps at the npm scripts', async () => {
 });
 
 test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', async () => {
-  const headers = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
-  const csp = headers.split('\n').find((line) => line.includes('Content-Security-Policy'));
-  assert.ok(csp, 'public/_headers must define a Content-Security-Policy');
-  const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? '';
-  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be hash-authorized');
+  // SvelteKit generates the policy per request; the directives live in the
+  // `csp` block of vite.config.ts.
+  const config = await readFile(new URL('../vite.config.ts', import.meta.url), 'utf8');
+  const cspBlock = config.slice(config.indexOf('csp: {'), config.indexOf('}),', config.indexOf('csp: {')));
+  assert.ok(cspBlock, 'vite.config.ts must configure SvelteKit CSP');
+  assert.match(cspBlock, /mode: 'hash'/);
+  const scriptSrc = cspBlock.slice(
+    cspBlock.indexOf("'script-src': ["),
+    cspBlock.indexOf('],', cspBlock.indexOf("'script-src': [")),
+  );
+  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be nonce/hash-authorized');
   assert.doesNotMatch(scriptSrc, /'unsafe-eval'/, 'eval-compiled scripts must not run in the app origin');
-  assert.match(scriptSrc, /'sha256-[A-Za-z0-9+/]+=*'/, 'fixed inline scripts need hash sources');
+  assert.match(scriptSrc, /inlineScriptHash\(/, 'fixed iframe bootstrap scripts need hash sources');
   assert.ok(scriptSrc.includes("'wasm-unsafe-eval'"), 'Ruffle needs WebAssembly compilation');
   assert.ok(scriptSrc.includes('blob:'), 'game assets may load from sandboxed blob URLs');
   assert.doesNotMatch(
     scriptSrc,
-    /(?:^|\s)https:(?:\s|;|$)/,
+    /(?:^|\s)https:(?:\s|,|$)/,
     'a bare https: scheme lets any host run scripts — allowlist hosts instead',
   );
-  assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
-  const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
-  assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
+  assert.match(cspBlock, /'script-src-attr': \['none'\]/, 'inline event handler attributes must be blocked');
   for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com', 'https://static.cloudflareinsights.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
+  const headers = await readFile(new URL('../_headers', import.meta.url), 'utf8');
+  // A site-wide static CSP would intersect the per-request nonce policy, but
+  // static documents that bypass the worker still need one of their own.
+  const staticCspPaths = [...headers.matchAll(/^(\S+)\s*\n\s*Content-Security-Policy:/gm)].map((m) => m[1]);
+  assert.ok(!staticCspPaths.includes('/*'), 'a static /* CSP would intersect the nonce policy');
+  for (const path of staticCspPaths) {
+    assert.match(
+      path,
+      /^\/(?:sandbox\/\*|404\.html|export-popup(?:\.html)?)$/,
+      `static CSP is only for worker-bypassing assets, got ${path}`,
+    );
+  }
 });
 
-test('bundles stay within budget (initial entry + total JS)', async () => {
-  const assets = new URL('../dist/assets/', import.meta.url);
-  let files: string[];
-  try {
-    files = await readdir(assets);
-  } catch {
-    console.log('skip: dist/ not built (run npm run build first)');
+test('bundles stay within budget (initial entry + total JS)', async (t) => {
+  // Every CI job that runs `npm run build` has the SvelteKit client output.
+  // `dist/` is produced by `npm run build:native`, which platform-ui never
+  // runs, so check the SSR output first and only then the native output.
+  const candidates = [
+    new URL('../.svelte-kit/output/client/_app/immutable/', import.meta.url),
+    new URL('../dist/_app/immutable/', import.meta.url),
+  ];
+  let immutable: URL | undefined;
+  for (const candidate of candidates) {
+    try {
+      if ((await stat(candidate)).isDirectory()) {
+        immutable = candidate;
+        break;
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  if (!immutable) {
+    t.skip('no SvelteKit client JS built (run npm run build first)');
     return;
   }
-  const js = files.filter((f) => f.endsWith('.js'));
-  let total = 0;
-  let entry = 0;
-  for (const f of js) {
-    const size = (await stat(new URL(f, assets))).size;
-    total += size;
-    if (/^main-[A-Za-z0-9_-]+\.js$/.test(f)) entry = size;
+
+  // SvelteKit emits entry/start + entry/app instead of Vite's main-*.js. Both
+  // are fetched on the first page load; chunks/ and nodes/ hold lazy routes.
+  async function sizes(dir: URL): Promise<{ entry: number; total: number }> {
+    let entry = 0;
+    let total = 0;
+    for (const item of await readdir(dir, { withFileTypes: true })) {
+      const path = new URL(`${item.name}${item.isDirectory() ? '/' : ''}`, dir);
+      if (item.isDirectory()) {
+        const nested = await sizes(path);
+        entry += nested.entry;
+        total += nested.total;
+      } else if (item.name.endsWith('.js')) {
+        const size = (await stat(path)).size;
+        total += size;
+        if (dir.pathname.endsWith('/entry/')) entry += size;
+      }
+    }
+    return { entry, total };
   }
-  assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
+
+  const { entry, total } = await sizes(immutable);
+  assert.ok(entry > 0, `expected a client entry bundle under ${immutable.pathname}`);
   assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
   // The budget counts lazy chunks too. MapLibre (engine + worker) is only
   // fetched when /maps opens, but it is still part of the shipped client JS.
@@ -201,5 +245,23 @@ test('cutover enables Auth authority in production and keeps local modes explici
   // These scripts start only Flaxia, so they must not depend on a local Auth worker.
   for (const name of ['dev:api', 'dev:all', 'dev:test']) {
     assert.match(pkg.scripts[name], /AUTH_AUTHORITY_MODE=off/, `${name} must stay in legacy mode locally`);
+  }
+});
+
+test('Cloudflare Pages serves postbuild static files without hitting the worker', async (t) => {
+  const routesFile = new URL('../.svelte-kit/cloudflare/_routes.json', import.meta.url);
+  let raw: string;
+  try {
+    raw = await readFile(routesFile, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      t.skip('skip: adapter-cloudflare output not built (run npm run build first)');
+      return;
+    }
+    throw error;
+  }
+  const routes = JSON.parse(raw) as { exclude?: string[] };
+  for (const pattern of ['/crowd/*', '/export-popup.html', '/export-popup', '/docs/index.json', '/404.html']) {
+    assert.ok(routes.exclude?.includes(pattern), `_routes.json must exclude ${pattern} from the worker`);
   }
 });

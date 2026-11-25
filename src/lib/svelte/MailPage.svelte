@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onDestroy, onMount, tick } from 'svelte';
+import { onDestroy, tick } from 'svelte';
 import { primaryAddressForUsername } from '../../../shared/mail-address.ts';
 import { t } from '../i18n.ts';
 import {
@@ -138,9 +138,13 @@ function openThread(thread: MailRow): void {
   goToMailThread(thread.id);
 }
 
-onMount(() => {
+// The session is adopted by MailView in its onMount, which can run after this
+// child's onMount. React to the prop instead of assuming it is set at mount.
+let started = false;
+$effect(() => {
+  if (!currentUser || started || destroyed) return;
+  started = true;
   void (async () => {
-    if (!currentUser) return;
     try {
       address = primaryAddressForUsername(currentUser.username);
     } catch {

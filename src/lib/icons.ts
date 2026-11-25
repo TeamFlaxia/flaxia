@@ -214,6 +214,43 @@ export function icon(name: IconName, attrs: Record<string, string> = {}): SVGEle
   return el;
 }
 
+const SVG_DEFAULT_ATTRS: Record<string, string> = {
+  xmlns: 'http://www.w3.org/2000/svg',
+  width: '24',
+  height: '24',
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+};
+
+function escapeSvgAttr(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function serializeSvgAttrs(attrs: Record<string, unknown>): string {
+  return Object.entries(attrs)
+    .map(([key, value]) => ` ${key}="${escapeSvgAttr(String(value))}"`)
+    .join('');
+}
+
+/**
+ * SSR-safe counterpart of {@link icon}. Lucide's `createElement` needs a DOM,
+ * so server rendering builds the same markup as a string. Keep both paths in
+ * sync — hydration compares the emitted HTML byte for byte.
+ */
+export function iconMarkup(name: IconName, attrs: Record<string, string> = {}): string {
+  const all: Record<string, unknown> = { ...SVG_DEFAULT_ATTRS };
+  for (const [key, value] of Object.entries(attrs)) all[key] = value;
+  all['aria-hidden'] = 'true';
+  const children = ICON_NODES[name]
+    .map(([tag, childAttrs]) => `<${tag}${serializeSvgAttrs(childAttrs as Record<string, unknown>)}/>`)
+    .join('');
+  return `<svg${serializeSvgAttrs(all)}>${children}</svg>`;
+}
+
 /**
  * Replaces `[data-icon="<name>"]` placeholder elements inside root with the
  * corresponding Lucide SVG. Used for `innerHTML`-based templates.
