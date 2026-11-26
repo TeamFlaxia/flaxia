@@ -87,10 +87,15 @@ polls.post('/polls/:pollId/vote', requireAuth, async (c) => {
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
     if (!optionId) return c.json({ error: 'optionId is required' }, 400);
 
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first()) as Record<
-      string,
-      unknown
-    > | null;
+    // Knowing a poll id must not be enough to vote on (or read options of) a
+    // private/direct post. Use the same predicate as the poll GET endpoint.
+    const visibility = visibilityFilter(userId);
+    const poll = (await c.env.DB.prepare(
+      `SELECT polls.* FROM polls JOIN posts p ON p.id = polls.post_id
+       WHERE polls.id = ? ${visibility.sql}`,
+    )
+      .bind(pollId, ...visibility.params)
+      .first()) as Record<string, unknown> | null;
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404);
 

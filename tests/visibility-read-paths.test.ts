@@ -111,7 +111,15 @@ after(() => {
 });
 
 function envFor(database: TestDatabase): Bindings {
-  return { DB: wrapDb(database) as unknown as Bindings['DB'] } as Bindings;
+  const kv = new Map<string, string>();
+  return {
+    DB: wrapDb(database) as unknown as Bindings['DB'],
+    CACHE: {
+      get: async (key: string) => kv.get(key) ?? null,
+      put: async (key: string, value: string) => void kv.set(key, value),
+      delete: async (key: string) => void kv.delete(key),
+    },
+  } as unknown as Bindings;
 }
 
 /** Mount a route under a test app that pre-populates the auth context. */
@@ -214,6 +222,11 @@ function gameIdsOf(body: unknown): string[] {
   return rows.map((row) => row.id ?? row.postId).sort();
 }
 
+async function votedPollIds(): Promise<string[]> {
+  const rows = await db.prepare('SELECT DISTINCT poll_id FROM poll_votes ORDER BY poll_id').all<{ poll_id: string }>();
+  return rows.results.map((row) => row.poll_id);
+}
+
 async function rowsFromTable(table: string): Promise<string[]> {
   const rows = await db.prepare(`SELECT DISTINCT post_id FROM ${table} ORDER BY post_id`).all<{ post_id: string }>();
   return rows.results.map((row) => row.post_id);
@@ -280,6 +293,30 @@ describe('pinned post read path', () => {
 });
 
 describe('poll read path', () => {
+  it('rejects votes on polls whose post the voter cannot see', async () => {
+    await seedPost({ id: 'vote-private-post', text: 'private poll', visibility: 'private' });
+    await seedPoll('vote-private-post', 'vote-private-poll', 'PRIVATE VOTE', 'vote-private-opt', 'option');
+    await seedPost({ id: 'vote-public-post', text: 'public poll' });
+    await seedPoll('vote-public-post', 'vote-public-poll', 'PUBLIC VOTE', 'vote-public-opt', 'option');
+    const app = appFor(polls, BOB);
+
+    const denied = await requestJson(app, '/polls/vote-private-poll/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor(BOB) },
+      body: JSON.stringify({ optionId: 'vote-private-opt' }),
+    });
+    assert.equal(denied.status, 404, JSON.stringify(denied.body));
+    assert.deepEqual(await votedPollIds(), [], 'a denied vote must not be recorded');
+
+    const allowed = await requestJson(app, '/polls/vote-public-poll/vote', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...cookieFor(BOB) },
+      body: JSON.stringify({ optionId: 'vote-public-opt' }),
+    });
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+    assert.deepEqual(await votedPollIds(), ['vote-public-poll']);
+  });
+
   it('hides private and direct poll questions and options from unauthorised readers', async () => {
     await seedPost({ id: 'poll-private-post', text: 'private poll post', visibility: 'private' });
     await seedPoll(
