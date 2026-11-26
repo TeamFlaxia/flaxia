@@ -287,6 +287,12 @@ test('SSR boot data removes the locale/session network gate during hydration', a
     assert.equal(await page.$('.nav-promo'), null, 'guest promo must not render');
 
     // A real post card click reaches the thread inside the same short budget.
+    // The deferred Crowd node may have surfaced its consent dialog by now;
+    // dismiss it so it does not cover the post card.
+    if (await page.$('.crowd-consent-reject')) {
+      await page.click('.crowd-consent-reject');
+    }
+
     const clickedAt = Date.now();
     // The CSS-stretched SSR anchor is clickable even before the timeline takes
     // over; use it when the interactive card has not mounted yet.
