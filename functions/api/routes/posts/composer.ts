@@ -20,6 +20,7 @@ import {
 import { embedPost, isImageKey, type PostMediaInput, screenPostImages, tagPost } from '../../../lib/crowd';
 import { validateImageDimensions } from '../../../lib/image-dimensions';
 import { sendPushToAll, waitUntil } from '../../../lib/notify';
+import { quoteNotificationDecision } from '../../../lib/quote-notification';
 import { checkRateLimit } from '../../../lib/rate-limit';
 import { submitFileScans } from '../../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../../lib/scan/index';
@@ -29,7 +30,13 @@ import { enrichPostsWithPolls, enrichPostsWithQuotes, enrichPostsWithReactions }
 import { requireAuth, resolveMentions } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
 import { extractGameDescription } from '../post-versions';
-import { colorEntitlementError, isOwnedMediaKey, isValidPostId, resolveAttachmentLimit } from './helpers.ts';
+import {
+  colorEntitlementError,
+  isOwnedMediaKey,
+  isValidPostId,
+  resolveAttachmentLimit,
+  visibilityFilter,
+} from './helpers.ts';
 
 export const composer = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -732,21 +739,39 @@ composer.post('/posts/commit', requireAuth, async (c) => {
       }
     }
 
-    // Create quote notification for the quoted post's author (skip self-quotes)
+    // Create quote notification for the quoted post's author (skip self-quotes).
+    // Reuse the read-path visibility predicate: the quoted author must actually
+    // be able to load this post before we tell them about it, and restricted
+    // posts must never carry their body into a push preview.
     if (quotedPostAuthorId && quotedPostAuthorId !== userId) {
       try {
-        await c.env.DB.prepare(
-          'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-        )
-          .bind(nanoid(), quotedPostAuthorId, 'quote', postId, userId)
-          .run();
-        const actor = c.get('user');
-        waitUntil(
-          c,
-          () =>
-            sendPushToAll(c.env, quotedPostAuthorId, 'quote', actor?.username, actor?.display_name, text || '', postId),
-          'Failed to send quote push',
-        );
+        const { sql, params } = visibilityFilter(quotedPostAuthorId);
+        const readable = await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? ${sql}`)
+          .bind(postId, ...params)
+          .first<{ id: string }>();
+        const decision = quoteNotificationDecision(visibility, Boolean(readable), text || '');
+        if (decision.notify) {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+          )
+            .bind(nanoid(), quotedPostAuthorId, 'quote', postId, userId)
+            .run();
+          const actor = c.get('user');
+          waitUntil(
+            c,
+            () =>
+              sendPushToAll(
+                c.env,
+                quotedPostAuthorId,
+                'quote',
+                actor?.username,
+                actor?.display_name,
+                decision.pushPreview,
+                postId,
+              ),
+            'Failed to send quote push',
+          );
+        }
       } catch (e) {
         console.error('Failed to create quote notification:', e);
       }
