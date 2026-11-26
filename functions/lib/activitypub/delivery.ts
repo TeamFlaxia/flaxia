@@ -1,4 +1,5 @@
-import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
+import { parsePublicHttpUrl } from '../url-guard.ts';
+import { type FederationEnv, isPrivatePeerAllowed, resolveRemoteActor } from './fetch.ts';
 import { signRequest } from './signature.ts';
 
 /**
@@ -25,7 +26,8 @@ export interface DeliveryActivity {
  * Environments where a queue consumer is not running, so activities have to be
  * delivered in the request itself. Mirrors `isPrivatePeerAllowed()` in
  * `fetch.ts`: the binding is ignored anywhere else, even if it is set by
- * mistake. Direct delivery skips the queue worker's URL re-validation.
+ * mistake. Direct delivery has no queue worker in front of it, so it performs
+ * the same inbox URL re-validation itself (see `validateDeliveryUrl`).
  */
 const DIRECT_DELIVERY_ENVIRONMENTS = new Set(['test', 'development']);
 
@@ -34,6 +36,35 @@ export function isDirectDelivery(env: DeliveryEnv): boolean {
   const environment = (env.ENVIRONMENT ?? '').toLowerCase();
   if (!DIRECT_DELIVERY_ENVIRONMENTS.has(environment)) return false;
   return env.AP_DIRECT_DELIVERY === '1' || env.AP_DIRECT_DELIVERY === 'true';
+}
+
+/**
+ * Re-validate a delivery target before signing or fetching it.
+ *
+ * Inboxes come from remote actor documents and are stored in D1, so a poisoned
+ * row must not be able to turn an actor's key into an authenticated request
+ * forwarder to loopback, private or metadata addresses. The queue worker does
+ * this with `parsePublicHttpUrl()`; direct delivery must do the same.
+ *
+ * The explicit private-peer allow list keeps the semantics of
+ * `isPrivatePeerAllowed()` in `fetch.ts`: it can make a local federation peer
+ * reachable in test/development, and is inert anywhere else (including a
+ * production deployment that sets the variable by mistake).
+ */
+function validateDeliveryUrl(env: DeliveryEnv, rawUrl: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (isPrivatePeerAllowed(env, url.hostname)) return url;
+  try {
+    return parsePublicHttpUrl(rawUrl);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -46,6 +77,12 @@ export async function deliverDirect(
   env: DeliveryEnv,
   options: { inboxUrl: string; username: string; activity: DeliveryActivity },
 ): Promise<boolean> {
+  const inbox = validateDeliveryUrl(env, options.inboxUrl);
+  if (!inbox) {
+    console.error('Blocked direct ActivityPub delivery to non-public inbox:', options.inboxUrl);
+    return false;
+  }
+
   const key = await env.DB.prepare(
     `SELECT ak.private_key_pem FROM actor_keys ak JOIN users u ON u.id = ak.user_id
      WHERE u.username = ? COLLATE NOCASE`,
@@ -59,10 +96,13 @@ export async function deliverDirect(
 
   const keyId = `${env.BASE_URL}/api/actors/${options.username}#main-key`;
   const body = JSON.stringify(options.activity);
-  const headers = await signRequest(options.inboxUrl, body, key.private_key_pem, keyId);
+  // Sign and fetch the same normalized URL the guard checked, like the queue
+  // worker does: the signature stays bound to the target actually requested.
+  const inboxUrl = inbox.toString();
+  const headers = await signRequest(inboxUrl, body, key.private_key_pem, keyId);
 
   try {
-    const response = await fetch(options.inboxUrl, {
+    const response = await fetch(inboxUrl, {
       method: 'POST',
       headers,
       body,
