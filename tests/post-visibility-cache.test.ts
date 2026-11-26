@@ -269,3 +269,34 @@ describe('search KV cache hit', () => {
     );
   });
 });
+
+describe('remote notes obey their stored audience', () => {
+  async function seedRemote(id: string, visibility: string, mentions: string): Promise<void> {
+    const actor = `https://remote.example/users/${id}`;
+    db.prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, parent_id, root_id, status, created_at,
+        visibility, actor_id, ap_object_id)
+       VALUES (?, '', 'remoteuser', ?, '[]', ?, NULL, NULL, 'published', ?, ?, ?, ?)`,
+    )
+      .bind(id, `remote ${id}`, mentions, NOW, visibility, actor, `${actor}/statuses/1`)
+      .run();
+  }
+
+  async function visibleIds(viewer: string | null, id: string): Promise<string[]> {
+    const rows = await db.prepare('SELECT * FROM posts WHERE id = ?').bind(id).all<Record<string, unknown>>();
+    const posts = await filterVisiblePosts(wrapDb(db) as unknown as D1Database, viewer, rows.results);
+    return posts.map((post) => String(post.id)).sort();
+  }
+
+  it('hides a remote direct note from everyone except its mentioned local user', async () => {
+    await seedRemote('remote-direct', 'direct', JSON.stringify([{ username: 'bob', user_id: BOB.id }]));
+    assert.deepEqual(await visibleIds(null, 'remote-direct'), []);
+    assert.deepEqual(await visibleIds(CAROL.id, 'remote-direct'), []);
+    assert.deepEqual(await visibleIds(BOB.id, 'remote-direct'), ['remote-direct']);
+  });
+
+  it('fails closed instead of throwing when a remote note has malformed mentions JSON', async () => {
+    await seedRemote('remote-broken', 'direct', 'not json');
+    assert.deepEqual(await visibleIds(BOB.id, 'remote-broken'), []);
+  });
+});

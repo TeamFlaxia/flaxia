@@ -87,8 +87,8 @@ export const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display
  * SQL predicate that limits rows of `posts p` to what a local viewer may see.
  *
  * - `public` / `unlisted` are visible to everyone.
- * - Remote Notes (`actor_id IS NOT NULL`) stay public as before; visibility is
- *   a property of locally authored posts.
+ * - Remote Notes obey their stored visibility too: the inbound ActivityPub
+ *   handler derives it from the Note's audience.
  * - `private` (Followers only) is visible to the author and local followers.
  * - `direct` is visible to the author and local users in `mentions.user_id`.
  *
@@ -102,26 +102,30 @@ export function visibilityFilter(currentUserId: string | null | undefined): {
 } {
   if (!currentUserId) {
     return {
-      sql: `AND (COALESCE(p.visibility, 'public') IN ('public', 'unlisted') OR p.actor_id IS NOT NULL)`,
+      sql: `AND COALESCE(p.visibility, 'public') IN ('public', 'unlisted')`,
       params: [],
     };
   }
   return {
     sql: `AND (
       COALESCE(p.visibility, 'public') IN ('public', 'unlisted')
-      OR p.actor_id IS NOT NULL
       OR (COALESCE(p.visibility, 'public') = 'private' AND (
         p.user_id = ? OR EXISTS (
           SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = p.user_id
+        ) OR EXISTS (
+          SELECT 1 FROM ap_following f
+          WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
         )
       ))
       OR (COALESCE(p.visibility, 'public') = 'direct' AND (
-        p.user_id = ? OR EXISTS (
-          SELECT 1 FROM json_each(p.mentions) WHERE json_extract(value, '$.user_id') = ?
+        p.user_id = ? OR (
+          json_valid(p.mentions) AND EXISTS (
+            SELECT 1 FROM json_each(p.mentions) WHERE json_extract(value, '$.user_id') = ?
+          )
         )
       ))
     )`,
-    params: [currentUserId, currentUserId, currentUserId, currentUserId],
+    params: [currentUserId, currentUserId, currentUserId, currentUserId, currentUserId],
   };
 }
 
