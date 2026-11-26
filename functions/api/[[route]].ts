@@ -9,6 +9,7 @@ import adsRouter from './routes/ads';
 import authRouter from './routes/auth';
 import bugReportsRouter from './routes/bug-reports';
 import topicRouter from './routes/current-topic';
+import federatedRouter from './routes/federated';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
 import mailRouter from './routes/mail';
@@ -124,6 +125,9 @@ app.route('/api', linkPreviewRouter);
 
 // Current-topic route (extracted to routes/current-topic.ts)
 app.route('/api', topicRouter);
+
+// Federated popularity timeline (extracted to routes/federated.ts)
+app.route('/api', federatedRouter);
 
 // Report route (extracted to routes/report.ts)
 app.route('/api', reportRouter);

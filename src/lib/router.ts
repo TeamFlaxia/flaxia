@@ -10,6 +10,7 @@ export type RouteView =
   | 'profile'
   | 'remote-profile'
   | 'explore'
+  | 'federated'
   | 'search'
   | 'translate'
   | 'notifications'
@@ -89,6 +90,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
     const urlParams = new URLSearchParams(search);
     const tag = urlParams.get('tag');
     return { view: 'explore', postId: null, username: null, tag };
+  }
+
+  // Federated popularity timeline - public, no auth required
+  if (cleanPath === '/federated') {
+    return { view: 'federated', postId: null, username: null, tag: null };
   }
 
   // Search route - public, no auth required
