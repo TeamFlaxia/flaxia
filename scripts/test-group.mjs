@@ -127,6 +127,7 @@ const groups = {
     'posts',
     'post-visibility',
     'post-visibility-cache',
+    'quote-notification-visibility',
     'recommendation-visibility',
     'reply-visibility',
     'visibility-quote-media',
