@@ -11,6 +11,7 @@
 //   AP_DIRECT_DELIVERY=1 AP_ALLOWED_PRIVATE_PEERS=localhost,127.0.0.1
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { PUBLIC_COLLECTION } from '../../functions/lib/activitypub/context.ts';
 import { BASE_URL, seedUserAndLogin } from '../helpers/setup.ts';
 import { activityShape, actorShape, diffShapes, formatDifferences, noteShape, webfingerShape } from './diff.ts';
 import { createPeer, type FederationPeer } from './peer.ts';
@@ -430,11 +431,14 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
 
     const text = `a remote post to delete ${Date.now()}`;
     const noteId = `${remote.origin}/notes/delete-${Date.now()}`;
+    // This scenario checks the guest feed, so the Note must really be public.
+    // A Note addressed only to one actor is correctly stored as direct and is
+    // deliberately absent from that feed.
     const created = await remote.deliver(`${BASE}/api/inbox`, {
       id: `${remote.origin}/activities/create-for-delete-${Date.now()}`,
       type: 'Create',
       actor: remote.actor.actorUrl,
-      to: [`${BASE}/api/actors/${account.username}`],
+      to: [PUBLIC_COLLECTION],
       object: { id: noteId, type: 'Note', attributedTo: remote.actor.actorUrl, content: text },
     });
     assert.equal(created.status, 202);
@@ -448,7 +452,7 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
       id: `${remote.origin}/activities/delete-${Date.now()}`,
       type: 'Delete',
       actor: remote.actor.actorUrl,
-      to: [`${BASE}/api/actors/${account.username}`],
+      to: [PUBLIC_COLLECTION],
       object: { id: noteId, type: 'Tombstone' },
     });
     assert.equal(removed.status, 202);

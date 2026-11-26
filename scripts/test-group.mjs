@@ -215,6 +215,7 @@ const groups = {
   ],
   activitypub: [
     'activitypub-ap-gaps',
+    'ap-dlq-privacy',
     'activitypub-inbound-visibility',
     'federation-activity-shape',
     'post-delete-visibility',
