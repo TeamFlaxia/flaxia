@@ -131,6 +131,8 @@ type SeedPost = {
   createdAt?: string;
   hidden?: number;
   status?: string;
+  visibility?: string;
+  mentions?: string;
   favourites?: number;
   reblogs?: number;
 };
@@ -138,18 +140,20 @@ type SeedPost = {
 function seedPoolPost(post: SeedPost): void {
   const createdAt = post.createdAt ?? NOW;
   db.prepare(
-    `INSERT INTO posts (id, user_id, username, text, hashtags, actor_id, ap_object_id,
+    `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, actor_id, ap_object_id,
                         status, hidden, visibility, created_at)
-     VALUES (?, ?, 'remote', ?, '[]', ?, ?, ?, ?, 'public', ?)`,
+     VALUES (?, ?, 'remote', ?, '[]', ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       post.id,
       post.userId ?? '',
       `note ${post.id}`,
+      post.mentions ?? '[]',
       post.actor,
       `https://example.example/notes/${post.id}`,
       post.status ?? 'published',
       post.hidden ?? 0,
+      post.visibility ?? 'public',
       createdAt,
     )
     .run();
@@ -240,6 +244,55 @@ describe('GET /api/federated/posts', () => {
 
     const blocked = await getFeed(appFor(ALICE), '/federated/posts');
     assert.deepEqual(ids(blocked.posts), ['p-keep']);
+  });
+
+  it('applies post visibility for the viewer, including through a cursor', async () => {
+    seedPoolPost({ id: 'p-public', actor: ACTOR_A, score: 5 });
+    seedPoolPost({
+      id: 'p-private',
+      actor: ACTOR_A,
+      userId: ALICE.id,
+      score: 9,
+      visibility: 'private',
+    });
+    seedPoolPost({
+      id: 'p-direct',
+      actor: ACTOR_B,
+      userId: ALICE.id,
+      score: 7,
+      visibility: 'direct',
+      mentions: JSON.stringify([{ username: 'bob', user_id: BOB.id }]),
+    });
+
+    // Anonymous and unrelated viewers only see public pool rows.
+    assert.deepEqual(ids((await getFeed(appFor(null), '/federated/posts')).posts), ['p-public']);
+    assert.deepEqual(ids((await getFeed(appFor(BOB), '/federated/posts')).posts), ['p-direct', 'p-public']);
+
+    // The author sees all of their own rows, and blocks do not change that.
+    const authorApp = appFor(ALICE);
+    const first = await getFeed(authorApp, '/federated/posts?limit=2');
+    assert.deepEqual(ids(first.posts), ['p-private', 'p-direct']);
+    assert.ok(first.next_cursor);
+    const second = await getFeed(
+      authorApp,
+      `/federated/posts?limit=2&cursor=${encodeURIComponent(first.next_cursor!)}`,
+    );
+    assert.deepEqual(ids(second.posts), ['p-public']);
+
+    // A local follower and a remote follower of the private post's author
+    // gain access to the followers-only row (but not to the direct one).
+    db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(BOB.id, ALICE.id).run();
+    db.prepare(
+      `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+      .bind('ap-follow-1', BOB.id, ACTOR_A, `${ACTOR_A}/inbox`, 'accepted')
+      .run();
+    assert.deepEqual(ids((await getFeed(appFor(BOB), '/federated/posts')).posts), [
+      'p-private',
+      'p-direct',
+      'p-public',
+    ]);
   });
 
   it('paginates by (score, created_at, id) with ties', async () => {

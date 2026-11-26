@@ -127,9 +127,9 @@ engagement.post('/posts/:id/bookmark', requireAuth, async (c) => {
   const postId = c.req.param('id');
   const userId = c.get('user')?.id || '';
 
-  // Verify post exists
-  const post = (await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'")
-    .bind(postId)
+  const v = visibilityFilter(userId);
+  const post = (await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`)
+    .bind(postId, ...v.params)
     .first()) as { id: string } | null;
 
   if (!post) {
@@ -180,9 +180,9 @@ engagement.post('/posts/:id/reactions', requireAuth, async (c) => {
       return c.json({ error: 'Emoji too long' }, 400);
     }
 
-    // Verify post exists
-    const post = (await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'")
-      .bind(postId)
+    const v = visibilityFilter(userId);
+    const post = (await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`)
+      .bind(postId, ...v.params)
       .first()) as { id: string } | null;
 
     if (!post) {

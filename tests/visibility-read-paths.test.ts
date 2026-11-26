@@ -50,6 +50,8 @@ const { profiles } = await import('../functions/api/routes/users/profiles.ts');
 const games = (await import('../functions/api/routes/games.ts')).default;
 const currentTopic = (await import('../functions/api/routes/current-topic.ts')).default;
 const tags = (await import('../functions/api/routes/tags.ts')).default;
+const social = (await import('../functions/api/routes/users/social.ts')).social;
+const push = (await import('../functions/api/routes/push.ts')).default;
 const polls = (await import('../functions/api/routes/polls.ts')).default;
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
@@ -611,5 +613,150 @@ describe('per viewer access to tag aggregates is intentionally public', () => {
     });
     const suggest = await requestJson(appFor(tags, ALICE), '/tags/suggest?q=author');
     assert.deepEqual(suggest.body, { tags: [] });
+  });
+});
+
+describe('remote actor profile read path', () => {
+  const REMOTE_ACTOR = 'https://remote.example/users/remoteuser';
+  const PATH = '/remote/actors/remote.example/remoteuser';
+  // Mirrored remote notes are stored under a local account. Use one nobody
+  // follows, so the only way to see followers-only posts is ap_following.
+  const OWNER: User = {
+    id: 'remote-owner',
+    email: 'remote-owner@test.com',
+    username: 'remoteowner',
+    display_name: 'Remote Owner',
+    bio: '',
+    created_at: NOW,
+  };
+
+  async function seedRemotePosts(): Promise<void> {
+    await db
+      .prepare(
+        `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
+         VALUES (?, ?, '', ?, ?, '', ?)`,
+      )
+      .bind(OWNER.id, OWNER.email, OWNER.username, OWNER.display_name, NOW)
+      .run();
+    await db
+      .prepare(
+        `INSERT INTO ap_actors (actor_url, inbox_url, preferred_username, display_name, domain, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(REMOTE_ACTOR, `${REMOTE_ACTOR}/inbox`, 'remoteuser', 'Remote User', 'remote.example', NOW)
+      .run();
+    await seedPost({
+      id: 'remote-public',
+      author: OWNER,
+      text: 'REMOTE PUBLIC',
+      actorId: REMOTE_ACTOR,
+      createdAt: NOW,
+    });
+    await seedPost({
+      id: 'remote-private',
+      author: OWNER,
+      text: 'REMOTE PRIVATE SECRET',
+      visibility: 'private',
+      actorId: REMOTE_ACTOR,
+      createdAt: AFTER,
+    });
+    await seedPost({
+      id: 'remote-direct',
+      author: OWNER,
+      text: 'REMOTE DIRECT SECRET',
+      visibility: 'direct',
+      mentions: [{ username: 'bob', user_id: BOB.id }],
+      actorId: REMOTE_ACTOR,
+      createdAt: '2026-11-28T00:00:00.000Z',
+    });
+  }
+
+  function remoteIds(body: unknown): string[] {
+    return ((body as { posts: Array<{ id: string }> }).posts ?? []).map((post) => post.id);
+  }
+
+  it('never shows private or direct remote posts to anonymous or unrelated visitors', async () => {
+    await seedRemotePosts();
+
+    for (const viewer of [null, CAROL]) {
+      const response = await requestJson(appFor(social, viewer), PATH);
+      assert.equal(response.status, 200, response.text);
+      assert.deepEqual(remoteIds(response.body), ['remote-public']);
+      assert.equal(response.text.includes('REMOTE PRIVATE SECRET'), false);
+      assert.equal(response.text.includes('REMOTE DIRECT SECRET'), false);
+    }
+
+    const mentioned = await requestJson(appFor(social, BOB), PATH);
+    assert.deepEqual(remoteIds(mentioned.body), ['remote-direct', 'remote-public']);
+    assert.equal(mentioned.text.includes('REMOTE PRIVATE SECRET'), false);
+  });
+
+  it('lets a local follower of the remote actor read its followers-only posts', async () => {
+    await seedRemotePosts();
+    await db
+      .prepare(
+        `INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind('ap-follow-1', ALICE.id, REMOTE_ACTOR, `${REMOTE_ACTOR}/inbox`, 'accepted')
+      .run();
+
+    const follower = await requestJson(appFor(social, ALICE), PATH);
+    assert.deepEqual(remoteIds(follower.body), ['remote-private', 'remote-public']);
+    assert.equal(follower.text.includes('REMOTE DIRECT SECRET'), false);
+  });
+});
+
+describe('notification preview read path', () => {
+  async function seedNotifications(): Promise<void> {
+    // The shared fixture has Carol following Alice; give Bob the follow too so
+    // the preview is initially visible and then disappears on unfollow.
+    await db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(BOB.id, ALICE.id).run();
+    await seedPost({ id: 'notif-private', text: 'PRIVATE PREVIEW SECRET', visibility: 'private', createdAt: NOW });
+    await seedPost({ id: 'notif-public', text: 'PUBLIC PREVIEW', createdAt: NOW });
+    for (const [id, postId, createdAt] of [
+      ['notif-1', 'notif-private', AFTER],
+      ['notif-2', 'notif-public', NOW],
+    ]) {
+      await db
+        .prepare(
+          'INSERT INTO notifications (id, user_id, type, post_id, actor_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+        .bind(id, BOB.id, 'fresh', postId, ALICE.id, createdAt)
+        .run();
+    }
+  }
+
+  function previews(body: unknown): Record<string, unknown> {
+    const rows = (body as { notifications: Array<{ post_id: string; post_text_preview: unknown }> }).notifications;
+    return Object.fromEntries(rows.map((row) => [row.post_id, row.post_text_preview]));
+  }
+
+  it('masks the preview of a post that becomes unreadable but keeps the notification', async () => {
+    await seedNotifications();
+    const app = appFor(push, BOB);
+
+    // Bob follows Alice (seeded above), so the private preview is readable.
+    const before = await requestJson(app, '/notifications');
+    assert.equal(before.status, 200, before.text);
+    assert.deepEqual(previews(before.body), {
+      'notif-private': 'PRIVATE PREVIEW SECRET',
+      'notif-public': 'PUBLIC PREVIEW',
+    });
+
+    await db.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?').bind(BOB.id, ALICE.id).run();
+
+    const after = await requestJson(app, '/notifications');
+    assert.equal(after.status, 200, after.text);
+    assert.deepEqual(previews(after.body), {
+      'notif-private': null,
+      'notif-public': 'PUBLIC PREVIEW',
+    });
+    assert.deepEqual(
+      ((after.body as { notifications: Array<{ id: string }> }).notifications ?? []).map((row) => row.id),
+      ['notif-1', 'notif-2'],
+      'masking must not delete notifications',
+    );
+    assert.equal(after.text.includes('PRIVATE PREVIEW SECRET'), false);
   });
 });

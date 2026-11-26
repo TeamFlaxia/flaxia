@@ -389,6 +389,50 @@ describe('outbound Fresh and Reload federation', () => {
     db.close();
   });
 
+  it('returns 404 for bookmarks and reactions on posts the viewer cannot read', async () => {
+    await seedLocalUser(db, { id: 'local-2', username: 'bob', displayName: 'Bob' });
+    for (const [id, author, visibility, mentions] of [
+      ['secret-private', 'local-2', 'private', '[]'],
+      ['secret-direct', 'local-2', 'direct', JSON.stringify([{ username: 'carol', user_id: 'local-3' }])],
+      ['own-private', VIEWER.id, 'private', '[]'],
+    ]) {
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status, visibility, created_at)
+           VALUES (?, ?, 'bob', ?, '[]', ?, 'published', ?, ?)`,
+        )
+        .bind(id, author, `note ${id}`, mentions, visibility, NOW)
+        .run();
+    }
+
+    for (const path of [
+      '/posts/secret-private/bookmark',
+      '/posts/secret-direct/bookmark',
+      '/posts/secret-private/reactions',
+      '/posts/secret-direct/reactions',
+    ]) {
+      const response = await post(app, path, path.endsWith('reactions') ? { emoji: '🔥' } : {}, api);
+      assert.equal(response.status, 404, `${path}: ${JSON.stringify(response.data)}`);
+      assert.deepEqual(response.data, { error: 'Post not found' });
+    }
+    assert.equal(
+      await count(db, 'SELECT COUNT(*) AS n FROM bookmarks WHERE post_id IN (?, ?)', 'secret-private', 'secret-direct'),
+      0,
+    );
+    assert.equal(
+      await count(db, 'SELECT COUNT(*) AS n FROM reactions WHERE post_id IN (?, ?)', 'secret-private', 'secret-direct'),
+      0,
+    );
+
+    // The author and an ordinary public post remain fully usable.
+    const ownBookmark = await post(app, '/posts/own-private/bookmark', {}, api);
+    assert.equal(ownBookmark.status, 200);
+    const ownReaction = await post(app, '/posts/own-private/reactions', { emoji: '🔥' }, api);
+    assert.equal(ownReaction.status, 200);
+    const publicReaction = await post(app, '/posts/local-post/reactions', { emoji: '🔥' }, api);
+    assert.equal(publicReaction.status, 200);
+  });
+
   it('keeps the existing single Fresh flow for local posts', async () => {
     const first = await post(app, '/posts/local-post/fresh', null, api);
     assert.equal(first.status, 200);

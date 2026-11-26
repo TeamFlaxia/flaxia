@@ -18,6 +18,7 @@ import { checkRateLimit, getClientIp } from '../../../lib/rate-limit';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
 import { requireAuth } from '../../helpers';
 import type { Bindings, Variables } from '../../types';
+import { visibilityFilter } from '../posts/helpers.ts';
 
 export const social = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -373,12 +374,17 @@ social.get('/remote/actors/:domain/:username', async (c) => {
     following = followState === 'accepted';
   }
 
+  // Reuse the viewer already resolved for followState above: a signed-in
+  // follower may read the remote actor's followers-only posts, a stranger may
+  // not. enrichPostsWithAttachments has no viewer parameter, so the predicate
+  // has to be enforced by the query itself.
+  const visibility = visibilityFilter(user?.id ?? null);
   const posts = await c.env.DB.prepare(
     `SELECT id, text, created_at, fresh_count, reload_count, reply_count, ap_object_id
-     FROM posts WHERE actor_id = ? AND status = 'published' AND hidden = 0
-     ORDER BY created_at DESC LIMIT 50`,
+     FROM posts p WHERE p.actor_id = ? AND p.status = 'published' AND p.hidden = 0 ${visibility.sql}
+     ORDER BY p.created_at DESC LIMIT 50`,
   )
-    .bind(actor.actor_url)
+    .bind(actor.actor_url, ...visibility.params)
     .all<{
       id: string;
       text: string;

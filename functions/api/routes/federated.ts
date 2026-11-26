@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { clampLimit } from '../../lib/pagination.ts';
 import { resolveRequestUser } from '../helpers.ts';
-import type { Bindings, PostRow, Variables } from '../types.ts';
-import { enrichFeedPosts } from './posts/helpers.ts';
+import { type Bindings, dbFromContext, type PostRow, type Variables } from '../types.ts';
+import { enrichFeedPosts, visibilityFilter } from './posts/helpers.ts';
 
 /**
  * Federated popularity timeline.
@@ -38,7 +38,8 @@ function encodeCursor(post: PoolPost): string {
 }
 
 federated.get('/federated/posts', async (c) => {
-  if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+  const db = dbFromContext(c);
+  if (!db) return c.json({ error: 'Database not available' }, 500);
 
   const limit = clampLimit(c.req.query('limit'), 20, 50);
   const cursor = parseCursor(c.req.query('cursor') ?? undefined);
@@ -51,6 +52,7 @@ federated.get('/federated/posts', async (c) => {
        AND (p.actor_id IS NULL OR p.actor_id NOT IN (SELECT actor_url FROM ap_blocks WHERE local_user_id = ?))`
     : '';
   const blockParams = currentUserId ? [currentUserId, currentUserId] : [];
+  const visibility = visibilityFilter(currentUserId);
 
   // Keyset pagination on the same tuple as ORDER BY. A tie on score falls back
   // to creation time and then the post id, so no row is skipped or repeated.
@@ -62,16 +64,17 @@ federated.get('/federated/posts', async (c) => {
     ? [cursor.score, cursor.score, cursor.createdAt, cursor.score, cursor.createdAt, cursor.id]
     : [];
 
-  const result = await c.env.DB.prepare(
-    `SELECT p.*, pm.score AS pool_score
+  const result = await db
+    .prepare(
+      `SELECT p.*, pm.score AS pool_score
        FROM posts p
        JOIN ap_pool_metrics pm ON pm.post_id = p.id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.actor_id IS NOT NULL
-         ${blockSql} ${cursorSql}
+         ${blockSql} ${cursorSql} ${visibility.sql}
        ORDER BY pm.score DESC, p.created_at DESC, p.id DESC
        LIMIT ?`,
-  )
-    .bind(...blockParams, ...cursorParams, limit)
+    )
+    .bind(...blockParams, ...cursorParams, ...visibility.params, limit)
     .all();
 
   if (!result.success) {
@@ -80,7 +83,7 @@ federated.get('/federated/posts', async (c) => {
   }
 
   const posts = (result.results ?? []) as PoolPost[];
-  await enrichFeedPosts(posts, c.env.DB, currentUserId);
+  await enrichFeedPosts(posts, db, currentUserId);
 
   const last = posts.at(-1);
   const nextCursor = last && posts.length >= limit ? encodeCursor(last) : null;
