@@ -52,6 +52,7 @@ export async function resolve(specifier, context, nextResolve) {
 const { feed } = await import('../functions/api/routes/posts/feed.ts');
 const { manage } = await import('../functions/api/routes/posts/manage.ts');
 const { replies } = await import('../functions/api/routes/posts/replies.ts');
+const { composer } = await import('../functions/api/routes/posts/composer.ts');
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
@@ -130,11 +131,13 @@ type SeedPost = {
   parentId?: string;
   rootId?: string;
   omitVisibility?: boolean;
+  createdAt?: string;
 };
 
 async function seedPost(post: SeedPost): Promise<void> {
   const author = post.author ?? ALICE;
   const visibility = post.omitVisibility ? null : (post.visibility ?? 'public');
+  const createdAt = post.createdAt ?? NOW;
   const bind: unknown[] = [
     post.id,
     author.id,
@@ -144,7 +147,7 @@ async function seedPost(post: SeedPost): Promise<void> {
     JSON.stringify(post.mentions ?? []),
     post.parentId ?? null,
     post.rootId ?? null,
-    NOW,
+    createdAt,
   ];
   if (!post.omitVisibility) bind.push(visibility);
   const columns = post.omitVisibility
@@ -253,13 +256,15 @@ describe('visibility in the chronological feed', () => {
     assert.equal(follower.count, 2);
   });
 
-  it('runs every feed branch with the right number of binds', async () => {
-    await seedPost({ id: 'branch-1', text: 'branch one #visibility', hashtags: ['visibility'] });
+  it('returns the exact visible ids on every feed branch and cursor page', async () => {
+    const at = (second: number) => `2026-11-26T00:00:0${second}.000Z`;
+    await seedPost({ id: 'branch-1', text: 'branch one #visibility', hashtags: ['visibility'], createdAt: at(1) });
     await seedPost({
       id: 'branch-2',
       text: 'branch two #visibility',
       hashtags: ['visibility'],
       visibility: 'private',
+      createdAt: at(2),
     });
     await seedPost({
       id: 'branch-3',
@@ -267,24 +272,28 @@ describe('visibility in the chronological feed', () => {
       hashtags: ['visibility'],
       visibility: 'direct',
       mentions: [{ username: 'carol', user_id: CAROL.id }],
+      createdAt: at(3),
     });
     const app = feedApp(CAROL);
-    const paths = [
-      '/posts?limit=5',
-      `/posts?limit=5&cursor=${NOW}`,
-      '/posts?hashtag=visibility&limit=5',
-      `/posts?hashtag=visibility&limit=5&cursor=${NOW}`,
-      '/posts?following=true&limit=5',
-      `/posts?following=true&limit=5&cursor=${NOW}`,
-      `/posts?username=${ALICE.username}&limit=5`,
-      `/posts?username=${ALICE.username}&limit=5&cursor=${NOW}`,
-      '/posts/trending?limit=5',
-      `/posts/trending?limit=5&cursor=0,${NOW},branch-1`,
+    const all = ['branch-1', 'branch-2', 'branch-3'];
+    const cases: Array<[string, string[]]> = [
+      ['/posts?limit=5', all],
+      [`/posts?limit=5&cursor=${at(2)}`, ['branch-1']],
+      [`/posts?limit=5&cursor=${at(4)}`, all],
+      ['/posts?hashtag=visibility&limit=5', all],
+      [`/posts?hashtag=visibility&limit=5&cursor=${at(2)}`, ['branch-1']],
+      ['/posts?following=true&limit=5', all],
+      [`/posts?following=true&limit=5&cursor=${at(2)}`, ['branch-1']],
+      [`/posts?username=${ALICE.username}&limit=5`, all],
+      [`/posts?username=${ALICE.username}&limit=5&cursor=${at(2)}`, ['branch-1']],
+      ['/posts/trending?limit=5', all],
+      [`/posts/trending?limit=5&cursor=999999,${at(2)},branch-1`, all],
     ];
-    for (const path of paths) {
+    for (const [path, expected] of cases) {
       const result = await getIds(app, path);
-      assert.ok(Array.isArray(result.ids), path);
-      if (path.includes('hashtag=')) assert.equal(typeof result.count, 'number', path);
+      assert.deepEqual(result.ids.sort(), expected, path);
+      // The hashtag total counts every visible match, even on a cursor page.
+      if (path.includes('hashtag=')) assert.equal(result.count, all.length, path);
     }
   });
 });
@@ -416,6 +425,34 @@ describe('visibility in search, discovery and personal lists', () => {
 });
 
 describe('composer submit', () => {
+  it('rejects an invalid visibility value with 422 before writing a post', async () => {
+    const app = appFor(composer, ALICE);
+    const json = await app.request(
+      'http://localhost/posts/commit',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId: 'invalid-vis-json', text: 'hello', visibility: 'sideways' }),
+      },
+      envFor(db),
+    );
+    assert.equal(json.status, 422);
+    assert.deepEqual(await json.json(), { error: 'Invalid visibility' });
+
+    const form = new FormData();
+    form.set('text', 'hello');
+    form.set('visibility', 'sideways');
+    const multipart = await app.request('http://localhost/posts/commit', { method: 'POST', body: form }, envFor(db));
+    assert.equal(multipart.status, 422);
+    assert.deepEqual(await multipart.json(), { error: 'Invalid visibility' });
+
+    assert.equal(
+      await db.prepare('SELECT id FROM posts WHERE id = ?').bind('invalid-vis-json').first(),
+      null,
+      'an invalid visibility must not create a post',
+    );
+  });
+
   it('sends visibility on the JSON path, the FormData path, and defaults to public', async () => {
     const { submitPost } = await import('../src/lib/composer/submit.ts');
     const originalFetch = globalThis.fetch;

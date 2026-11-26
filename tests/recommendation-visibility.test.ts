@@ -301,4 +301,57 @@ describe('GET /api/posts/recommended — visibility', () => {
       assert.deepEqual(await getIds(path, BOB), BOB_IDS, path);
     }
   });
+
+  it('falls back to exact archive ids when every fresh candidate was already delivered', async () => {
+    const fresh = new Date(Date.now() - 3600_000).toISOString();
+    const old = new Date(Date.now() - 30 * 86400_000).toISOString();
+    await seedVisibilitySet(fresh);
+    await seedPost({ id: 'archive-private', text: 'old private note', visibility: 'private', createdAt: old });
+    await seedPost({ id: 'archive-public', text: 'old public note', createdAt: old });
+
+    const freshIds = [...ANON_IDS, 'pri-alice', 'dir-alice', 'pri-bob'];
+    const cursor = encodeURIComponent(`0,${fresh},pri-alice,${Date.now()},${freshIds.join(':')}`);
+    for (const path of [
+      `/posts/recommended?limit=20&cursor=${cursor}`,
+      `/posts/recommended?client_rank=1&limit=20&cursor=${cursor}`,
+    ]) {
+      assert.deepEqual(await getIds(path, null), ['archive-public'], `${path}: anonymous`);
+      assert.deepEqual(await getIds(path, ALICE), ['archive-private'], `${path}: author (own public post excluded)`);
+      assert.deepEqual(await getIds(path, CAROL), ['archive-private', 'archive-public'], `${path}: follower`);
+    }
+  });
+
+  it('pages the final archive candidates with exact ids', async () => {
+    const older = new Date(Date.now() - 40 * 86400_000).toISOString();
+    const newest = new Date(Date.now() - 30 * 86400_000).toISOString();
+    for (const [id, author, at, visibility] of [
+      ['archive-new-1', BOB, newest, 'public'],
+      ['archive-new-2', CAROL, newest, 'unlisted'],
+      ['archive-old-1', BOB, older, 'public'],
+      ['archive-old-2', ALICE, older, 'private'],
+    ] as const) {
+      await seedPost({ id, author, text: `old note ${id}`, visibility, createdAt: at });
+    }
+
+    async function page(path: string): Promise<{ ids: string[]; next: string | null }> {
+      const response = await appFor(ALICE).request(`http://localhost${path}`, {}, envFor(db));
+      assert.equal(response.status, 200, await response.clone().text());
+      const data = (await response.json()) as { posts: Array<{ id: string }>; next_cursor: string | null };
+      return { ids: data.posts.map((post) => post.id).sort(), next: data.next_cursor };
+    }
+
+    const first = await page('/posts/recommended?limit=2');
+    assert.deepEqual(first.ids, ['archive-new-1', 'archive-new-2']);
+    assert.ok(first.next?.startsWith('archive,'), 'the final page must expose an archive cursor');
+
+    const cursor = encodeURIComponent(first.next!);
+    for (const path of [
+      `/posts/recommended?limit=2&cursor=${cursor}`,
+      `/posts/recommended?client_rank=1&limit=2&cursor=${cursor}`,
+    ]) {
+      const second = await page(path);
+      assert.deepEqual(second.ids, ['archive-old-1', 'archive-old-2'], path);
+      assert.equal(second.next, null, path);
+    }
+  });
 });

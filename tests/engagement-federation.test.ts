@@ -225,6 +225,71 @@ describe('inbound Like and Undo keep the public Fresh counter in sync', () => {
     );
   });
 
+  it('increments only once when duplicate Likes arrive concurrently', async () => {
+    const note = `${BASE}/api/notes/local-post`;
+    // A retried delivery races the original: every copy has a distinct
+    // activity id, so only the (post_id, actor_id) uniqueness can protect the
+    // public counter and notification.
+    await Promise.all(Array.from({ length: 8 }, (_, index) => sendLike(db, `like-concurrent-${index}`, note)));
+
+    assert.deepEqual(await countersFor(db, 'local-post'), { fresh_count: 1, engagement_hotness: 3 });
+    assert.equal(
+      await count(db, 'SELECT COUNT(*) AS n FROM likes WHERE post_id = ? AND actor_id = ?', 'local-post', REMOTE_ALICE),
+      1,
+    );
+    assert.equal(
+      await count(
+        db,
+        "SELECT COUNT(*) AS n FROM notifications WHERE type = 'ap_like' AND post_id = ? AND actor_id = ?",
+        'local-post',
+        REMOTE_ALICE,
+      ),
+      1,
+    );
+  });
+
+  it('decrements only once when duplicate Undo activities arrive concurrently', async () => {
+    const note = `${BASE}/api/notes/local-post`;
+    await sendLike(db, 'like-before-concurrent-undo', note);
+    assert.deepEqual(await countersFor(db, 'local-post'), { fresh_count: 1, engagement_hotness: 3 });
+
+    const handler = envsFor(db, []).handler;
+    await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        handleIncomingActivity(handler, {
+          actorId: REMOTE_ALICE,
+          username: 'alice',
+          activity: {
+            id: `${REMOTE}/activities/undo-concurrent-${index}`,
+            type: 'Undo',
+            actor: REMOTE_ALICE,
+            object: {
+              id: `${REMOTE}/activities/like-before-concurrent-undo`,
+              type: 'Like',
+              actor: REMOTE_ALICE,
+              object: note,
+            },
+          },
+        }),
+      ),
+    );
+
+    assert.deepEqual(await countersFor(db, 'local-post'), { fresh_count: 0, engagement_hotness: 1 });
+    assert.equal(
+      await count(db, 'SELECT COUNT(*) AS n FROM likes WHERE post_id = ? AND actor_id = ?', 'local-post', REMOTE_ALICE),
+      0,
+    );
+    assert.equal(
+      await count(
+        db,
+        "SELECT COUNT(*) AS n FROM notifications WHERE type = 'ap_like' AND post_id = ? AND actor_id = ?",
+        'local-post',
+        REMOTE_ALICE,
+      ),
+      0,
+    );
+  });
+
   it('decrements on Undo from the signing actor but rejects a different actor', async () => {
     const note = `${BASE}/api/notes/local-post`;
     await sendLike(db, 'like-2', note);

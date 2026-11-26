@@ -1,18 +1,40 @@
-// SSR/SEO guards for the remote profile route `/@domain/user`.
+// SSR/SEO behaviour for the remote profile route `/@domain/user`.
 //
-// The route must own its metadata (the root layout suppresses its generic tags
-// for it), must not be cached because follow state is viewer-specific, and must
-// never inject untrusted actor HTML into a script element.
+// The route owns its metadata (the root layout suppresses its generic tags),
+// must not be cached because follow state is viewer-specific, and must never
+// inject untrusted actor HTML into a script element. These are checked against
+// real SSR output from the compiled route/layout and the exported pure load
+// and summary helpers, not against source-text regexes.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { after, before, describe, it } from 'node:test';
+import { register } from 'node:module';
+import { resolve } from 'node:path';
+import { after, before, beforeEach, describe, it } from 'node:test';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { render } from 'svelte/server';
+import { createServer, type ViteDevServer } from 'vite';
 import { resolveActorInbox } from '../functions/lib/activitypub/delivery.ts';
 import { normalizeActorSummary } from '../functions/lib/activitypub/fetch.ts';
 import { handleIncomingActivity } from '../functions/lib/activitypub/handlers.ts';
+import { pageTitle } from '../src/lib/page-title.ts';
 import { loadRemoteProfile } from '../src/lib/ssr-data.ts';
 import { createTestDatabase, type TestDatabase } from './helpers/d1.ts';
 
-const read = (path: string) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+// Route modules use extensionless relative imports for the Worker bundler.
+register(
+  'data:text/javascript,' +
+    encodeURIComponent(`
+export async function resolve(specifier, context, nextResolve) {
+  try {
+    return await nextResolve(specifier, context);
+  } catch (error) {
+    if (error.code === 'ERR_MODULE_NOT_FOUND' && specifier.startsWith('.') && !/\\.[a-z]+$/i.test(specifier)) {
+      return nextResolve(specifier + '.ts', context);
+    }
+    throw error;
+  }
+}
+`),
+);
 
 function jsonFetch(status: number, body: unknown): typeof fetch {
   return (async () =>
@@ -20,6 +42,79 @@ function jsonFetch(status: number, body: unknown): typeof fetch {
       status,
       headers: { 'content-type': 'application/json' },
     })) as typeof fetch;
+}
+
+// --- Real Svelte SSR -------------------------------------------------------
+
+const appStub = {
+  name: 'app-state-stub',
+  enforce: 'pre' as const,
+  resolveId(id: string) {
+    return id.startsWith('$app/') ? `\0stub:${id}` : null;
+  },
+  load(id: string) {
+    if (!id.startsWith('\0stub:')) return null;
+    const module = id.slice(6);
+    if (module === '$app/navigation') {
+      return `export const goto = async () => {}; export const preloadCode = async () => {}; export const preloadData = async () => {}; export const beforeNavigate = () => {}; export const afterNavigate = () => {};`;
+    }
+    if (module === '$app/state') {
+      return `export const page = new Proxy({}, { get: (_, key) => globalThis.__PAGE__?.[key] });`;
+    }
+    return `export default {};`;
+  },
+};
+
+const ROOT = resolve(new URL('..', import.meta.url).pathname);
+let server: ViteDevServer;
+let routeLoad: (args: Record<string, unknown>) => Promise<{ profile?: unknown }>;
+let routePage: unknown;
+let layout: unknown;
+
+before(async () => {
+  server = await createServer({
+    root: ROOT,
+    configFile: false,
+    logLevel: 'error',
+    server: { middlewareMode: true },
+    plugins: [appStub, svelte({ compilerOptions: { dev: false } })],
+    resolve: { conditions: ['node'] },
+  });
+  routeLoad = ((await server.ssrLoadModule('/src/routes/@[domain]/[username]/+page.ts')) as { load: typeof routeLoad })
+    .load;
+  routePage = (await server.ssrLoadModule('/src/routes/@[domain]/[username]/+page.svelte')).default;
+  layout = (await server.ssrLoadModule('/src/routes/+layout.svelte')).default;
+});
+
+after(async () => {
+  await server.close();
+});
+
+function pageState(routeId: string, pathname: string, params: Record<string, string> = {}): void {
+  (globalThis as unknown as { __PAGE__: unknown }).__PAGE__ = {
+    status: 200,
+    params,
+    data: {},
+    route: { id: routeId },
+    url: new URL(`https://flaxia.app${pathname}`),
+  };
+}
+
+const PROFILE = {
+  actor: {
+    actor_url: 'https://remote.example/users/bob',
+    display_name: 'Bob',
+    icon_url: 'https://remote.example/icon.png',
+    bio: 'A bio with </script><script>alert(1)</script> markup',
+  },
+  following: true,
+  posts: [{ id: 'p1', text: 'first remote post' }],
+};
+
+function renderProfile(data: { profile: typeof PROFILE | null }): { head: string; body: string } {
+  pageState('/@[domain]/[username]', '/@remote.example/bob', { domain: 'remote.example', username: 'bob' });
+  const result = render(routePage as never, { props: { data } });
+  return { head: result.head, body: result.body };
 }
 
 describe('loadRemoteProfile', () => {
@@ -68,10 +163,12 @@ describe('remote actor summary persistence', () => {
   const actorUrl = 'https://remote.example/users/bob';
   const baseUrl = 'https://flaxia.app';
   let db: TestDatabase;
+  const databases: TestDatabase[] = [];
   const originalFetch = globalThis.fetch;
 
-  before(async () => {
+  beforeEach(async () => {
     db = createTestDatabase();
+    databases.push(db);
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
@@ -90,7 +187,7 @@ describe('remote actor summary persistence', () => {
 
   after(() => {
     globalThis.fetch = originalFetch;
-    db.close();
+    for (const database of databases) database.close();
   });
 
   async function storedSummary(): Promise<string | null> {
@@ -103,6 +200,25 @@ describe('remote actor summary persistence', () => {
 
   it('stores the normalised summary on the delivery cache path', async () => {
     assert.equal(await storedSummary(), 'Hello world');
+  });
+
+  it('stores a clamped 500-character bio from a fetched actor document', async () => {
+    db.prepare('DELETE FROM ap_actors').run();
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          id: actorUrl,
+          type: 'Person',
+          preferredUsername: 'bob',
+          name: 'Bob',
+          summary: `<p>${'y'.repeat(900)}</p>`,
+          inbox: `${actorUrl}/inbox`,
+          publicKey: { id: `${actorUrl}#main-key`, owner: actorUrl, publicKeyPem: '-----BEGIN PUBLIC KEY-----' },
+        }),
+        { headers: { 'content-type': 'application/activity+json' } },
+      )) as typeof fetch;
+    await resolveActorInbox({ DB: db as unknown as D1Database, BASE_URL: baseUrl }, actorUrl);
+    assert.equal((await storedSummary())?.length, 500);
   });
 
   it('propagates an Update summary but keeps it on a partial Update', async () => {
@@ -140,85 +256,112 @@ describe('remote actor summary persistence', () => {
   });
 });
 
-describe('remote profile route source', () => {
-  it('uses a non-cacheable universal load with validated params and a 404', async () => {
-    const load = await read('src/routes/@[domain]/[username]/+page.ts');
-    assert.match(load, /loadRemoteProfile\(/);
-    assert.match(load, /Cache-Control': 'private, no-store'/);
-    assert.match(load, /import\.meta\.env\.BUILD_TARGET === 'native'/);
-    assert.match(load, /DOMAIN_PATTERN\.test/);
-    assert.match(load, /USERNAME_PATTERN\.test/);
-    assert.match(load, /throw error\(404,/);
-    assert.match(load, /return \{ profile \}/);
+describe('remote profile universal load', () => {
+  it('sets a private no-store header and returns the profile', async () => {
+    const headers: Array<Record<string, string>> = [];
+    const profile = await routeLoad({
+      fetch: jsonFetch(200, PROFILE),
+      params: { domain: 'remote.example', username: 'bob' },
+      setHeaders: (values: Record<string, string>) => headers.push(values),
+    });
+    assert.deepEqual(headers, [{ 'Cache-Control': 'private, no-store' }]);
+    assert.deepEqual(profile, { profile: PROFILE });
   });
 
-  it('renders its own SEO head with a safe Person ld+json block', async () => {
-    const page = await read('src/routes/@[domain]/[username]/+page.svelte');
-    assert.match(page, /<svelte:head>/);
-    assert.match(page, /<title>\{metaTitle\}<\/title>/);
-    assert.match(page, /t\('remote_profile\.title'\)/);
-    assert.match(page, /handle/);
-    assert.match(page, /bio\.slice\(0, 160\)/);
-    assert.match(page, /SEO_ORIGIN\}\/@\$\{encodeURIComponent\(domain\)\}/);
-    assert.match(page, /renderPersonJsonLd\(/);
-    assert.match(page, /\{@html jsonLd\}/);
-    const head = page.match(/<svelte:head>([\s\S]*?)<\/svelte:head>/)?.[1];
-    assert.ok(head, 'the route must have a svelte:head block');
-    assert.doesNotMatch(head, /<script\b/i, 'JSON-LD must go through the escaping helper, not an inline script');
-    assert.match(page, /<link rel="canonical" href=\{canonicalUrl\} \/>/);
-    assert.match(page, /property="og:url"/);
-    assert.match(page, /SsrOnly/);
-    assert.match(page, /initialProfile=\{data\.profile\}/);
-  });
-
-  it('reads the session only after mount', async () => {
-    const page = await read('src/routes/@[domain]/[username]/+page.svelte');
-    assert.match(page, /onMount\(\(\) => \{\s*currentUser = getSessionUser\(\)/);
-  });
-
-  it('is excluded from every generic layout metadata set', async () => {
-    const layout = await read('src/routes/+layout.svelte');
-    const route = "'/@[domain]/[username]'";
-    for (const setName of ['OWN_META_ROUTES', 'OWN_TITLE_ROUTES', 'SELF_TITLE_TAG_ROUTES']) {
-      const block = layout.match(new RegExp(`const ${setName}[\\s\\S]*?\\]\\);`))?.[0];
-      assert.ok(block, `${setName} must exist`);
-      assert.ok(block.includes(route), `${setName} must include the remote profile route`);
+  it('404s malformed handles before making any request', async () => {
+    let calls = 0;
+    const fetchFn = (async () => {
+      calls++;
+      return new Response(JSON.stringify(PROFILE), { status: 200 });
+    }) as typeof fetch;
+    for (const params of [
+      { domain: 'bad_domain', username: 'bob' },
+      { domain: 'remote.example', username: 'bad/name' },
+      { domain: 'a'.repeat(254), username: 'bob' },
+    ]) {
+      await assert.rejects(
+        routeLoad({ fetch: fetchFn, params, setHeaders: () => {} }),
+        (error: unknown) => (error as { status?: number }).status === 404,
+        JSON.stringify(params),
+      );
     }
+    assert.equal(calls, 0);
   });
 
-  it('includes the instance in the SPA document title', async () => {
-    const titles = await read('src/lib/page-title.ts');
-    assert.ok(titles.includes('pathname.match(/^\\/@([^/]+)\\/([^/]+)/)'), 'remote handle must capture the domain');
-    assert.match(titles, /remote_profile\.title/);
-    assert.match(
-      titles,
-      /@\$\{decodeURIComponent\(remote\[2\]\)\}@\$\{decodeURIComponent\(remote\[1\]\)\}/,
-      'the title must include both the username and the instance',
-    );
-    assert.ok(
-      titles.includes('pathname.match(/^\\/(?:profile|users)\\/([^/]+)/)'),
-      'local profile titles are unchanged',
+  it('404s a missing remote actor', async () => {
+    await assert.rejects(
+      routeLoad({
+        fetch: jsonFetch(404, { error: 'not found' }),
+        params: { domain: 'remote.example', username: 'nobody' },
+        setHeaders: () => {},
+      }),
+      (error: unknown) => (error as { status?: number }).status === 404,
     );
   });
+});
 
-  it('stores a clamped bio column and caches it on every actor upsert', async () => {
-    const migration = await read('migrations/0148_ap_actor_summary.sql');
-    assert.match(migration, /ALTER TABLE ap_actors ADD COLUMN summary TEXT;/);
+describe('remote profile SSR output', () => {
+  it('owns its title, canonical and Open Graph URLs', () => {
+    const { head } = renderProfile({ profile: PROFILE });
+    assert.match(head, /<title>Flaxia - remote_profile\.title · @bob@remote\.example<\/title>/);
+    assert.match(head, /<link rel="canonical" href="https:\/\/flaxia\.app\/@remote\.example\/bob"\/>/);
+    assert.match(head, /property="og:url" content="https:\/\/flaxia\.app\/@remote\.example\/bob"/);
+    assert.match(head, /content="https:\/\/remote\.example\/icon\.png"/, 'a safe actor icon is the og:image');
+    assert.match(head, /name="description" content="A bio with /);
+  });
 
-    const fetchSource = await read('functions/lib/activitypub/fetch.ts');
-    assert.match(fetchSource, /htmlToText\(value\)\.slice\(0, MAX_ACTOR_SUMMARY_LENGTH\)/);
-    assert.match(fetchSource, /summary: string \| null/);
-    assert.match(fetchSource, /summary: normalizeActorSummary\(document\.summary\)/);
+  it('clamps the meta description to a 160-character bio excerpt', () => {
+    const bio = `${'a'.repeat(200)} tail`;
+    const { head } = renderProfile({
+      profile: { ...PROFILE, actor: { ...PROFILE.actor, bio } },
+    });
+    assert.match(head, new RegExp(`name="description" content="${'a'.repeat(160)}"`));
+  });
 
-    for (const file of ['functions/lib/activitypub/delivery.ts', 'functions/lib/activitypub/handlers.ts']) {
-      const source = await read(file);
-      assert.match(source, /INSERT INTO ap_actors \([^)]*summary, fetched_at\)/, `${file} must insert summary`);
-      assert.match(source, /summary = excluded\.summary/, `${file} must refresh summary on conflict`);
-      assert.match(source, /actor\.summary,/, `${file} must bind the normalised summary`);
-    }
+  it('emits an escaped Person JSON-LD block, never inline script markup', () => {
+    const { head } = renderProfile({ profile: PROFILE });
+    const blocks = [...head.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+    assert.equal(blocks.length, 1, 'only the JSON-LD script may appear in the head');
+    const json = blocks[0][1];
+    assert.ok(!json.includes('</script>'), 'untrusted bio markup must be escaped inside JSON-LD');
+    const person = JSON.parse(json) as Record<string, unknown>;
+    assert.equal(person['@type'], 'Person');
+    assert.equal(person.name, 'Bob');
+    assert.equal(person.alternateName, '@bob@remote.example');
+    assert.equal(person.url, 'https://flaxia.app/@remote.example/bob');
+    assert.equal(person.description, PROFILE.actor.bio);
+  });
 
-    const handlers = await read('functions/lib/activitypub/handlers.ts');
-    assert.match(handlers, /normalizeActorSummary\(object\.summary\)/);
-    assert.match(handlers, /summary = CASE WHEN \? = 1 THEN \? ELSE summary END/);
+  it('renders the SSR fallback with the actor, bio and posts', () => {
+    const { body } = renderProfile({ profile: PROFILE });
+    assert.match(body, /class="ssr-remote-profile"/);
+    assert.match(body, /@bob@remote\.example/);
+    assert.match(body, /A bio with &lt;\/script>&lt;script>alert\(1\)&lt;\/script>/);
+    assert.match(body, /first remote post/);
+  });
+
+  it('keeps the SPA title instance-aware and local profiles unchanged', () => {
+    assert.equal(pageTitle('/@remote.example/alice'), 'Flaxia - remote_profile.title · @alice@remote.example');
+    assert.equal(pageTitle('/profile/alice'), 'Flaxia - nav.profile · @alice');
+  });
+});
+
+describe('root layout metadata', () => {
+  function layoutHead(routeId: string, pathname: string): string {
+    pageState(routeId, pathname);
+    return render(layout as never, { props: { children: () => 'children' } }).head;
+  }
+
+  it('suppresses every generic metadata tag on the remote profile route', () => {
+    const head = layoutHead('/@[domain]/[username]', '/@remote.example/bob');
+    assert.ok(!head.includes('application/ld+json'), 'no generic WebSite JSON-LD');
+    assert.ok(!head.includes('<title>'), 'no generic document title');
+    assert.ok(!head.toLowerCase().includes('og:description'), 'no generic description');
+  });
+
+  it('still emits generic WebSite metadata on ordinary routes', () => {
+    const head = layoutHead('/home', '/home');
+    assert.match(head, /application\/ld\+json/);
+    assert.match(head, /<title>/);
   });
 });
