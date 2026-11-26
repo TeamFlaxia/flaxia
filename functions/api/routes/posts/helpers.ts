@@ -139,7 +139,7 @@ export async function filterVisiblePosts(
   if (ids.length === 0) return [];
   const { sql, params } = visibilityFilter(currentUserId);
   const result = await db
-    .prepare(`SELECT id FROM posts WHERE id IN (${ids.map(() => '?').join(',')}) ${sql}`)
+    .prepare(`SELECT p.id FROM posts p WHERE p.id IN (${ids.map(() => '?').join(',')}) ${sql}`)
     .bind(...ids, ...params)
     .all<{ id: string }>();
   if (!result.success) return [];
