@@ -58,6 +58,25 @@ function normalizeLookupDomain(raw: string): string | null {
   }
 }
 
+/**
+ * A WebFinger `self` link must name an actor on the domain that was looked up.
+ *
+ * The WebFinger document is fetched from the handle's domain, but its `self`
+ * href is attacker-controlled: without this check a response for
+ * `@bob@example.com` could point at `https://evil.example/users/bob`, and we
+ * would cache that actor — including its inbox — as Bob, steering later
+ * Follow/Like deliveries to the attacker's origin.
+ *
+ * A federation test peer may be looked up as `host:port` while its actor uses
+ * the bare host; that substitution is only allowed for an explicitly
+ * allowlisted private peer, never for a different public domain.
+ */
+function isActorOnLookedUpDomain(actorUrl: URL, normalizedDomain: string, env: FederationEnv): boolean {
+  if (actorUrl.host === normalizedDomain) return true;
+  const domainHost = normalizedDomain.split(':')[0];
+  return actorUrl.hostname === domainHost && isPrivatePeerAllowed(env, actorUrl.hostname);
+}
+
 interface WebFingerLink {
   rel?: unknown;
   href?: unknown;
@@ -128,6 +147,9 @@ export async function lookupRemoteHandleAt(
         continue;
       }
       if (actorUrl.protocol !== 'https:' && actorUrl.protocol !== 'http:') continue;
+      // SSRF safety is not enough: a self link on another origin must not be
+      // resolved or cached as the account named by the handle.
+      if (!isActorOnLookedUpDomain(actorUrl, normalizedDomain, env)) continue;
       const actor = await resolveRemoteActor(actorUrl.toString(), env, options);
       if (actor) return actor;
     }
@@ -201,13 +223,22 @@ export async function lookupRemoteHandleCached(
   env: FederationEnv,
   options: FetchOptions = {},
 ): Promise<RemoteActor | null> {
-  if (!parseRemoteHandle(handle)) return null;
+  const parsed = parseRemoteHandle(handle);
+  if (!parsed) return null;
   const key = remoteLookupCacheKey(handle);
   try {
     const raw = await env.CACHE?.get(key);
     if (raw) {
       const cached = JSON.parse(raw) as RemoteActor | null;
-      if (cached && typeof cached.actorUrl === 'string' && typeof cached.domain === 'string') return cached;
+      if (cached && typeof cached.actorUrl === 'string' && typeof cached.domain === 'string') {
+        let cachedUrl: URL | null = null;
+        try {
+          cachedUrl = new URL(cached.actorUrl);
+        } catch {}
+        // A stale entry written before the origin check — or a poisoned one —
+        // must not be served as the account named by this handle.
+        if (cachedUrl && isActorOnLookedUpDomain(cachedUrl, parsed.domain, env)) return cached;
+      }
     }
   } catch {
     // A broken cache must not turn into a broken lookup.
