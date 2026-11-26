@@ -13,7 +13,7 @@ import { computeQualityScore } from '../../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST } from '../../../lib/trust';
 import type { Bindings, PostRow, Variables } from '../../types';
 
-import { enrichFeedPosts, RECOMMENDED_SELECT } from './helpers.ts';
+import { enrichFeedPosts, RECOMMENDED_SELECT, visibilityFilter } from './helpers.ts';
 
 export const recommendations = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -119,12 +119,12 @@ export function collectRecommendationCandidateIds(...sources: ReadonlyArray<Iter
   return [...ids];
 }
 
-export function buildPoolCandidateSql(visibilityFilter: string): string {
+export function buildPoolCandidateSql(filterSql: string): string {
   return `SELECT p.id, ${POOL_SCORE_SQL} AS pool_score
     FROM posts p ${POOL_JOIN_SQL}
     LEFT JOIN users u ON p.user_id = u.id
     WHERE p.actor_id IS NOT NULL AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-      ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+      ${filterSql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
     ORDER BY pool_score DESC LIMIT ?`;
 }
 
@@ -132,13 +132,13 @@ async function loadPoolCandidates(
   db: D1Database,
   limit: number,
   asOfMs: number,
-  visibilityFilter: string,
-  visibilityParams: string[],
+  filterSql: string,
+  filterParams: string[],
 ): Promise<{ ids: string[]; scoreById: Map<string, number> }> {
   const cutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
   const result = await db
-    .prepare(buildPoolCandidateSql(visibilityFilter))
-    .bind(...visibilityParams, cutoff, new Date(asOfMs).toISOString(), limit)
+    .prepare(buildPoolCandidateSql(filterSql))
+    .bind(...filterParams, cutoff, new Date(asOfMs).toISOString(), limit)
     .all<{ id: string; pool_score: number | null }>();
   const rows = result.results ?? [];
   const scoreById = new Map<string, number>();
@@ -206,10 +206,15 @@ async function loadClientRankedCandidatePage(
     return { ...archive, vectors, vector_meta: vectorMeta, base_scores: baseScores };
   }
 
-  const visibilityFilter = currentUserId
-    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+  // Blocked authors stay out. As before, For You excludes the viewer's own
+  // ordinary posts; only their own private/direct posts are kept so authors
+  // retain access under the visibility predicate below.
+  const blockFilter = currentUserId
+    ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
     : '';
-  const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+  const blockParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+  const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
   const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
   const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
   const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
@@ -221,20 +226,20 @@ async function loadClientRankedCandidatePage(
         `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY p.created_at DESC LIMIT ?`,
       )
-      .bind(...visibilityParams, recentCutoff, asOfIso, sourceLimit)
+      .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, sourceLimit)
       .all<Record<string, unknown>>(),
     db
       .prepare(
         `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
       )
-      .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
+      .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
       .all<Record<string, unknown>>(),
     currentUserId
       ? db
@@ -244,13 +249,16 @@ async function loadClientRankedCandidatePage(
              WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                AND p.created_at >= ? AND p.created_at <= ?
                AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-               ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+               ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
              ORDER BY p.created_at DESC LIMIT ?`,
           )
-          .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, sourceLimit)
+          .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, sourceLimit)
           .all<Record<string, unknown>>()
       : Promise.resolve(null),
-    loadPoolCandidates(db, sourceLimit, asOfMs, visibilityFilter, visibilityParams),
+    loadPoolCandidates(db, sourceLimit, asOfMs, `${blockFilter} ${visibilitySql}`, [
+      ...blockParams,
+      ...visibilityParams,
+    ]),
   ]);
 
   const recentPosts = recentResult.results ?? [];
@@ -274,10 +282,10 @@ async function loadClientRankedCandidatePage(
        LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (SELECT value FROM json_each(?))
          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at >= ? AND p.created_at <= ?`,
     )
-    .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+    .bind(asOfUnixSeconds, serializedCandidateIds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso)
     .all<Record<string, unknown>>();
   const candidatePosts = candidateResult.results ?? [];
 
@@ -430,10 +438,12 @@ recommendations.get('/posts/recommended', async (c) => {
       return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
-    const visibilityFilter = currentUserId
-      ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+    const blockFilter = currentUserId
+      ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
       : '';
-    const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+    const blockParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+    const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
     const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
     const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
@@ -444,20 +454,20 @@ recommendations.get('/posts/recommended', async (c) => {
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY p.created_at DESC LIMIT ?`,
         )
-        .bind(...visibilityParams, recentCutoff, asOfIso, limit * 4)
+        .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       db
         .prepare(
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
-        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
+        .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       currentUserId
         ? db
@@ -467,13 +477,16 @@ recommendations.get('/posts/recommended', async (c) => {
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                  AND p.created_at >= ? AND p.created_at <= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-                 ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+                 ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
                ORDER BY p.created_at DESC LIMIT ?`,
             )
-            .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
+            .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, limit * 4)
             .all<Record<string, unknown>>()
         : Promise.resolve(null),
-      loadPoolCandidates(db, limit * 4, asOfMs, visibilityFilter, visibilityParams),
+      loadPoolCandidates(db, limit * 4, asOfMs, `${blockFilter} ${visibilitySql}`, [
+        ...blockParams,
+        ...visibilityParams,
+      ]),
     ]);
 
     const recentPosts = recentResult.results || [];
@@ -497,11 +510,11 @@ recommendations.get('/posts/recommended', async (c) => {
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
         AND p.created_at >= ? AND p.created_at <= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+      .bind(asOfUnixSeconds, serializedCandidateIds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
 
@@ -627,18 +640,20 @@ async function loadRecommendedArchivePage(
   const hasCursor = Boolean(cursorCreatedAt && cursorId);
   const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
   const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
-  const visibilityFilter = currentUserId
-    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+  const blockFilter = currentUserId
+    ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
     : '';
+  const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
   if (currentUserId) params.push(currentUserId, currentUserId);
-  params.push(asOfIso, limit + 1);
+  params.push(...visibilityParams, asOfIso, limit + 1);
 
   const result = await db
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         AND ${cursorFilter} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at <= ?
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )
