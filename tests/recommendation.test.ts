@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { isRemoteRecommendation, mixForYouFeed, presentForYou } from '../shared/recommendation/mix.ts';
 import { normalizeVector, weightedMeanVector } from '../shared/recommendation/vector.ts';
 import { decodeVector, encodeVector } from '../shared/recommendation/vector-codec.ts';
 import { rankCandidates } from '../src/lib/recommendation/rank.ts';
@@ -98,6 +99,89 @@ describe('client-side recommendation ranking', () => {
     assert.deepEqual(
       ranked.map((item) => item.id),
       ['high', 'low'],
+    );
+  });
+});
+
+describe('For You source mixing', () => {
+  const local = (n: number) => `local-${n}`;
+  const remote = (n: number) => `remote-${n}`;
+  const items = [...Array.from({ length: 6 }, (_, i) => local(i)), ...Array.from({ length: 6 }, (_, i) => remote(i))];
+  const source = (id: string) => (id.startsWith('remote') ? ('remote' as const) : ('local' as const));
+
+  it('alternates 1:1 with Flaxia taking the first slot', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 8 });
+    assert.deepEqual(mixed.map(source), ['local', 'remote', 'local', 'remote', 'local', 'remote', 'local', 'remote']);
+    assert.equal(mixed[0], 'local-0');
+  });
+
+  it('keeps per-side order', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 4 });
+    assert.deepEqual(mixed, ['local-0', 'remote-0', 'local-1', 'remote-1']);
+  });
+
+  it('fills the remaining slots from the longer side', () => {
+    const skewed = ['local-0', 'local-1', 'local-2', 'remote-0'];
+    assert.deepEqual(mixForYouFeed({ items: skewed, getSource: source, limit: 4 }), [
+      'local-0',
+      'remote-0',
+      'local-1',
+      'local-2',
+    ]);
+    assert.deepEqual(mixForYouFeed({ items: ['remote-0', 'remote-1'], getSource: source, limit: 4 }), [
+      'remote-0',
+      'remote-1',
+    ]);
+  });
+
+  it('honours the "do not show" choice', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 6, hideRemote: true });
+    assert.ok(mixed.every((id) => source(id) === 'local'));
+    assert.deepEqual(mixed, ['local-0', 'local-1', 'local-2', 'local-3', 'local-4', 'local-5']);
+  });
+
+  it('handles empty input and zero limits', () => {
+    assert.deepEqual(mixForYouFeed({ items, getSource: source, limit: 0 }), []);
+    assert.deepEqual(mixForYouFeed({ items: [], getSource: source, limit: 10 }), []);
+  });
+
+  it('recognises remote posts by flag or actor id', () => {
+    assert.equal(isRemoteRecommendation({ is_remote: true }), true);
+    assert.equal(isRemoteRecommendation({ is_remote: 1 }), true);
+    assert.equal(isRemoteRecommendation({ actor_id: 'https://mastodon.example/users/a' }), true);
+    assert.equal(isRemoteRecommendation({ user_id: 'local', is_remote: false }), false);
+  });
+
+  it('presentForYou mixes raw D1 rows (is_remote is 0/1)', () => {
+    const rows = [
+      { id: 'local-1', is_remote: 0 },
+      { id: 'remote-1', is_remote: 1, actor_id: 'https://mastodon.example/users/a' },
+      { id: 'local-2', is_remote: 0 },
+      { id: 'remote-2', is_remote: 1 },
+    ];
+    assert.deepEqual(
+      presentForYou(rows, 4, false, true).map((row) => row.id),
+      ['local-1', 'remote-1', 'local-2', 'remote-2'],
+    );
+    assert.deepEqual(
+      presentForYou(rows, 4, true, true).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+  });
+
+  it('presentForYou hides remote candidates without mixing for client ranking', () => {
+    const rows = [
+      { id: 'local-1', is_remote: 0 },
+      { id: 'remote-1', is_remote: 1 },
+      { id: 'local-2', is_remote: 0 },
+    ];
+    assert.deepEqual(
+      presentForYou(rows, 3, true, false).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+    assert.deepEqual(
+      presentForYou(rows, 3, false, false).map((row) => row.id),
+      ['local-1', 'remote-1', 'local-2'],
     );
   });
 });

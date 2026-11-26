@@ -81,7 +81,71 @@ export async function ensureReactionsTable(db: D1Database): Promise<void> {
 
 export const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
-  COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
+  COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.actor_id, (p.actor_id IS NOT NULL) AS is_remote, p.visibility`;
+
+/**
+ * SQL predicate that limits rows of `posts p` to what a local viewer may see.
+ *
+ * - `public` / `unlisted` are visible to everyone.
+ * - Remote Notes (`actor_id IS NOT NULL`) stay public as before; visibility is
+ *   a property of locally authored posts.
+ * - `private` (Followers only) is visible to the author and local followers.
+ * - `direct` is visible to the author and local users in `mentions.user_id`.
+ *
+ * Append `sql` at the very end of the WHERE clause and `params` immediately
+ * before the trailing `LIMIT ?` bind (or after any other binds when there is no
+ * LIMIT). A missing/legacy value defaults to `public`.
+ */
+export function visibilityFilter(currentUserId: string | null | undefined): {
+  sql: string;
+  params: string[];
+} {
+  if (!currentUserId) {
+    return {
+      sql: `AND (COALESCE(p.visibility, 'public') IN ('public', 'unlisted') OR p.actor_id IS NOT NULL)`,
+      params: [],
+    };
+  }
+  return {
+    sql: `AND (
+      COALESCE(p.visibility, 'public') IN ('public', 'unlisted')
+      OR p.actor_id IS NOT NULL
+      OR (COALESCE(p.visibility, 'public') = 'private' AND (
+        p.user_id = ? OR EXISTS (
+          SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = p.user_id
+        )
+      ))
+      OR (COALESCE(p.visibility, 'public') = 'direct' AND (
+        p.user_id = ? OR EXISTS (
+          SELECT 1 FROM json_each(p.mentions) WHERE json_extract(value, '$.user_id') = ?
+        )
+      ))
+    )`,
+    params: [currentUserId, currentUserId, currentUserId, currentUserId],
+  };
+}
+
+/**
+ * Re-apply the visibility rule to an already-fetched list of posts. Used for
+ * user-agnostic KV cache hits (trending), where the rows were fetched for a
+ * different viewer. Fails closed if the lookup fails.
+ */
+export async function filterVisiblePosts(
+  db: D1Database,
+  currentUserId: string | null | undefined,
+  posts: Array<Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  const ids = posts.map((post) => String(post.id ?? '')).filter(Boolean);
+  if (ids.length === 0) return [];
+  const { sql, params } = visibilityFilter(currentUserId);
+  const result = await db
+    .prepare(`SELECT id FROM posts WHERE id IN (${ids.map(() => '?').join(',')}) ${sql}`)
+    .bind(...ids, ...params)
+    .all<{ id: string }>();
+  if (!result.success) return [];
+  const allowed = new Set((result.results ?? []).map((row) => row.id));
+  return posts.filter((post) => allowed.has(String(post.id)));
+}
 
 export async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
   if (posts.length === 0) return;

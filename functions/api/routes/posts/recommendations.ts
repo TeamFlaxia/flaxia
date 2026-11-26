@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { presentForYou } from '../../../../shared/recommendation/mix.ts';
 import {
   type EncodedVector,
   encodeVector,
@@ -24,10 +25,12 @@ function diversifyPosts(
   const result: Array<{ post: Record<string, unknown>; score: number }> = [];
   for (const item of items) {
     if (result.length >= maxCount) break;
-    const userId = String(item.post.user_id || '');
-    const count = userCounts.get(userId) || 0;
+    // Remote posts share an empty user_id; key by actor so one federated
+    // author cannot take every slot (and so they are not capped to 2 total).
+    const authorId = String(item.post.actor_id || item.post.user_id || '');
+    const count = userCounts.get(authorId) || 0;
     if (count >= maxPerUser) continue;
-    userCounts.set(userId, count + 1);
+    userCounts.set(authorId, count + 1);
     result.push(item);
   }
   return result;
@@ -299,6 +302,10 @@ async function loadClientRankedCandidatePage(
 recommendations.get('/posts/recommended', async (c) => {
   try {
     const clientRank = c.req.query('client_rank') === '1' || c.req.query('include_vectors') === '1';
+    // `external=hide` is the server-side half of the "don't show" choice. The
+    // client sends it for its own preference so hidden posts never reach the
+    // browser, even on the unranked fallback path.
+    const hideRemote = c.req.query('external') === 'hide';
     const limit = clientRank
       ? clampLimit(c.req.query('limit'), 80, CLIENT_RANK_VECTOR_BATCH_MAX)
       : clampLimit(c.req.query('limit'), 20, 50);
@@ -329,22 +336,22 @@ recommendations.get('/posts/recommended', async (c) => {
     const db = c.env.DB;
     const currentUserId = c.get('user')?.id || null;
     if (clientRank) {
-      return c.json(
-        await loadClientRankedCandidatePage(
-          db,
-          currentUserId,
-          limit,
-          cursorCreatedAt,
-          cursorId,
-          asOfMs,
-          seenIds,
-          isArchiveCursor,
-        ),
+      const page = await loadClientRankedCandidatePage(
+        db,
+        currentUserId,
+        limit,
+        cursorCreatedAt,
+        cursorId,
+        asOfMs,
+        seenIds,
+        isArchiveCursor,
       );
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, false) });
     }
 
     if (isArchiveCursor) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
     const visibilityFilter = currentUserId
@@ -403,7 +410,8 @@ recommendations.get('/posts/recommended', async (c) => {
       ]),
     ];
     if (candidateIds.length === 0) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
@@ -497,7 +505,8 @@ recommendations.get('/posts/recommended', async (c) => {
     }
 
     if (filteredPosts.length === 0) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
     filteredPosts.sort(compareScoredPosts);
@@ -506,6 +515,8 @@ recommendations.get('/posts/recommended', async (c) => {
       return post;
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
+    // Pagination follows the ranked (unmixed) page so the score cursor stays
+    // monotonic; only the response is interleaved for display.
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
     // At most 700 candidates come from the four sources (100 vector + 3*200).
@@ -517,7 +528,7 @@ recommendations.get('/posts/recommended', async (c) => {
         ? `archive,,,${asOfMs}`
         : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
 
-    return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
+    return c.json({ posts: presentForYou(enrichedPosts, limit, hideRemote, true), next_cursor: nextCursor });
   } catch (error: unknown) {
     console.error('Recommended posts error:', error);
     return c.json({ error: 'Internal server error' }, 500);

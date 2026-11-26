@@ -6,8 +6,10 @@ import {
   getReplyStyle,
   getShowNsfw,
   isBrowserSaveDataEnabled,
+  isForYouExternalHidden,
   type ReplyStyle,
   setDataSaverMode,
+  setForYouExternalMode,
   setReplyStyle,
   setShowNsfw,
 } from '../settings.js';
@@ -27,6 +29,7 @@ const themes: Array<{ value: Theme; labelKey: string; descKey: string }> = [
 let replyStyle = $state<ReplyStyle>(getReplyStyle());
 let nsfw = $state(getShowNsfw());
 let dataSaver = $state(getDataSaverMode() || isBrowserSaveDataEnabled());
+let showForYouExternal = $state(!isForYouExternalHidden());
 let theme = $state<Theme>(getTheme());
 let message = $state('');
 
@@ -49,6 +52,12 @@ function toggleNsfw(value: boolean): void {
 function toggleDataSaver(value: boolean): void {
   dataSaver = value;
   setDataSaverMode(value);
+  saved();
+}
+
+function toggleForYouExternal(value: boolean): void {
+  showForYouExternal = value;
+  setForYouExternalMode(value ? 'show' : 'hide');
   saved();
 }
 
@@ -98,6 +107,19 @@ function chooseTheme(value: Theme): void {
     class="settings-switch"
     checked={dataSaver}
     onchange={(event) => toggleDataSaver(event.currentTarget.checked)}
+  />
+</label>
+
+<label class="settings-switch-row">
+  <div class="settings-switch-text">
+    <span class="settings-switch-name">{t('settings.foryou_external')}</span>
+    <span class="settings-switch-desc">{t('settings.foryou_external_desc')}</span>
+  </div>
+  <input
+    type="checkbox"
+    class="settings-switch"
+    checked={showForYouExternal}
+    onchange={(event) => toggleForYouExternal(event.currentTarget.checked)}
   />
 </label>
 
