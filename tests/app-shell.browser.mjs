@@ -980,9 +980,9 @@ test('the left nav renders guest and signed-in states and routes its menus', {
     await signed.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
     await signed.page.waitForSelector('.nav-tag', { state: 'attached', timeout: 10_000 });
     assert.deepEqual(
-      await signed.page.locator('.left-nav .nav-item').evaluateAll((nodes) =>
-        nodes.map((node) => node.getAttribute('data-nav-id')).sort(),
-      ),
+      await signed.page
+        .locator('.left-nav .nav-item')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
       ['arcade', 'bookmarks', 'explore', 'federated', 'home', 'notifications'],
       'signed-in nav items',
     );
@@ -1008,9 +1008,9 @@ test('the left nav renders guest and signed-in states and routes its menus', {
     const guest = await openApp(browser, `${origin}/home`, GUEST_STUBS);
     await guest.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
     assert.deepEqual(
-      await guest.page.locator('.left-nav .nav-item').evaluateAll((nodes) =>
-        nodes.map((node) => node.getAttribute('data-nav-id')).sort(),
-      ),
+      await guest.page
+        .locator('.left-nav .nav-item')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
       ['arcade', 'explore', 'federated', 'home'],
       'guest nav items',
     );
