@@ -334,8 +334,10 @@ persistence, the worker **redacts the stored copy** of any `Create` whose
 `https://www.w3.org/ns/activitystreams#Public`: it removes `content`,
 `contentMap`, `to` and `cc` from the activity and its object, keeping the
 activity `id`, `type`, `actor`, the object `id`/`type`, the queue envelope
-(`type`, `inboxUrl`/`username`, `senderUsername`/`actorId`) and the error
-reason. Public activities keep their payload verbatim. The original queue
+(`type`, `inboxUrl`/`username`, `senderUsername`/`actorId`) and, when the
+message carries one, the error reason. Automatic DLQ messages are stored with
+`error: NULL` (see below), so the reason is best-effort rather than guaranteed.
+Public activities keep their payload verbatim. The original queue
 message is never changed, and redaction never affects acknowledgement or
 retry behaviour.
 
@@ -363,15 +365,24 @@ npx wrangler d1 execute flaxia --remote \
   --command "SELECT id, queue, error, received_at, substr(payload, 1, 200) AS payload_preview FROM ap_dlq ORDER BY received_at DESC LIMIT 50"
 ```
 
+`error` is best-effort: `deadLetterFields()` in `functions/queue-worker.ts`
+fills it only when the queue message is a `{payload, error}` envelope. Messages
+quarantined by the automatic DLQ arrive as the original payload and are stored
+with `error: NULL`. For the actual failure reason use the
+`wrangler tail --config wrangler.worker.toml` logs as the primary source: the D1
+row records *what* was quarantined, not necessarily *why*.
+
 Set up alerts for non-zero DLQ depth in the Cloudflare Queues dashboard as
 well: that catches the failures *before* they age out of the queue, while the
 `ap_dlq` table is the record of what actually happened.
 
 ### Manual redrive
 
-1. Find the row (`id`, `error`, `payload`) and fix the root cause — a data
-   constraint, a revoked key or a permanently rejecting peer. Do not replay
-   blindly: a poison activity would just fail again.
+1. Find the row (`id`, `payload`; `error` may be NULL) and fix the root cause —
+   a data constraint, a revoked key or a permanently rejecting peer. Start from
+   the `wrangler tail --config wrangler.worker.toml` logs rather than `error`:
+   the automatic DLQ does not carry a failure reason. Do not replay blindly: a
+   poison activity would just fail again.
 2. Re-publish the original queue message to `activitypub-delivery`. The
    `payload` column is the JSON body of the original message (`type`,
    `inboxUrl`/`username`, `activity`, `senderUsername`/`actorId`), so the

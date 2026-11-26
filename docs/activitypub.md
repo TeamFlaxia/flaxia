@@ -49,9 +49,11 @@ with a message.
 
 All paths below are served under `/api`. The root discovery documents
 (`/.well-known/webfinger`, `/.well-known/nodeinfo`, `/host-meta`) are served by
-SvelteKit `+server.ts` routes that bridge the modules in `functions/`; only
-parameterised legacy paths (`/actors/…`, `/notes/…`, `/users/…/inbox`) redirect
-to `/api/…`, see `src/hooks.server.ts`.
+SvelteKit `+server.ts` routes that bridge the modules in `functions/`. Most
+parameterised legacy paths (`/actors/…`, `/notes/…`) redirect to `/api/…`, see
+`src/hooks.server.ts`; legacy inbox paths (`/users/…/inbox`, `/actors/…/inbox`)
+are handled directly instead of redirected, so the signed request target is not
+changed by a redirect.
 
 | Endpoint | Purpose |
 |---|---|
@@ -83,11 +85,11 @@ the flags a peer needs (`manuallyApprovesFollowers`, `discoverable`,
 | `Reject` | Inbound | Marks a remote follow as rejected |
 | `Like` | Both | Flaxia's "fresh" is the like |
 | `Announce` | Both | Flaxia's "reload" is the boost |
-| `Undo` | Both | Follow, Like, Announce and Block |
-| `Delete` | Both | Deletes a note or a remote actor |
+| `Undo` | Both | Follow, Like, Announce and Block; the retracted target may also be named on the Undo's `to`/`cc` audience (as Flaxia's own Undo does) |
+| `Delete` | Both | Deletes a note or a remote actor; the object may be a bare string URL or an object with `id` (`Person`/`Tombstone`) |
 | `Update` | Inbound | Refreshes the cached profile of a remote actor |
 | `Block` | Inbound | Records a blocked remote actor |
-| `Move` | Inbound | Remembers that a remote actor moved |
+| `Move` | Inbound | Remembers that a remote actor moved; the new actor URL comes from `target` (Mastodon) or `movedTo`, as a string on the signing actor's origin |
 
 An activity is only ever applied for the actor that signed it. An `Undo` that
 refers to another actor is ignored, and only the author of a note may delete
@@ -104,6 +106,13 @@ it.
 
 Mentions are published as `tag` entries (`Mention`), hashtags as `tag` entries
 (`Hashtag`).
+
+For inbound activities the mapping is reversed: `visibilityFromInboundAudience()`
+in `handlers.ts` reads `to`/`cc` from both the activity and the Note, accepts the
+Public collection along with its aliases, and recognises a followers collection
+only when it belongs to the signing actor. An absent audience keeps the
+historical `public` default; a recipient named only in `bto`/`bcc`/`audience`
+becomes `direct`.
 
 ## Authentication & Security
 
