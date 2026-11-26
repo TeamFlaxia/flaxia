@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import type { PostVisibility } from '../../../../shared/types/post.ts';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
+import { extractMentionHandles } from '../../../lib/activitypub/text.ts';
 import { embedPost, screenPostImages } from '../../../lib/crowd';
 import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
@@ -12,6 +14,60 @@ import type { Bindings, PostRow, Variables } from '../../types';
 import { colorEntitlementError, isValidPostId, visibilityFilter } from './helpers.ts';
 
 export const replies = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+const VISIBILITIES = new Set<string>(['public', 'unlisted', 'private', 'direct']);
+
+type ParentRow = {
+  id: string;
+  user_id: string;
+  username: string;
+  text: string;
+  depth: number;
+  root_id: string | null;
+  visibility?: unknown;
+  mentions?: unknown;
+};
+
+type MentionEntry = { username?: unknown; user_id?: unknown };
+
+function parseMentionEntries(json: unknown): MentionEntry[] {
+  if (typeof json !== 'string') return [];
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    return Array.isArray(parsed) ? (parsed as MentionEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Replies inherit the parent audience; a legacy/unknown value fails closed to public. */
+function inheritedVisibility(parent: { visibility?: unknown }): PostVisibility {
+  const value = parent.visibility;
+  return typeof value === 'string' && VISIBILITIES.has(value) ? (value as PostVisibility) : 'public';
+}
+
+/**
+ * Keep the parent's local recipients on a direct reply. Without this the reply
+ * would inherit `direct` but none of the parent's recipients would be listed in
+ * `mentions`, so the very people allowed to read the parent could not read the
+ * reply. Text mentions are preserved and de-duplicated by user id.
+ */
+function replyMentionsJson(parent: ParentRow, resolvedTextMentions: string): string {
+  const merged = parseMentionEntries(resolvedTextMentions);
+  if (inheritedVisibility(parent) !== 'direct') return resolvedTextMentions;
+
+  const seen = new Set<string>();
+  for (const entry of merged) {
+    if (typeof entry?.user_id === 'string') seen.add(entry.user_id);
+  }
+  for (const entry of parseMentionEntries(parent.mentions)) {
+    const userId = entry?.user_id;
+    if (typeof userId !== 'string' || seen.has(userId)) continue;
+    seen.add(userId);
+    merged.push({ username: entry.username, user_id: userId });
+  }
+  return JSON.stringify(merged);
+}
 
 replies.get('/posts/:id/replies', async (c) => {
   try {
@@ -30,7 +86,7 @@ replies.get('/posts/:id/replies', async (c) => {
 
     // Verify parent post exists, is published, and is visible to this viewer
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reload_count, 0) as reload_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reload_count, 0) as reload_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)
@@ -40,7 +96,7 @@ replies.get('/posts/:id/replies', async (c) => {
       return c.json({ error: 'Post not found' }, 404);
     }
 
-    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility,
        u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -50,7 +106,7 @@ replies.get('/posts/:id/replies', async (c) => {
     const params: Array<unknown> = [postId, ...visibility.params, limit];
 
     if (cursor) {
-      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility,
        u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -123,7 +179,7 @@ replies.get('/posts/:id/thread', async (c) => {
     }
 
     const post = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, thumbnail_key, game_description, game_title, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, thumbnail_key, game_description, game_title, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)
@@ -136,7 +192,7 @@ replies.get('/posts/:id/thread', async (c) => {
     const rootId = (post as Record<string, unknown>).root_id || (post as Record<string, unknown>).id;
 
     const rootPost = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.game_description, p.game_title, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.game_description, p.game_title, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility,
        u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -151,7 +207,7 @@ replies.get('/posts/:id/thread', async (c) => {
     }
 
     const repliesResult = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.game_description, p.game_title, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.game_description, p.game_title, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility,
        u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -246,12 +302,12 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Validate parent post exists, is published, and is visible to the author
     const visibility = visibilityFilter(c.get('user')?.id);
-    const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+    const parentPost = (await c.env.DB.prepare(
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)
-      .first();
+      .first()) as ParentRow | null;
 
     if (!parentPost) {
       return c.json({ error: 'Parent post not found' }, 404);
@@ -293,8 +349,8 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Store pending reply in D1
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'pending', ?, ?, ?, 0)
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'pending', ?, ?, ?, 0, ?)
     `)
       .bind(
         replyId,
@@ -302,13 +358,14 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
         c.get('user')?.username || 'anonymous',
         '',
         '[]',
-        '[]',
+        replyMentionsJson(parentPost, '[]'),
         gifKey,
         '',
         '',
         postId,
         rootId,
         depth,
+        inheritedVisibility(parentPost),
       )
       .run();
 
@@ -363,14 +420,9 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       }
     }
 
-    // Extract mentions from text
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-    const mentionSet = new Set<string>();
-    let mentionMatch: RegExpExecArray | null;
-    while ((mentionMatch = mentionRegex.exec(text)) !== null) {
-      mentionSet.add(mentionMatch[1]);
-    }
-    const mentionedUsernames = Array.from(mentionSet);
+    // Extract mentions from text (local and cross-instance handles).
+    const mentionedHandles = extractMentionHandles(text);
+    const mentionedUsernames = mentionedHandles.map((handle) => handle.username);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -379,30 +431,27 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     // Validate parent still exists, is published, and is visible to the author
     const visibility = visibilityFilter(c.get('user')?.id);
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)
-      .first()) as {
-      id: string;
-      user_id: string;
-      username: string;
-      text: string;
-      depth: number;
-      root_id: string | null;
-    } | null;
+      .first()) as ParentRow | null;
 
     if (!parentPost) {
       return c.json({ error: 'Parent post no longer available' }, 422);
     }
 
+    const replyVisibility = inheritedVisibility(parentPost);
     let reply: Record<string, unknown> | undefined;
     let mentionsJson: string | null = '[]';
 
     if (gifKey) {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = replyMentionsJson(
+        parentPost,
+        await resolveMentions(c.env.DB, mentionedHandles, replyUsername, c.env),
+      );
 
       // Validate that this is a pending reply of the CALLER and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
@@ -428,10 +477,10 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       // Update reply to published status
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
-        SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        SET text = ?, hashtags = ?, mentions = ?, visibility = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE id = ? AND user_id = ? AND status = 'pending'
       `)
-        .bind(text, JSON.stringify(hashtags), mentionsJson, replyId, c.get('user')?.id || '')
+        .bind(text, JSON.stringify(hashtags), mentionsJson, replyVisibility, replyId, c.get('user')?.id || '')
         .run();
 
       if (!updateResult.success) {
@@ -443,7 +492,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       // Return the updated reply
       reply =
         (await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?
       `)
           .bind(replyId)
@@ -451,7 +500,10 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     } else {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = replyMentionsJson(
+        parentPost,
+        await resolveMentions(c.env.DB, mentionedHandles, replyUsername, c.env),
+      );
 
       // Create text-only reply directly
       const depth = Math.min(Number(parentPost.depth || 0) + 1, 5);
@@ -459,8 +511,8 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 
       try {
         const result = await c.env.DB.prepare(`
-          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'published', ?, ?, ?, 0)
+          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'published', ?, ?, ?, 0, ?)
         `)
           .bind(
             replyId,
@@ -475,6 +527,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
             postId,
             rootId,
             depth,
+            replyVisibility,
           )
           .run();
 
@@ -486,7 +539,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         // Return the created reply
         reply =
           (await c.env.DB.prepare(`
-          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.visibility FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?
         `)
             .bind(replyId)

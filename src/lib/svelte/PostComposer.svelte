@@ -6,6 +6,11 @@ import type { Post, PostVisibility, QuotedPost } from '../../../shared/types/pos
 import { maxMediaTotalBytesForUser, maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { openStampPicker } from '../../components/StampPicker.ts';
 import {
+  decodeDraftVisibility,
+  encodeDraftVisibility,
+  normalizeDraftVisibility,
+} from '../composer/draft-visibility.ts';
+import {
   buildPollData,
   canSubmit,
   charMeter,
@@ -38,6 +43,7 @@ interface Draft {
   id: string;
   text: string;
   savedAt: number;
+  visibility: PostVisibility;
 }
 
 interface Props {
@@ -140,11 +146,12 @@ function scheduleAutosave(): void {
 
 function saveAutosave(): void {
   if (!text && !pollActive) return;
-  const payload = {
+  const payload = encodeDraftVisibility({
     text,
     savedAt: Date.now(),
     poll: pollActive ? { question: pollQuestion, options: pollOptions, duration: pollDuration } : undefined,
-  };
+    visibility,
+  });
   try {
     localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(payload));
   } catch {
@@ -156,14 +163,17 @@ function restoreAutosave(): void {
   try {
     const raw = localStorage.getItem(AUTOSAVE_KEY);
     if (!raw) return;
-    const data = JSON.parse(raw) as { text?: string; poll?: { question: string; options: string[]; duration: string } };
-    if (!data.text || text || quotedPost) return;
+    const data = decodeDraftVisibility(JSON.parse(raw) as unknown);
+    if (typeof data.text !== 'string' || !data.text || text || quotedPost) return;
     text = data.text;
-    if (data.poll) {
+    visibility = data.visibility;
+    const poll = data.poll as { question?: unknown; options?: unknown; duration?: unknown } | undefined;
+    if (poll && Array.isArray(poll.options)) {
       pollActive = true;
-      pollQuestion = data.poll.question;
-      pollOptions = [...data.poll.options];
-      pollDuration = data.poll.duration;
+      pollQuestion = typeof poll.question === 'string' ? poll.question : '';
+      pollOptions = poll.options.filter((option): option is string => typeof option === 'string');
+      if (pollOptions.length < 2) pollOptions = ['', ''];
+      pollDuration = typeof poll.duration === 'string' ? poll.duration : '86400000';
     }
     queueMicrotask(autosize);
   } catch {
@@ -182,7 +192,12 @@ async function initializeDrafts(): Promise<void> {
   draftStorageMode = 'local';
   try {
     const raw = localStorage.getItem(SAVED_DRAFTS_KEY);
-    savedDrafts = raw ? (JSON.parse(raw) as Draft[]) : [];
+    savedDrafts = raw
+      ? (JSON.parse(raw) as unknown[])
+          .map((item) => decodeDraftVisibility(item) as Draft)
+          .filter((draft) => typeof draft.id === 'string' && typeof draft.text === 'string')
+          .slice(0, 20)
+      : [];
   } catch {
     savedDrafts = [];
   }
@@ -210,8 +225,8 @@ async function loadDrafts(): Promise<void> {
   try {
     const items = await listVaultItems<Draft>('post_draft');
     savedDrafts = items
-      .map((item) => item.value)
-      .filter((draft) => draft && typeof draft.text === 'string')
+      .map((item) => decodeDraftVisibility(item.value) as Draft)
+      .filter((draft) => typeof draft.id === 'string' && typeof draft.text === 'string')
       .slice(0, 20);
   } catch {
     savedDrafts = [];
@@ -220,7 +235,12 @@ async function loadDrafts(): Promise<void> {
 
 async function saveDraft(): Promise<void> {
   if (!text.trim()) return;
-  const draft: Draft = { id: loadedDraftId ?? newVaultItemId(), text, savedAt: Date.now() };
+  const draft = encodeDraftVisibility({
+    id: loadedDraftId ?? newVaultItemId(),
+    text,
+    savedAt: Date.now(),
+    visibility,
+  }) as Draft;
   try {
     if (draftStorageMode === 'vault' && getVaultKey()) {
       await saveVaultItem(draft.id, 'post_draft', draft);
@@ -260,6 +280,7 @@ async function deleteAllDrafts(): Promise<void> {
 
 function loadDraft(draft: Draft): void {
   text = draft.text;
+  visibility = normalizeDraftVisibility(draft.visibility);
   loadedDraftId = draft.id;
   draftsOpen = false;
   queueMicrotask(autosize);
