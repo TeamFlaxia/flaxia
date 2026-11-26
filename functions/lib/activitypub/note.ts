@@ -43,7 +43,7 @@ export interface NoteInput {
   sensitive?: boolean;
   attachments?: NoteAttachment[];
   /** Mentioned accounts: local ones carry a username, remote ones an actor URL. */
-  mentions?: Array<{ username: string; url?: string; domain?: string }>;
+  mentions?: Array<{ username: string; url?: string; domain?: string; name?: string }>;
 }
 
 export interface NoteObject {
@@ -225,28 +225,48 @@ export function buildNoteObject(
   const actor = actorUrl(baseUrl, user.username);
   const id = noteUrl(baseUrl, post.id);
 
-  const mentionUrls = (post.mentions ?? [])
-    .map((mention) => mention.url)
-    .filter((url): url is string => typeof url === 'string' && url.length > 0);
+  // Stored mention URLs are actor documents from remote instances. Only http(s)
+  // URLs may become audience entries, tags or link targets.
+  const isHttpUrl = (value: string): boolean => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch {
+      return false;
+    }
+  };
+  const mentionUrls = [
+    ...new Set(
+      (post.mentions ?? [])
+        .map((mention) => mention.url)
+        .filter((url): url is string => typeof url === 'string' && isHttpUrl(url)),
+    ),
+  ];
 
   const { to, cc } = audienceFor(post.visibility ?? 'public', { followersUrl, mentionUrls });
 
   const mentionHandles: Record<string, string> = { ...(options.mentionHandles ?? {}) };
   for (const mention of post.mentions ?? []) {
-    if (!mention.url) continue;
+    if (!mention.url || !isHttpUrl(mention.url)) continue;
     const key = mention.domain ? `${mention.username}@${mention.domain}` : mention.username;
     mentionHandles[key] = mention.url;
   }
 
   const tags: NoteTag[] = [];
+  const seenTags = new Set<string>();
   for (const mention of post.mentions ?? []) {
-    const href = mention.url ?? (mention.domain ? undefined : profileUrl(baseUrl, mention.username));
+    const href =
+      mention.url && isHttpUrl(mention.url)
+        ? mention.url
+        : mention.domain
+          ? undefined
+          : profileUrl(baseUrl, mention.username);
     if (!href) continue;
-    tags.push({
-      type: 'Mention',
-      name: mention.domain ? `@${mention.username}@${mention.domain}` : `@${mention.username}`,
-      href,
-    });
+    const name = mention.domain ? `@${mention.username}@${mention.domain}` : `@${mention.username}`;
+    const tagKey = `Mention:${name}:${href}`;
+    if (seenTags.has(tagKey)) continue;
+    seenTags.add(tagKey);
+    tags.push({ type: 'Mention', name, href });
   }
   for (const hashtag of extractHashtags(post.text)) {
     tags.push({

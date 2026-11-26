@@ -2,16 +2,22 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { buildFollowActivity, buildUndoActivity } from '../../../lib/activitypub/activities';
 import { deliverToInbox } from '../../../lib/activitypub/delivery';
-import { fetchFederationDocument, isPrivatePeerAllowed, resolveRemoteActor } from '../../../lib/activitypub/fetch';
 import { actorPrivateKey, ensureActorKey } from '../../../lib/activitypub/keys';
+import {
+  lookupRemoteHandleAt,
+  lookupRemoteHandleCached,
+  parseRemoteHandle,
+  remoteLookupRateLimitKey,
+  toRemoteLookupDto,
+} from '../../../lib/activitypub/lookup.ts';
+import { htmlToText } from '../../../lib/activitypub/text.ts';
 import { enrichPostsWithAttachments } from '../../../lib/attachments.ts';
 import { getMeWithSession, getSessionToken } from '../../../lib/auth';
 import { clampLimit } from '../../../lib/pagination';
+import { checkRateLimit, getClientIp } from '../../../lib/rate-limit';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
-import { parsePublicHttpUrl, SsrfError } from '../../../lib/url-guard';
 import { requireAuth } from '../../helpers';
 import type { Bindings, Variables } from '../../types';
-import { fetchRemoteJson } from './helpers.ts';
 
 export const social = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -121,12 +127,6 @@ social.post('/remote-follow', requireAuth, async (c) => {
 
     const localUser = user;
 
-    // A remote instance is reached over https. An instance that runs next to
-    // this one (the federation test peer) may serve plain http, but only when
-    // it is on the list of allowed private peers.
-    const origins = [`https://${domain}`];
-    if (isPrivatePeerAllowed(c.env, domain)) origins.push(`http://${domain}`);
-
     // The key of the account signs the requests: an instance that runs in
     // secure mode only answers a signed request. The key is created when the
     // account federates for the first time.
@@ -139,32 +139,12 @@ social.post('/remote-follow', requireAuth, async (c) => {
         }
       : {};
 
-    let wfData: { links?: Array<{ rel: string; href?: string; type?: string }> } | null = null;
-    for (const origin of origins) {
-      const webfingerUrl = `${origin}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-      const response = await fetchFederationDocument(webfingerUrl, c.env, {
-        headers: { Accept: 'application/jrd+json, application/json' },
-        ...signOptions,
-      });
-      if (!response || !response.ok) continue;
-      wfData = (await response.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
-      break;
-    }
-
-    if (!wfData) {
-      return c.json({ error: 'Could not resolve remote user' }, 404);
-    }
-    const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
-    if (!selfLink?.href) {
-      return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
-    }
-
-    // The actor document is the source of truth for the inbox: it is only
-    // accepted when it lives on the same origin as the actor and when it
-    // points at a public inbox.
-    const actor = await resolveRemoteActor(selfLink.href, c.env, signOptions);
+    // WebFinger + actor resolution share the lookup helper used by the lookup
+    // endpoint. It validates the domain, re-checks every redirect for SSRF and
+    // returns null instead of a raw fetch error.
+    const actor = await lookupRemoteHandleAt(remoteUsername, domain, c.env, signOptions);
     if (!actor) {
-      return c.json({ error: 'Could not fetch remote actor' }, 404);
+      return c.json({ error: 'Could not resolve remote user' }, 404);
     }
     const actorUrl = actor.actorUrl;
     const inboxUrl = actor.inbox;
@@ -256,32 +236,14 @@ social.delete('/remote-follow', requireAuth, async (c) => {
 
     const localUser = user;
 
-    const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    let wfResponse: Response;
-    let actorUrl: string;
-    try {
-      const wfResult = await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json');
-      wfResponse = wfResult.response;
-    } catch (error: unknown) {
-      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
-      throw error;
-    }
-
-    if (!wfResponse.ok) {
+    // The same normalisation as the follow path: WebFinger -> actor document,
+    // with every hop SSRF-checked. The actor URL, not the typed handle, is the
+    // key used by ap_following.
+    const actor = await lookupRemoteHandleAt(remoteUsername, domain, c.env);
+    if (!actor) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
-
-    const wfData = (await wfResponse.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
-    const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
-    if (!selfLink?.href) {
-      return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
-    }
-
-    try {
-      actorUrl = parsePublicHttpUrl(selfLink.href).toString();
-    } catch {
-      return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
-    }
+    const actorUrl = actor.actorUrl;
 
     const following = (await c.env.DB.prepare(
       'SELECT id, target_inbox_url FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?',
@@ -319,6 +281,42 @@ social.delete('/remote-follow', requireAuth, async (c) => {
   }
 });
 
+// GET /remote/lookup?q=@user@domain - resolve a handle on another instance.
+social.get('/remote/lookup', async (c) => {
+  const query = c.req.query('q') ?? '';
+  const handle = parseRemoteHandle(query);
+  if (!handle) {
+    return c.json({ error: 'Invalid handle. Expected @user@domain' }, 400);
+  }
+
+  // One bucket per signed-in user, per IP for guests. Fail open matches the
+  // other public lookups: a KV outage must not break the search box.
+  const identity = c.get('user')?.id ?? getClientIp(c.req.raw);
+  let allowed = true;
+  try {
+    allowed = await checkRateLimit(c.env.CACHE, remoteLookupRateLimitKey(identity), {
+      maxRequests: 15,
+      windowSeconds: 60,
+    });
+  } catch {
+    allowed = true;
+  }
+  if (!allowed) {
+    return c.json({ error: 'Rate limit exceeded' }, 429);
+  }
+
+  try {
+    const actor = await lookupRemoteHandleCached(`${handle.username}@${handle.domain}`, c.env);
+    if (!actor) {
+      return c.json({ error: 'Remote account not found' }, 404);
+    }
+    return c.json(toRemoteLookupDto(actor), 200, { 'Cache-Control': 'private, max-age=60' });
+  } catch {
+    // Never expose a raw federation error to the client.
+    return c.json({ error: 'Remote lookup failed' }, 502);
+  }
+});
+
 // GET /remote/actors/:domain/:username - the profile of an account of another instance
 social.get('/remote/actors/:domain/:username', async (c) => {
   const domain = c.req.param('domain');
@@ -327,23 +325,39 @@ social.get('/remote/actors/:domain/:username', async (c) => {
     return c.json({ error: 'Missing account' }, 400);
   }
 
-  const actor = await c.env.DB.prepare(
-    `SELECT actor_url, preferred_username, display_name, icon_url, domain, inbox_url
-     FROM ap_actors WHERE domain = ? AND preferred_username = ? LIMIT 1`,
-  )
-    .bind(domain.toLowerCase(), username)
-    .first<{
-      actor_url: string;
-      preferred_username: string | null;
-      display_name: string | null;
-      icon_url: string | null;
-      domain: string | null;
-      inbox_url: string | null;
-    }>();
+  type RemoteActorRow = {
+    actor_url: string;
+    preferred_username: string | null;
+    display_name: string | null;
+    icon_url: string | null;
+    domain: string | null;
+    inbox_url: string | null;
+    summary?: string | null;
+  };
+  const actorQuery = (includeSummary: boolean): Promise<RemoteActorRow | null> =>
+    c.env.DB.prepare(
+      `SELECT actor_url, preferred_username, display_name, icon_url, domain${includeSummary ? ', summary' : ''}, inbox_url
+       FROM ap_actors WHERE domain = ? AND preferred_username = ? LIMIT 1`,
+    )
+      .bind(domain.toLowerCase(), username)
+      .first<RemoteActorRow>();
+
+  let actor: RemoteActorRow | null;
+  try {
+    actor = await actorQuery(true);
+  } catch {
+    // A deployment that has not applied the summary migration yet still serves
+    // the rest of the profile.
+    actor = await actorQuery(false);
+  }
 
   if (!actor) {
     return c.json({ error: 'Remote account not found' }, 404);
   }
+
+  // Remote summaries are HTML; the profile UI renders plain text only.
+  const summaryText = actor.summary ? htmlToText(actor.summary).trim() : '';
+  const bio = summaryText || null;
 
   // Whether the account that is signed in follows this account.
   const user = c.get('user');
@@ -385,6 +399,8 @@ social.get('/remote/actors/:domain/:username', async (c) => {
       icon_url: actor.icon_url,
       domain: actor.domain,
       inbox_url: actor.inbox_url,
+      summary: bio,
+      bio,
     },
     following,
     follow_state: followState,

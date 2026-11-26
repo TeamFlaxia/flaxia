@@ -2,7 +2,7 @@
 import { onDestroy, onMount } from 'svelte';
 import { canUsePostColors, maxMediaAttachmentsForUser } from '../../../shared/entitlements.ts';
 import { stripPostColors } from '../../../shared/post-colors.ts';
-import type { Post, QuotedPost } from '../../../shared/types/post.ts';
+import type { Post, PostVisibility, QuotedPost } from '../../../shared/types/post.ts';
 import { maxMediaTotalBytesForUser, maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { openStampPicker } from '../../components/StampPicker.ts';
 import {
@@ -69,6 +69,7 @@ let selectedFile = $state<File | null>(null);
 let selectedMedia = $state<File[]>([]);
 let selectedThumbnail = $state<File | null>(null);
 let pollActive = $state(false);
+let visibility = $state<PostVisibility>('public');
 let pollQuestion = $state('');
 let pollOptions = $state<string[]>(['', '']);
 let pollDuration = $state('86400000');
@@ -77,7 +78,7 @@ let draftStorageMode = $state<'loading' | 'local' | 'vault' | 'locked'>('loading
 let draftsOpen = $state(false);
 let attachMenuOpen = $state(false);
 let mentionOpen = $state(false);
-let mentionItems = $state<Array<{ label: string; sub?: string }>>([]);
+let mentionItems = $state<Array<{ label: string; sub?: string; remote?: boolean }>>([]);
 let mentionIndex = $state(0);
 let mentionToken = 0;
 let dragOver = $state(false);
@@ -490,21 +491,32 @@ function openEmoji(target: HTMLElement): void {
 function handleMentionInput(): void {
   const pos = textarea.selectionStart;
   const before = text.slice(0, pos);
-  const at = before.match(/@([a-zA-Z0-9_]*)$/);
-  const tag = before.match(/#([^\s]*)$/);
+  const at = before.match(/@([a-zA-Z0-9_]*)(?:@([a-zA-Z0-9.-]*))?$/);
+  const tag = at ? null : before.match(/#([^\s]*)$/);
   if (mentionTimer) clearTimeout(mentionTimer);
   if (at) {
-    const query = at[1];
+    const username = at[1];
+    const remote = at[2] !== undefined;
+    const query = remote && at[2] ? `${username}@${at[2]}` : username;
     mentionTimer = setTimeout(async () => {
       const token = ++mentionToken;
       try {
-        const url = query
-          ? `/api/search?type=users&q=${encodeURIComponent(query)}&limit=5`
-          : '/api/search?type=users&q=a&limit=5';
+        const url = remote
+          ? `/api/remote/lookup?q=${encodeURIComponent(query)}`
+          : query
+            ? `/api/search?type=users&q=${encodeURIComponent(query)}&limit=5`
+            : '/api/search?type=users&q=a&limit=5';
         const res = await fetch(url, { credentials: 'include' });
         if (!res.ok || token !== mentionToken) return;
-        const data = (await res.json()) as { results?: Array<{ username: string; display_name: string }> };
-        mentionItems = (data.results ?? []).map((u) => ({ label: u.username, sub: u.display_name }));
+        if (remote) {
+          const data = (await res.json()) as { handle?: string; displayName?: string; actorUrl?: string };
+          mentionItems = data.handle
+            ? [{ label: data.handle.replace(/^@/, ''), sub: data.displayName, remote: true }]
+            : [];
+        } else {
+          const data = (await res.json()) as { results?: Array<{ username: string; display_name: string }> };
+          mentionItems = (data.results ?? []).map((u) => ({ label: u.username, sub: u.display_name }));
+        }
         mentionIndex = 0;
         mentionOpen = mentionItems.length > 0;
       } catch {
@@ -540,7 +552,7 @@ function selectMention(index: number): void {
   if (!item) return;
   const pos = textarea.selectionStart;
   const before = text.slice(0, pos);
-  const atMatch = before.match(/@([a-zA-Z0-9_]*)$/);
+  const atMatch = before.match(/@([a-zA-Z0-9_]*)(?:@([a-zA-Z0-9.-]*))?$/);
   const tagMatch = atMatch ? null : before.match(/#([^\s]*)$/);
   const match = atMatch ?? tagMatch;
   if (!match) return;
@@ -624,6 +636,7 @@ async function submit(): Promise<void> {
       selectedThumbnail,
       poll,
       quotedPostId: quotedPost?.id ?? undefined,
+      visibility,
     });
     text = '';
     if (textarea) textarea.value = '';
@@ -737,6 +750,18 @@ export function deleteAllDraftsPublic(): void {
         {#if draftStorageMode === 'locked'}<button type="button" onclick={unlockVault}>{t('common.unlock')}</button>{/if}
       </div>
     {/if}
+
+    <label class="composer-visibility-row">
+      <span class="composer-visibility-label">{t('composer.visibility_label')}</span>
+      <select class="composer-visibility-select" bind:value={visibility}>
+        <option value="public">{t('composer.visibility_public')}</option>
+        <option value="unlisted">{t('composer.visibility_unlisted')}</option>
+        <option value="private">{t('composer.visibility_followers')}</option>
+        <option value="direct">{t('composer.visibility_direct')}</option>
+      </select>
+      <span class="composer-visibility-hint">{t('composer.visibility_hint')}</span>
+      <span class="composer-visibility-hint">{t('composer.mention_remote_hint')}</span>
+    </label>
 
     <div class="composer-divider"></div>
 

@@ -36,7 +36,7 @@ interface ArcadeGame {
   isFreshed: boolean;
 }
 interface Suggestion {
-  type: 'tag' | 'user';
+  type: 'tag' | 'user' | 'remote';
   label: string;
   count?: number;
   display?: string;
@@ -181,7 +181,7 @@ function performSearch(query: string): void {
   void navigate(`/search?q=${encodeURIComponent(query)}&type=posts`);
 }
 
-async function fetchSuggestions(prefix: string, type: 'tag' | 'user'): Promise<void> {
+async function fetchSuggestions(prefix: string, type: 'tag' | 'user' | 'remote'): Promise<void> {
   suggestController?.abort();
   const controller = new AbortController();
   suggestController = controller;
@@ -189,12 +189,18 @@ async function fetchSuggestions(prefix: string, type: 'tag' | 'user'): Promise<v
     const url =
       type === 'tag'
         ? `/api/tags/suggest?q=${encodeURIComponent(prefix)}`
-        : `/api/users/suggest?q=${encodeURIComponent(prefix)}`;
+        : type === 'remote'
+          ? `/api/remote/lookup?q=${encodeURIComponent(prefix)}`
+          : `/api/users/suggest?q=${encodeURIComponent(prefix)}`;
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok || controller !== suggestController) return;
     if (type === 'tag') {
       const data = (await res.json()) as { tags?: Array<{ tag: string; count: number }> };
       suggestions = (data.tags ?? []).map((x) => ({ type: 'tag' as const, label: x.tag, count: x.count }));
+    } else if (type === 'remote') {
+      const data = (await res.json()) as { handle?: string; displayName?: string | null };
+      const label = (data.handle ?? prefix).replace(/^@/, '');
+      suggestions = [{ type: 'remote' as const, label, display: data.displayName ?? label }];
     } else {
       const data = (await res.json()) as {
         users?: Array<{ username: string; display_name: string; avatar_key: string; badge_type?: string | null }>;
@@ -223,7 +229,12 @@ function onInput(): void {
       suggestionsOpen = false;
       return;
     }
-    suggestTimer = setTimeout(() => void fetchSuggestions(prefix, val[0] === '#' ? 'tag' : 'user'), 200);
+    // A second '@' means a cross-instance handle: suggest the remote account.
+    const remote = val[0] === '@' && prefix.includes('@');
+    suggestTimer = setTimeout(
+      () => void fetchSuggestions(remote ? val : prefix, remote ? 'remote' : val[0] === '#' ? 'tag' : 'user'),
+      200,
+    );
     return;
   }
   if (val.length === 0) {
@@ -235,8 +246,15 @@ function onInput(): void {
 
 function pick(s: Suggestion): void {
   suggestionsOpen = false;
-  if (s.type === 'tag') void navigate(`/explore?tag=${encodeURIComponent(s.label)}`);
-  else void navigate(`/profile/${encodeURIComponent(s.label)}`);
+  if (s.type === 'tag') {
+    void navigate(`/explore?tag=${encodeURIComponent(s.label)}`);
+  } else if (s.type === 'remote') {
+    const at = s.label.indexOf('@');
+    if (at > 0)
+      void navigate(`/@${encodeURIComponent(s.label.slice(at + 1))}/${encodeURIComponent(s.label.slice(0, at))}`);
+  } else {
+    void navigate(`/profile/${encodeURIComponent(s.label)}`);
+  }
 }
 
 function onSubmit(): void {
