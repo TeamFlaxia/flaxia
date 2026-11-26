@@ -9,7 +9,7 @@ publishes, what it accepts and how it is tested.
 ```
 ┌──────────────┐     ┌──────────────────┐     ┌──────────────┐
 │  Remote      │────▶│  /api/inbox      │────▶│  Queue       │
-│  Instance    │     │  (Pages Function)│     │  Consumer    │
+│  Instance    │     │  (SvelteKit API) │     │  Consumer    │
 └──────────────┘     └──────────────────┘     └──────────────┘
                                                         │
                                                         ▼
@@ -36,6 +36,10 @@ publishes, what it accepts and how it is tested.
 | `inbox.ts` | The verification pipeline of both inbox endpoints |
 | `handlers.ts` | Processing of the received activities |
 | `delivery.ts` | Delivery: one message per remote inbox |
+| `attachments.ts` | Incoming attachment URLs → `post_attachments` |
+| `authors.ts` | Decorate stored remote posts with their actor profile |
+| `keys.ts` | Per-account signing key creation and lookup |
+| `crypto.ts` | PEM import/export, RSA key generation |
 
 The route handlers (`functions/api/routes/activitypub.ts`) only map paths to
 modules; the queue worker (`functions/queue-worker.ts`) only decides what to do
@@ -43,8 +47,11 @@ with a message.
 
 ## Endpoints
 
-All paths below are served under `/api`. The canonical paths at the root
-(`/…`) redirect to them, see `_redirects` and `src/hooks.server.ts`.
+All paths below are served under `/api`. The root discovery documents
+(`/.well-known/webfinger`, `/.well-known/nodeinfo`, `/host-meta`) are served by
+SvelteKit `+server.ts` routes that bridge the modules in `functions/`; only
+parameterised legacy paths (`/actors/…`, `/notes/…`, `/users/…/inbox`) redirect
+to `/api/…`, see `src/hooks.server.ts`.
 
 | Endpoint | Purpose |
 |---|---|
@@ -128,6 +135,15 @@ next to the instance (a container on the same machine). The variable is only
 honoured when `ENVIRONMENT` is `test` or `development`; in production it has
 no effect at all.
 
+### Queue-less development delivery
+
+`AP_DIRECT_DELIVERY=1` delivers and processes activities inside the request
+because the local dev server has no queue consumer. It uses the **same
+environment gate** as `AP_ALLOWED_PRIVATE_PEERS`: outside `test` and
+`development` the binding is ignored. This matters because direct delivery
+skips the queue worker's second `parsePublicHttpUrl()` check. `npm run
+dev:federation` sets both bindings; production configuration sets neither.
+
 ## Database tables
 
 | Table | Content |
@@ -153,13 +169,35 @@ from `ap_actors` after the rows are fetched (`display_name`, `avatar_url`,
 `profile_path`, `is_remote`). The client renders the remote handle as
 `@user@domain` and links it to `/@domain/user`.
 
+## For You source mix
+
+For You interleaves Flaxia posts and federated posts **50:50**. The local post
+takes the first slot of each pair (Flaxia priority); if one side runs out the
+other fills the remainder, so a sparse side never leaves holes. The rule lives
+in `shared/recommendation/mix.ts` and is applied in both paths:
+
+* the unranked server response (`GET /api/posts/recommended`) mixes after
+  scoring; the score cursor still follows the unmixed page so pagination stays
+  monotonic;
+* the client-ranked path (`client_rank=1`) returns candidates and the Svelte
+  timeline applies the same mix after personal re-ranking.
+
+Settings → Display → "Show federated posts in For You" adds `external=hide` to
+both requests and removes the remote side entirely ("do not show"). The
+preference is stored on the device (`flaxia_foryou_external`).
+
+The unmerged `feat/activitypub-outbox-recommendations` branch (remote Outbox
+import + 1:1 For You injection) was **discarded**: it added a second ingestion
+path for the same Notes and its interleave was replaced by the shared mix
+above. Remote posts in For You come from the existing signed inbox delivery.
+
 ## Tests
 
 | Layer | Location | Needs |
 |---|---|---|
 | Unit | `tests/activitypub-{note,signature,inbox,inbox-handlers,delivery}.test.ts` | nothing |
 | Integration | `tests/activitypub-discovery.test.ts` | `npm run dev:test` |
-| Guards | `tests/activitypub-inbox-integrity.test.ts`, `tests/security-guards.test.ts` | nothing |
+| Guards | `tests/activitypub-inbox-integrity.test.ts`, `tests/activitypub-delivery-guard.test.ts`, `tests/security-guards.test.ts` | nothing |
 
 ```bash
 npm run test:group -- activitypub

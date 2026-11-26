@@ -23,6 +23,7 @@ let { children } = $props();
 const OWN_META_ROUTES: ReadonlySet<string> = new Set([
   '/thread/[id]',
   '/users/[username]',
+  '/@[domain]/[username]',
   '/arcade',
   '/arcade/[id]',
   '/download',
@@ -38,6 +39,7 @@ const OWN_META_ROUTES: ReadonlySet<string> = new Set([
 const OWN_TITLE_ROUTES: ReadonlySet<string> = new Set([
   '/thread/[id]',
   '/users/[username]',
+  '/@[domain]/[username]',
   '/arcade',
   '/arcade/[id]',
   '/docs',
@@ -52,6 +54,7 @@ const OWN_TITLE_ROUTES: ReadonlySet<string> = new Set([
 const SELF_TITLE_TAG_ROUTES: ReadonlySet<string> = new Set([
   '/thread/[id]',
   '/users/[username]',
+  '/@[domain]/[username]',
   '/arcade',
   '/arcade/[id]',
 ]);

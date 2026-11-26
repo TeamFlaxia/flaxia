@@ -92,6 +92,35 @@ export async function loadProfile(fetchFn: Fetch, username: string): Promise<Ssr
   return { user: data?.user ?? null };
 }
 
+/** The remote-actor API shape used by `/@domain/user` (bio is plain text). */
+export interface SsrRemoteActor {
+  actor_url?: string | null;
+  preferred_username?: string | null;
+  display_name?: string | null;
+  icon_url?: string | null;
+  domain?: string | null;
+  bio?: string | null;
+}
+
+export interface SsrRemoteProfile {
+  actor: SsrRemoteActor | null;
+  following?: boolean;
+  follow_state?: string | null;
+  posts?: Post[];
+}
+
+export async function loadRemoteProfile(
+  fetchFn: Fetch,
+  domain: string,
+  username: string,
+): Promise<SsrRemoteProfile | null> {
+  const data = await apiJson<SsrRemoteProfile>(
+    `/api/remote/actors/${encodeURIComponent(domain)}/${encodeURIComponent(username)}`,
+    fetchFn,
+  );
+  return data?.actor ? data : null;
+}
+
 export interface SsrGame {
   postId: string;
   title?: string;

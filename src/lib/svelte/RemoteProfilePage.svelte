@@ -5,11 +5,23 @@ import type { PostAttachment } from '../../../shared/types/post.ts';
 import { attachmentUrl, isAbsoluteMediaUrl } from '../../components/MediaCarousel.ts';
 import { t } from '../i18n.ts';
 import { navigate } from '../navigation.ts';
+import { signalSsrHandover } from '../ssr-handover.ts';
 
 interface Props {
   domain: string;
   username: string;
   currentUser?: { username: string } | null;
+  /** SSR-loaded profile; when present the client does not fetch it again. */
+  initialProfile?: {
+    actor?: {
+      actor_url?: string | null;
+      display_name?: string | null;
+      icon_url?: string | null;
+      bio?: string | null;
+    } | null;
+    following?: boolean;
+    posts?: RemotePost[];
+  } | null;
 }
 
 interface RemotePost {
@@ -19,25 +31,47 @@ interface RemotePost {
   attachments?: PostAttachment[];
 }
 
-let { domain, username, currentUser }: Props = $props();
+let { domain, username, currentUser, initialProfile }: Props = $props();
 
-let displayName = $state(t('profile.loading'));
-let avatarUrl = $state<string | null>(null);
-let posts = $state<RemotePost[]>([]);
-let notFound = $state(false);
-let following = $state(false);
-let followVisible = $state(false);
+const initialActor = initialProfile?.actor ?? null;
+let displayName = $state(
+  initialActor?.display_name || (initialProfile ? `@${username}@${domain}` : t('profile.loading')),
+);
+let avatarUrl = $state<string | null>(initialActor?.icon_url ?? null);
+let bio = $state<string | null>(initialActor?.bio ?? null);
+let actorUrl = $state<string | null>(initialActor?.actor_url ?? null);
+let posts = $state<RemotePost[]>(initialProfile?.posts ?? []);
+let notFound = $state(Boolean(initialProfile) && !initialActor);
+let following = $state(Boolean(initialProfile?.following));
+let followVisible = $state(Boolean(initialActor));
 let followBusy = $state(false);
 
-const handle = `@${username}@${domain}`;
+const handle = $derived(`@${username}@${domain}`);
+// The actor URL comes from a remote document: only http(s) links may be opened.
+const safeActorUrl = $derived(actorUrl && /^https?:\/\//i.test(actorUrl) ? actorUrl : null);
+
+// The SSR load already supplied this handle's data. Skip the duplicate fetch on
+// the first client effect; later param changes (outside the keyed route) fetch.
+let skipInitialFetch = Boolean(initialProfile);
 
 $effect(() => {
   const d = domain;
   const u = username;
   let cancelled = false;
+
+  if (skipInitialFetch) {
+    skipInitialFetch = false;
+    if (initialActor) signalSsrHandover();
+    return;
+  }
+
   notFound = false;
   avatarUrl = null;
+  bio = null;
+  actorUrl = null;
   posts = [];
+  followVisible = false;
+  displayName = t('profile.loading');
 
   void (async () => {
     try {
@@ -50,16 +84,24 @@ $effect(() => {
         return;
       }
       const data = (await response.json()) as {
-        actor?: { display_name: string | null; icon_url: string | null };
+        actor?: {
+          actor_url?: string | null;
+          display_name: string | null;
+          icon_url: string | null;
+          bio?: string | null;
+        };
         following?: boolean;
         posts?: RemotePost[];
       };
       if (cancelled) return;
       displayName = data.actor?.display_name || `@${u}@${d}`;
       avatarUrl = data.actor?.icon_url ?? null;
+      bio = data.actor?.bio ?? null;
+      actorUrl = data.actor?.actor_url ?? null;
       following = Boolean(data.following);
       followVisible = true;
       posts = data.posts ?? [];
+      signalSsrHandover();
     } catch {
       if (!cancelled) {
         notFound = true;
@@ -120,7 +162,15 @@ async function toggleFollow(): Promise<void> {
       <div class="profile-info">
         <div class="profile-display-name fx-display">{displayName}</div>
         <div class="profile-username">{handle}</div>
-        <div class="profile-bio"></div>
+        {#if bio}
+          <div class="profile-bio-label">{t('remote_profile.bio_label')}</div>
+          <div class="profile-bio">{bio}</div>
+        {/if}
+        {#if safeActorUrl}
+          <a class="profile-instance-link" href={safeActorUrl} target="_blank" rel="noopener noreferrer">
+            {t('remote_profile.view_on_instance')}
+          </a>
+        {/if}
         <div class="profile-stats">
           <div class="profile-stat">
             <span>{posts.length}</span>

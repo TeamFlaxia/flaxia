@@ -27,7 +27,17 @@ const TITLES: Array<[RegExp, () => string]> = [
 ];
 
 function profileLabel(pathname: string): string | null {
-  const match = pathname.match(/^\/(?:profile|users)\/([^/]+)/) ?? pathname.match(/^\/@[^/]+\/([^/]+)/);
+  // A remote handle is only unique together with its instance, so the title
+  // has to include both parts. Local profiles keep their existing label.
+  const remote = pathname.match(/^\/@([^/]+)\/([^/]+)/);
+  if (remote?.[1] && remote[2]) {
+    try {
+      return `${t('remote_profile.title')} · @${decodeURIComponent(remote[2])}@${decodeURIComponent(remote[1])}`;
+    } catch {
+      return t('remote_profile.title');
+    }
+  }
+  const match = pathname.match(/^\/(?:profile|users)\/([^/]+)/);
   if (!match?.[1]) return null;
   try {
     return `${t('nav.profile')} · @${decodeURIComponent(match[1])}`;

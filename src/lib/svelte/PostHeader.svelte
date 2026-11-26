@@ -31,6 +31,13 @@ function formatTimestamp(iso: string): string {
 }
 
 function goToProfile(): void {
+  // Federated authors have a local profile path: navigate inside the app so
+  // the session, timeline and back stack keep working. Older payloads only
+  // carry an actor URL, which still opens externally as a fallback.
+  if (props.profile_path) {
+    void navigate(props.profile_path);
+    return;
+  }
   if (props.profile_url) {
     window.open(props.profile_url, '_blank', 'noopener,noreferrer');
     return;

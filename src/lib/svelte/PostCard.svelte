@@ -698,6 +698,7 @@ onDestroy(() => {
         avatar_key={props.post.avatar_key}
         avatar_url={props.post.avatar_url}
         profile_url={props.post.actor_id}
+        profile_path={props.post.profile_path}
         badge_type={props.post.badge_type}
         name_color={props.post.name_color}
         equipped_title_id={props.post.equipped_title_id}
