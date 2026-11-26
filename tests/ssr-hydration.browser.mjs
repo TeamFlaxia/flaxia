@@ -266,13 +266,18 @@ test('SSR boot data removes the locale/session network gate during hydration', a
 
     // Same user shape as tests/app-shell.browser.mjs SIGNED_IN_STUBS, but the
     // response only arrives after 5s so a client that waits for it fails.
+    // Record when a stub resolves so the network-gate assertion below can tell
+    // whether navigation happened while the gate was still pending.
+    const gate = { resolvedAt: Infinity };
     const signedInMe = { user: { id: 'u1', username, display_name: 'Mikan', language: 'ja' } };
     await page.route('**/locales/*.json', async (/** @type {any} */ route) => {
       await new Promise((resolve) => setTimeout(resolve, 5000));
+      gate.resolvedAt = Math.min(gate.resolvedAt, Date.now());
       await route.continue().catch(() => {});
     });
     await page.route('**/api/me', async (/** @type {any} */ route) => {
       await new Promise((resolve) => setTimeout(resolve, 5000));
+      gate.resolvedAt = Math.min(gate.resolvedAt, Date.now());
       await route
         .fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(signedInMe) })
         .catch(() => {});
@@ -335,6 +340,15 @@ test('SSR boot data removes the locale/session network gate during hydration', a
     await page.waitForURL(/\/thread\//, { timeout: clickBudgetMs * 2 });
     const clickMs = Date.now() - clickedAt;
     assert.ok(clickMs <= clickBudgetMs, `post card click took ${clickMs}ms (budget ${clickBudgetMs}ms)`);
+
+    // Independent network-gate guard: navigating during the 5s stub window
+    // proves the click path did not wait for the stalled locale/session data.
+    // A stub that resolved before the click is not a wait and is allowed.
+    const navigatedAt = Date.now();
+    assert.ok(
+      gate.resolvedAt === Infinity || gate.resolvedAt <= clickedAt || navigatedAt < gate.resolvedAt,
+      `navigation waited for the 5s locale/session gate (gate resolved at ${gate.resolvedAt}, navigated at ${navigatedAt})`,
+    );
 
     assert.deepEqual(pageErrors, [], `no uncaught page errors: ${pageErrors.join(' | ')}`);
   } finally {

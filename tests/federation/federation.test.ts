@@ -30,6 +30,27 @@ it('requires FLAXIA_FEDERATION_PEER to name the peer under test', () => {
   assert.ok(PEER_KIND, 'FLAXIA_FEDERATION_PEER must be set to "gotosocial" or "mastodon" to run the federation suite');
 });
 
+// These two checks run without a peer: the actor comparison below ignores
+// `hasLiked` and `hasSharedInbox` with plain patterns, which must hide only
+// those root fields and never a same-named field deeper in a document.
+it('ignores plain ignore patterns only at the root level', () => {
+  const differences = diffShapes(
+    { hasLiked: true, hasSharedInbox: false, nested: { hasLiked: 1 } },
+    { hasLiked: false, hasSharedInbox: true, nested: { hasLiked: 2 } },
+    { ignore: ['hasLiked', 'hasSharedInbox'] },
+  );
+  assert.deepEqual(differences, [{ field: 'nested.hasLiked', ours: 1, theirs: 2 }]);
+});
+
+it('lets a dotted ignore pattern cover a nested path', () => {
+  const differences = diffShapes(
+    { nested: { object: { id: 'a' } }, object: { id: 'x' } },
+    { nested: { object: { id: 'b' } }, object: { id: 'y' } },
+    { ignore: ['nested.object'] },
+  );
+  assert.deepEqual(differences, [{ field: 'object.id', ours: 'x', theirs: 'y' }]);
+});
+
 async function waitFor(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

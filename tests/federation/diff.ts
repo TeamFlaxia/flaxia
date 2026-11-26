@@ -120,10 +120,12 @@ export function noteShape(document: Record<string, unknown>): Record<string, unk
 /**
  * True when a difference at `path` was explicitly excluded.
  *
- * A plain name (`hasLiked`) ignores that field. A dotted name
- * (`Undo.object`) ignores the `object` subtree when the compared shape is an
- * Undo on either side; the exact path is ignored as well, which is useful for
- * nested documents that are compared without reducing them to a shape first.
+ * A plain name (`hasLiked`) ignores exactly that root field: it must not hide
+ * a same-named field nested somewhere else. Only a dotted name (`Undo.object`,
+ * `object.id`) names a path and therefore also ignores that subtree. A dotted
+ * name additionally ignores the trailing path relative to a root of the given
+ * type, which is how `Undo.object` applies to a reduced Undo shape whose field
+ * is just `object`.
  */
 function ignoredPath(
   path: string,
@@ -132,8 +134,12 @@ function ignoredPath(
   ignored: Set<string>,
 ): boolean {
   for (const pattern of ignored) {
+    if (!pattern.includes('.')) {
+      if (path === pattern) return true;
+      continue;
+    }
+
     if (path === pattern || path.startsWith(`${pattern}.`)) return true;
-    if (!pattern.includes('.')) continue;
     const [parent, ...rest] = pattern.split('.');
     const leaf = rest.join('.');
     if (ours.type !== parent && theirs.type !== parent) continue;

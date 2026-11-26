@@ -12,8 +12,8 @@ on:
       - main
   pull_request:
   schedule:
-    # The peer is an external implementation: a new release of it may change
-    # the behaviour of the federation, so the test runs once a week as well.
+    # Both peers are pinned to fixed versions. The weekly run catches
+    # compatibility regressions in our own changes, not peer releases.
     - cron: '17 5 * * 1'
 
 concurrency:
@@ -73,10 +73,13 @@ jobs:
         run: tail -n 200 /tmp/federation-app.log
 
   differential-mastodon:
-    # Mastodon needs Postgres, Redis and three services: keep it off pull
-    # requests, but run it weekly against a new release of the peer. The
-    # GoToSocial job above is unchanged and still covers every pull request.
-    if: github.event_name == 'schedule'
+    # Mastodon needs Postgres, Redis and three services, so it is non-blocking.
+    # The image is pinned to a fixed release: this job detects compatibility
+    # regressions against that version, not new releases of the peer. Run it on
+    # pull requests as well as the weekly schedule; the GoToSocial job above is
+    # unchanged and blocks every pull request.
+    if: github.event_name == 'schedule' || github.event_name == 'pull_request'
+    continue-on-error: true
     # Independent from the GoToSocial job: they share the workflow-level
     # concurrency group otherwise and would cancel each other on a schedule.
     concurrency:
