@@ -17,7 +17,13 @@ export interface PoolEnv extends FederationEnv {
   AP_POOL_SEED_DOMAINS?: string;
 }
 type PoolResult = { instances: number; fetched: number; stored: number; skipped: number; errors: number };
-type PoolMetrics = { favourites: number; reblogs: number; score: number };
+type PoolMetrics = {
+  favourites: number;
+  reblogs: number;
+  score: number;
+  flaxiaFresh: number;
+  flaxiaReload: number;
+};
 export type PoolActorInfo = {
   actorUrl: string;
   domain: string;
@@ -30,6 +36,8 @@ const SEED_DOMAINS = ['mastodon.social', 'mastodon.online', 'fosstodon.org', 'te
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_POSTS_PER_ACTOR = 5;
 const TIMELINE_LIMIT = 40;
+/** Remote clocks may run a few minutes ahead; anything further is not a fresh post. */
+const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000;
 const safeCount = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
 function recordOf(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -75,7 +83,18 @@ export function computePoolScore(params: {
     2.0 * Math.log1p(safeCount(params.flaxiaFresh) + safeCount(params.flaxiaReload))
   );
 }
-/** Plain-text post and counters; boosts, private and misattributed posts are rejected. */
+/** Recompute at refresh time so the freshness term decays with the clock. */
+function currentScore(metrics: PoolMetrics, createdAt: string): number {
+  return computePoolScore({
+    favourites: metrics.favourites,
+    reblogs: metrics.reblogs,
+    createdAt,
+    flaxiaFresh: metrics.flaxiaFresh,
+    flaxiaReload: metrics.flaxiaReload,
+  });
+}
+
+/** Plain-text post and counters; boosts and non-public posts are rejected. */
 export function normalizeMastodonStatus(
   status: Record<string, unknown>,
   actor: PoolActorInfo,
@@ -83,7 +102,9 @@ export function normalizeMastodonStatus(
 ): { post: Record<string, unknown>; metrics: PoolMetrics } | null {
   if (!recordOf(status) || (status.reblog !== undefined && status.reblog !== null)) return null;
   const visibility = typeof status.visibility === 'string' ? status.visibility.toLowerCase() : 'public';
-  if (visibility !== 'public' && visibility !== 'unlisted') return null;
+  // Unlisted posts reach followers and mentions, not public timelines. The
+  // Federated pool is public discovery, so they must not be imported at all.
+  if (visibility !== 'public') return null;
   const actorUrl = urlOf(actor.actorUrl);
   const accountUrl = urlOf(recordOf(status.account)?.url);
   const attributedTo = urlOf(status.attributedTo);
@@ -92,15 +113,24 @@ export function normalizeMastodonStatus(
   if (!accountUrl && !attributedTo) return null;
   if (accountUrl && canonical(accountUrl) !== canonical(actorUrl)) return null;
   if (attributedTo && canonical(attributedTo) !== canonical(actorUrl)) return null;
-  // Mastodon ids are often numeric; the absolute `url` is the object id then.
-  const objectId = urlOf(status.id) ?? urlOf(status.url);
+  // Mastodon REST ids are often numeric, while inbox delivery uses the AP id
+  // `${actor}/statuses/${id}`. Resolve both to that same identity so a Delete
+  // of the Note hides one row instead of leaving a second public pool copy.
+  const numericId = typeof status.id === 'string' && /^\d{1,20}$/.test(status.id) ? status.id : null;
+  const declaredId = urlOf(status.uri);
+  const objectId =
+    urlOf(status.id) ??
+    (declaredId && sameHost(declaredId, actor.domain) ? declaredId : null) ??
+    (numericId ? urlOf(`${canonical(actorUrl)}/statuses/${numericId}`) : null) ??
+    urlOf(status.url);
   if (!objectId || !sameHost(objectId, actor.domain)) return null;
   try {
     if (new URL(baseUrl).origin === objectId.origin) return null;
   } catch {}
   const text = htmlToText(firstString(status.content, status.text) ?? '').slice(0, 200);
   const createdAt = firstString(status.created_at, status.published);
-  if (!text || !createdAt || !Number.isFinite(new Date(createdAt).getTime())) return null;
+  const timestamp = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+  if (!text || !createdAt || !Number.isFinite(timestamp) || timestamp > Date.now() + MAX_CLOCK_SKEW_MS) return null;
   const hashtags: string[] = [];
   for (const tag of asRecords(status.tags)) {
     const name = firstString(tag.name)?.replace(/^#/, '').trim().slice(0, 50);
@@ -127,6 +157,8 @@ export function normalizeMastodonStatus(
     metrics: {
       favourites,
       reblogs,
+      flaxiaFresh,
+      flaxiaReload,
       score: computePoolScore({ favourites, reblogs, createdAt, flaxiaFresh, flaxiaReload }),
     },
   };
@@ -371,9 +403,22 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: Map<stri
     if (statuses.length >= cap) break;
     const note = recordOf(entry.object) ?? entry;
     if (note.type !== 'Note') continue;
-    const audience = [note.to, note.cc].flatMap((value) => (Array.isArray(value) ? value : []));
+    const audience = (value: unknown): string[] =>
+      typeof value === 'string'
+        ? [value]
+        : Array.isArray(value)
+          ? value.filter((entry): entry is string => typeof entry === 'string')
+          : [];
+    const to = audience(note.to);
+    const cc = audience(note.cc);
+    // `cc`-only PUBLIC is an unlisted Note: normalizeMastodonStatus rejects it.
+    const visibility = to.includes(PUBLIC_COLLECTION)
+      ? 'public'
+      : cc.includes(PUBLIC_COLLECTION)
+        ? 'unlisted'
+        : 'private';
     const attributedTo = urlOf(note.attributedTo);
-    if (!audience.includes(PUBLIC_COLLECTION) || canonical(attributedTo ?? known) !== actor.actorUrl) {
+    if (visibility === 'private' || canonical(attributedTo ?? known) !== actor.actorUrl) {
       skipped++;
       continue;
     }
@@ -384,7 +429,7 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: Map<stri
         url: note.url ?? note.id,
         content: note.content,
         created_at: note.published,
-        visibility: 'public',
+        visibility,
         sensitive: note.sensitive === true,
         attributedTo: attributedTo?.toString(),
         account: { url: actor.actorUrl, acct: row.preferred_username ?? 'unknown' },
@@ -396,7 +441,7 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: Map<stri
   }
   return { statuses, skipped };
 }
-/** Store one status. Blocked authors, duplicates and off-origin posts are skipped. */
+/** Store one status, or refresh an existing pool row. Inbox posts are left alone. */
 async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, instance: string, baseUrl: string) {
   const normalized = normalizeMastodonStatus(entry.status, entry.actor, baseUrl);
   if (!normalized) return false;
@@ -404,8 +449,29 @@ async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, inst
   const blocked = await env.DB.prepare('SELECT 1 AS blocked FROM ap_blocks WHERE actor_url = ? LIMIT 1')
     .bind(entry.actor.actorUrl)
     .first();
-  const existing = await env.DB.prepare('SELECT id FROM posts WHERE ap_object_id = ?').bind(objectId).first();
-  if (blocked || existing) return false;
+  if (blocked) return false;
+  const existing = await env.DB.prepare('SELECT id FROM posts WHERE ap_object_id = ?')
+    .bind(objectId)
+    .first<{ id: string }>();
+  // The score depends on the current clock: recompute it on every discovery,
+  // otherwise a viral post keeps its original boost and never decays.
+  const score = currentScore(normalized.metrics, String(normalized.post.created_at));
+  const fetchedAt = new Date(Date.now()).toISOString();
+  if (existing) {
+    // A Note received through the inbox has no pool metrics: it belongs to a
+    // followed actor's timeline, not to public discovery. Only rows the pool
+    // created (marked by a metrics row) are refreshed.
+    const poolRow = await env.DB.prepare('SELECT post_id FROM ap_pool_metrics WHERE post_id = ?')
+      .bind(existing.id)
+      .first();
+    if (!poolRow) return false;
+    await upsertPoolActor(env.DB, entry.actor);
+    await env.DB.prepare(`UPDATE ap_pool_metrics SET instance = ?, favourites = ?, reblogs = ?,
+      score = ?, fetched_at = ? WHERE post_id = ?`)
+      .bind(instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt, existing.id)
+      .run();
+    return true;
+  }
   await upsertPoolActor(env.DB, entry.actor);
   const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO posts
     (id, user_id, username, text, hashtags, status, hidden, actor_id, ap_object_id, visibility, created_at)
@@ -426,14 +492,7 @@ async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, inst
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(post_id) DO UPDATE SET instance = excluded.instance, favourites = excluded.favourites,
       reblogs = excluded.reblogs, score = excluded.score, fetched_at = excluded.fetched_at`)
-    .bind(
-      normalized.post.id,
-      instance,
-      normalized.metrics.favourites,
-      normalized.metrics.reblogs,
-      normalized.metrics.score,
-      new Date().toISOString(),
-    )
+    .bind(normalized.post.id, instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt)
     .run();
   return true;
 }
@@ -486,12 +545,24 @@ export async function runPoolDiscovery(env: PoolEnv, options: PoolOptions = {}):
 export async function prunePool(env: PoolEnv, olderThanDays = 7): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanDays * DAY_MS).toISOString();
   await env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id NOT IN (SELECT id FROM posts)').run();
-  const remoteOld = "ap_object_id IS NOT NULL AND user_id = '' AND created_at < ?";
-  const metrics = await env.DB.prepare(
-    `DELETE FROM ap_pool_metrics WHERE post_id IN (SELECT id FROM posts WHERE ${remoteOld})`,
-  )
+  // Only rows the pool created are eligible. Notes received from actors a
+  // local user follows (and any local replies to them) are not pool content,
+  // even though they look remote in the posts table.
+  const stalePoolPost = `ap_object_id IS NOT NULL AND user_id = '' AND created_at < ?
+    AND EXISTS (SELECT 1 FROM ap_pool_metrics pm WHERE pm.post_id = posts.id)`;
+  // Capture the ids before deleting metrics: the marker itself lives there.
+  const stale = await env.DB.prepare(`SELECT posts.id FROM posts WHERE ${stalePoolPost}`)
     .bind(cutoff)
+    .all<{ id: string }>();
+  const ids = (stale.results ?? []).map((row) => row.id);
+  if (ids.length === 0) return 0;
+  // A single JSON bind avoids D1's bind-parameter limit on a large prune.
+  const idList = JSON.stringify(ids);
+  const metrics = await env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id IN (SELECT value FROM json_each(?))')
+    .bind(idList)
     .run();
-  const posts = await env.DB.prepare(`DELETE FROM posts WHERE ${remoteOld}`).bind(cutoff).run();
+  const posts = await env.DB.prepare('DELETE FROM posts WHERE id IN (SELECT value FROM json_each(?))')
+    .bind(idList)
+    .run();
   return (metrics.meta?.changes ?? 0) + (posts.meta?.changes ?? 0);
 }

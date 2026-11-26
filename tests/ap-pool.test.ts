@@ -10,6 +10,7 @@ import {
   prunePool,
   runPoolDiscovery,
 } from '../functions/lib/activitypub/ap-pool.ts';
+import { handleIncomingActivity } from '../functions/lib/activitypub/handlers.ts';
 import { freshnessBoost } from '../functions/lib/scoring.ts';
 import { createTestDatabase, seedLocalUser, type TestDatabase } from './helpers/d1.ts';
 
@@ -28,16 +29,30 @@ function envFor(db: TestDatabase, overrides: Partial<PoolEnv> = {}): PoolEnv {
   };
 }
 
-/** `freshnessBoost` reads `Date.now()`; pin it so score assertions are deterministic. */
-function withFixedNow<T>(fn: () => T): T {
+/** Pin `Date.now()` so score and fetched_at assertions are deterministic. */
+function withNow<T>(now: number, fn: () => T): T {
   const original = Date.now;
-  const now = Date.parse(CREATED_AT) + 60 * 60 * 1000;
   Date.now = () => now;
   try {
     return fn();
   } finally {
     Date.now = original;
   }
+}
+
+async function withNowAsync<T>(now: number, fn: () => Promise<T>): Promise<T> {
+  const original = Date.now;
+  Date.now = () => now;
+  try {
+    return await fn();
+  } finally {
+    Date.now = original;
+  }
+}
+
+/** `freshnessBoost` reads `Date.now()`; pin it so score assertions are deterministic. */
+function withFixedNow<T>(fn: () => T): T {
+  return withNow(Date.parse(CREATED_AT) + 60 * 60 * 1000, fn);
 }
 
 function actorInfo(overrides: Partial<PoolActorInfo> = {}): PoolActorInfo {
@@ -167,7 +182,7 @@ describe('federated popularity pool', () => {
     assert.equal(normalizeMastodonStatus(status({ reblog: { id: 'x' } }), actorInfo(), BASE), null);
     assert.equal(normalizeMastodonStatus(status({ visibility: 'private' }), actorInfo(), BASE), null);
     assert.equal(normalizeMastodonStatus(status({ visibility: 'direct' }), actorInfo(), BASE), null);
-    assert.ok(normalizeMastodonStatus(status({ visibility: 'unlisted' }), actorInfo(), BASE));
+    assert.equal(normalizeMastodonStatus(status({ visibility: 'unlisted' }), actorInfo(), BASE), null);
 
     const otherAuthor = status({ account: { url: `https://${DOMAIN}/users/bob`, acct: 'bob' } });
     assert.equal(normalizeMastodonStatus(otherAuthor, actorInfo(), BASE), null);
@@ -447,5 +462,262 @@ describe('federated popularity pool', () => {
     } finally {
       db.close();
     }
+  });
+
+  it('refreshes counters, score and fetched_at when the same status is discovered again', async () => {
+    const db = createTestDatabase();
+    const firstNow = Date.parse(CREATED_AT) + 60 * 60 * 1000;
+    const secondNow = firstNow + 60 * 60 * 1000;
+    const thirdNow = secondNow + 24 * 60 * 60 * 1000;
+    const viral = status({ favourites_count: 100, reblogs_count: 50 });
+    let trends: unknown[] = [status()];
+    const restore = stubFetch((url) => mastodonFetch(trends)(url));
+    try {
+      const firstResult = await withNowAsync(firstNow, () => runPoolDiscovery(envFor(db)));
+      assert.equal(firstResult.stored, 1);
+      const initial = await db
+        .prepare('SELECT favourites, reblogs, score, fetched_at FROM ap_pool_metrics')
+        .first<{ favourites: number; reblogs: number; score: number; fetched_at: string }>();
+      assert.ok(initial);
+      assert.equal(initial.favourites, 3);
+      assert.equal(initial.reblogs, 2);
+      assert.equal(
+        initial.score,
+        withNow(firstNow, () =>
+          computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
+        ),
+      );
+
+      trends = [viral];
+      const secondResult = await withNowAsync(secondNow, () => runPoolDiscovery(envFor(db)));
+      assert.equal(secondResult.stored, 1);
+      const refreshed = await db
+        .prepare('SELECT favourites, reblogs, score, fetched_at FROM ap_pool_metrics')
+        .first<{ favourites: number; reblogs: number; score: number; fetched_at: string }>();
+      assert.ok(refreshed);
+      assert.equal(refreshed.favourites, 100);
+      assert.equal(refreshed.reblogs, 50);
+      assert.equal(
+        refreshed.score,
+        withNow(secondNow, () =>
+          computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
+        ),
+      );
+      assert.notEqual(refreshed.score, initial.score);
+      assert.equal(refreshed.fetched_at, new Date(secondNow).toISOString());
+
+      // Same counters, later clock: the stored freshness component must decay.
+      await withNowAsync(thirdNow, () => runPoolDiscovery(envFor(db)));
+      const decayed = await db
+        .prepare('SELECT score, fetched_at FROM ap_pool_metrics')
+        .first<{ score: number; fetched_at: string }>();
+      assert.ok(decayed);
+      assert.equal(
+        decayed.score,
+        withNow(thirdNow, () =>
+          computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
+        ),
+      );
+      assert.ok(decayed.score < refreshed.score);
+      assert.equal(decayed.fetched_at, new Date(thirdNow).toISOString());
+
+      const posts = await db
+        .prepare('SELECT COUNT(*) AS count FROM posts WHERE ap_object_id = ?')
+        .bind(OBJECT_ID)
+        .first<{ count: number }>();
+      assert.equal(posts?.count, 1);
+      const metricCount = await db.prepare('SELECT COUNT(*) AS count FROM ap_pool_metrics').first<{ count: number }>();
+      assert.equal(metricCount?.count, 1);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('uses the ActivityPub object id for numeric Mastodon ids so a Delete hides the pooled post', async () => {
+    const numericId = '123';
+    const apId = `${ACTOR_URL}/statuses/${numericId}`;
+    const permalink = `https://${DOMAIN}/@alice/${numericId}`;
+    const numeric = status({ id: numericId, url: permalink });
+    assert.equal(normalizeMastodonStatus(numeric, actorInfo(), BASE)?.post.ap_object_id, apId);
+
+    const db = createTestDatabase();
+    const restore = stubFetch(mastodonFetch([numeric]));
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.stored, 1);
+      const pooled = await db
+        .prepare('SELECT id, ap_object_id FROM posts WHERE ap_object_id = ?')
+        .bind(apId)
+        .all<{ id: string; ap_object_id: string }>();
+      assert.equal(pooled.results.length, 1);
+      assert.equal(pooled.results[0].ap_object_id, apId);
+      const byPermalink = await db
+        .prepare('SELECT COUNT(*) AS count FROM posts WHERE ap_object_id = ?')
+        .bind(permalink)
+        .first<{ count: number }>();
+      assert.equal(byPermalink?.count, 0);
+
+      await handleIncomingActivity(envFor(db), {
+        activity: {
+          id: `${ACTOR_URL}/activities/delete-${numericId}`,
+          type: 'Delete',
+          actor: ACTOR_URL,
+          object: { id: apId, type: 'Tombstone' },
+        },
+        actorId: ACTOR_URL,
+        username: 'alice',
+      });
+      const afterDelete = await db
+        .prepare('SELECT status, hidden FROM posts WHERE id = ?')
+        .bind(pooled.results[0].id)
+        .first<{ status: string; hidden: number }>();
+      assert.equal(afterDelete?.status, 'deleted');
+      assert.equal(afterDelete?.hidden, 1);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('prunes only pool-origin rows, keeping inbox posts and their local replies', async () => {
+    const db = createTestDatabase();
+    const dayMs = 24 * 60 * 60 * 1000;
+    try {
+      const old = new Date(Date.now() - 30 * dayMs).toISOString();
+      // A Note delivered to a follower has no pool metrics and must survive.
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, visibility, created_at)
+           VALUES ('inbox-old', '', 'alice@mastodon.test', 'from inbox', 'published', ?, 'public', ?)`,
+        )
+        .bind(`${ACTOR_URL}/statuses/inbox`, old)
+        .run();
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, parent_id, created_at)
+           VALUES ('local-reply', 'u1', 'local', 'reply', 'published', 'inbox-old', ?)`,
+        )
+        .bind(CREATED_AT)
+        .run();
+      // A pool-origin post carries metrics; both it and its metrics are pruned.
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+           VALUES ('pool-old', '', 'alice@mastodon.test', 'from pool', 'published', ?, ?)`,
+        )
+        .bind(`${ACTOR_URL}/statuses/pool`, old)
+        .run();
+      await db
+        .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+        .bind('pool-old', DOMAIN, old)
+        .run();
+
+      const removed = await prunePool(envFor(db));
+      assert.equal(removed, 2);
+
+      const remaining = await db
+        .prepare("SELECT id FROM posts WHERE id IN ('inbox-old', 'local-reply', 'pool-old') ORDER BY id")
+        .all<{ id: string }>();
+      assert.deepEqual(
+        remaining.results.map((row) => row.id),
+        ['inbox-old', 'local-reply'],
+      );
+      const metrics = await db
+        .prepare("SELECT post_id FROM ap_pool_metrics WHERE post_id IN ('inbox-old', 'pool-old') ORDER BY post_id")
+        .all<{ post_id: string }>();
+      assert.deepEqual(metrics.results, []);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('never exposes unlisted statuses in the public pool', async () => {
+    assert.equal(normalizeMastodonStatus(status({ visibility: 'unlisted' }), actorInfo(), BASE), null);
+    const db = createTestDatabase();
+    const restore = stubFetch(mastodonFetch([status({ visibility: 'unlisted' })]));
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, skipped: 1, errors: 0 });
+      const post = await db.prepare('SELECT id FROM posts WHERE ap_object_id = ?').bind(OBJECT_ID).first();
+      assert.equal(post, null);
+      const metrics = await db.prepare('SELECT post_id FROM ap_pool_metrics').all<{ post_id: string }>();
+      assert.deepEqual(metrics.results, []);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('does not import unlisted Notes from an outbox', async () => {
+    const db = createTestDatabase();
+    const actor = `https://social.test/users/bob`;
+    await db
+      .prepare(
+        `INSERT INTO ap_actors (actor_url, inbox_url, preferred_username, domain, fetched_at)
+         VALUES (?, ?, 'bob', 'social.test', ?)`,
+      )
+      .bind(actor, `${actor}/inbox`, CREATED_AT)
+      .run();
+    const restore = stubFetch((url) => {
+      if (url === 'https://social.test/.well-known/nodeinfo') {
+        return {
+          body: {
+            links: [
+              { rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1', href: 'https://social.test/nodeinfo/2.1' },
+            ],
+          },
+        };
+      }
+      if (url === 'https://social.test/nodeinfo/2.1') return { body: { software: { name: 'friendica' } } };
+      if (url === actor)
+        return { body: { id: actor, type: 'Person', inbox: `${actor}/inbox`, outbox: `${actor}/outbox` } };
+      if (url === `${actor}/outbox`) {
+        return {
+          body: {
+            orderedItems: [
+              {
+                type: 'Create',
+                object: {
+                  id: `${actor}/notes/1`,
+                  type: 'Note',
+                  attributedTo: actor,
+                  content: '<p>Not for public timelines</p>',
+                  published: CREATED_AT,
+                  to: [`${actor}/followers`],
+                  cc: ['https://www.w3.org/ns/activitystreams#Public'],
+                },
+              },
+            ],
+          },
+        };
+      }
+      return null;
+    });
+    try {
+      const result = await runPoolDiscovery(envFor(db, { AP_POOL_SEED_DOMAINS: 'social.test' }));
+      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, skipped: 1, errors: 0 });
+      const posts = await db
+        .prepare('SELECT id FROM posts WHERE ap_object_id = ?')
+        .bind(`${actor}/notes/1`)
+        .all<{ id: string }>();
+      assert.deepEqual(posts.results, []);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('rejects far-future created_at timestamps', () => {
+    const now = Date.parse(CREATED_AT) + 60 * 60 * 1000;
+    const future = new Date(now + 60 * 60 * 1000).toISOString();
+    assert.equal(
+      withNow(now, () => normalizeMastodonStatus(status({ created_at: future }), actorInfo(), BASE)),
+      null,
+    );
+    // Normal clock drift within a few minutes is tolerated.
+    const slightlyAhead = new Date(now + 2 * 60 * 1000).toISOString();
+    assert.ok(withNow(now, () => normalizeMastodonStatus(status({ created_at: slightlyAhead }), actorInfo(), BASE)));
+    assert.equal(normalizeMastodonStatus(status({ created_at: 'not-a-date' }), actorInfo(), BASE), null);
   });
 });

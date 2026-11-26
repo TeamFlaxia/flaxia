@@ -204,12 +204,18 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
   other implementations fall back to the actor's public Outbox.
 * Only public Notes are stored: the author must match the signed actor, the
   object id must live on the same origin, text is capped at 200 characters and
-  unsafe HTML is discarded. `ap_object_id` deduplicates. Blocked actors and
-  sensitive posts are skipped.
+  unsafe HTML is discarded. `unlisted` and private Notes are rejected because
+  this is public discovery. Numeric Mastodon ids are resolved to the same AP
+  object id used by inbox delivery, so a Note appears once and a received
+  `Delete` hides every copy. Blocked actors, sensitive posts and timestamps
+  more than ten minutes in the future are skipped.
 * Popularity is recorded in `ap_pool_metrics` with a composite score of likes,
   reposts, freshness and Flaxia reactions (`freshnessBoost()` from
-  `functions/lib/scoring.ts`). Per-instance and per-actor caps prevent one
-  instance from taking over. Posts older than 7 days are pruned.
+  `functions/lib/scoring.ts`). The score and counters are recomputed on every
+  hourly discovery, so the freshness term decays. Per-instance and per-actor
+  caps prevent one instance from taking over. Only pool-origin rows (marked by
+  an `ap_pool_metrics` row) older than 7 days are pruned; Notes received from
+  followed actors and their replies are never removed by the pool.
 * The **Federated** tab (`/federated`, `GET /api/federated/posts`) lists the pool
   by score, not chronologically, and is readable by guests. The same pool feeds
   the federated half of For You through `presentForYou()`, so Flaxia still leads
