@@ -54,6 +54,14 @@ function fixture(authenticated = true) {
       visibility TEXT NOT NULL DEFAULT 'public',
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
+    -- Recommendation queries LEFT JOIN the federated popularity pool (migration 0150).
+    CREATE TABLE ap_pool_metrics (
+      post_id TEXT PRIMARY KEY, instance TEXT, favourites INTEGER DEFAULT 0,
+      reblogs INTEGER DEFAULT 0, score REAL DEFAULT 0, fetched_at TEXT
+    );
+    CREATE INDEX idx_ap_pool_score ON ap_pool_metrics(score DESC);
+    CREATE INDEX idx_ap_pool_fetched ON ap_pool_metrics(fetched_at);
+    CREATE INDEX idx_ap_pool_instance ON ap_pool_metrics(instance);
     CREATE TABLE post_attachments (post_id TEXT, r2_key TEXT, kind TEXT, position INTEGER);
     CREATE TABLE reactions (post_id TEXT, user_id TEXT, emoji TEXT);
     CREATE TABLE arcade_events (

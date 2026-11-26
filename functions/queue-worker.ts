@@ -37,6 +37,7 @@ interface Env {
   MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
+  AP_POOL_SEED_DOMAINS?: string;
   CROWD_ORCHESTRATOR_URL?: string;
   CROWD_API_KEY?: string;
   CROWD_WEBHOOK_SECRET?: string;
@@ -63,6 +64,22 @@ export default {
       }
     } catch (error) {
       console.error('Pending embedding drain failed:', (error as Error).message);
+    }
+
+    // The federated popularity pool runs before the hourly branch so its
+    // schedule cannot be mistaken for Common Crawl ingestion.
+    if (event.cron === '5 * * * *') {
+      try {
+        const { runPoolDiscovery, prunePool } = await import('./lib/activitypub/ap-pool.ts');
+        const discovered = await runPoolDiscovery(env);
+        const pruned = await prunePool(env);
+        console.log(
+          `Popularity pool finished: ${discovered.stored}/${discovered.fetched} posts stored, ${pruned} rows pruned`,
+        );
+      } catch (error) {
+        console.error('Popularity pool discovery failed:', (error as Error).message);
+      }
+      return;
     }
 
     if (event.cron === '0 * * * *') {
