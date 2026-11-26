@@ -8,7 +8,7 @@ import { showSignInPrompt } from '../../components/SignInPrompt.ts';
 import { t } from '../i18n.ts';
 import { impressionTracker } from '../impression-tracker.ts';
 import { pauseMediaIn } from '../media-mute.ts';
-import { navigate } from '../navigation.ts';
+import { navigate, prefetchThread } from '../navigation.ts';
 import {
   confirmDelete,
   mountActions,
@@ -30,6 +30,7 @@ import {
 } from '../post/card-adapters.ts';
 import { openPostModal } from '../post-modal.ts';
 import { getShowNsfw } from '../settings.ts';
+import { rememberPost } from '../thread/optimistic-thread.ts';
 import { showToast } from '../toast.ts';
 import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
 import PollWidget from './PollWidget.svelte';
@@ -390,11 +391,14 @@ function onPostClick(e: MouseEvent): void {
   const target = e.target as HTMLElement;
   if (
     target.closest(
-      'button, input, textarea, a, .poll-option, .video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track, .hashtag-link, .mention-link',
+      'button, input, textarea, a, .poll-option, .video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track, .hashtag-link, .mention-link, .mention-dropdown, .mention-item, .reply-composer',
     )
   )
     return;
   if (window.getSelection()?.toString()) return;
+  // Snapshot the full Post before goto(): the thread load can now paint this
+  // card as its root in the same frame, then reconcile with the real thread.
+  rememberPost(props.post);
   void navigate(`/thread/${props.post.id}`, { state: { postId: props.post.id } });
 }
 
@@ -654,6 +658,8 @@ onDestroy(() => {
   data-post-id={props.post.id}
   data-post-index={props.postIndex}
   onclick={onPostClick}
+  onpointerenter={() => { if (!props.disableNavigation) prefetchThread(`/thread/${props.post.id}`); }}
+  onfocus={() => { if (!props.disableNavigation) prefetchThread(`/thread/${props.post.id}`); }}
 >
   <div class="post-card-header">
     {#if props.postIndex !== undefined}<span class="post-index">{props.postIndex}</span>{/if}

@@ -16,4 +16,21 @@ declare module '$app/navigation' {
       refreshAll?: boolean;
     },
   ): Promise<void>;
+
+  /** Warm a route's JS chunk. Safe to call repeatedly. */
+  export function preloadCode(...routeIds: string[]): Promise<void>;
+
+  /**
+   * Run a route's universal load ahead of navigation. Results are cached by
+   * pathname + search and consumed by `goto()`. `invalidate()` clears that
+   * cache, so prefetch code must never call it.
+   */
+  export function preloadData(
+    href: string,
+  ): Promise<
+    | { type: 'loaded'; data: Record<string, unknown> }
+    | { type: 'invalidated' }
+    | { type: 'redirect'; location: string }
+    | { type: 'error'; error: unknown }
+  >;
 }

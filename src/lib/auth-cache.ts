@@ -21,25 +21,26 @@ export async function getMe(): Promise<Record<string, unknown> | null> {
   // A stalled auth worker must never hold the whole app hostage: the layout
   // no longer awaits this, but a bounded request still releases its consumers.
   cachePromise = fetch('/api/me', { credentials: 'include', signal: AbortSignal.timeout(8000) })
-    .then((r) => {
+    .then(async (r) => {
       if (generation !== cacheGeneration) return cachedMe;
-      if (r.ok) return r.json() as Promise<Record<string, unknown>>;
-      if (r.status === 401) {
-        clearMeCache();
-        return null;
+      if (!r.ok) {
+        // Only an explicit 401 proves the session is gone. A 5xx or a gateway
+        // error is transient and must not sign out a known user.
+        if (r.status === 401) clearMeCache();
+        return cachedMe;
       }
-      return null;
-    })
-    .then((data: unknown) => {
+      const data = (await r.json()) as Record<string, unknown>;
       if (generation !== cacheGeneration) return cachedMe;
-      cachedMe = data as Record<string, unknown> | null;
+      cachedMe = data;
       cacheTimestamp = now;
-      cachePromise = null;
       return data;
     })
     .catch(() => {
+      // A network error is not a sign-out either: keep the last known user.
+      return cachedMe;
+    })
+    .finally(() => {
       if (generation === cacheGeneration) cachePromise = null;
-      return generation !== cacheGeneration ? cachedMe : null;
     }) as Promise<Record<string, unknown> | null>;
 
   return cachePromise;

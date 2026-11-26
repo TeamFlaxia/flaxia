@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { Handle } from '@sveltejs/kit/hooks';
+import type { Handle, HandleFetch } from '@sveltejs/kit/hooks';
 import { type LocaleData, localeFromCookie, setLocaleResolver } from './lib/i18n.ts';
 
 // Cloudflare Pages ignores the root `functions/` directory once the adapter
@@ -127,6 +127,40 @@ export async function loadLocale(locale: string, fetchFn: typeof fetch): Promise
   }
   return promise;
 }
+
+// SvelteKit emits a `data-ttl` script for SSR subresponses with a max-age and
+// seeds its client fetch cache from it during hydration, so later navigations
+// to these routes reuse the serialized response with no network request. The
+// TTL matches CLIENT_CACHE_TTL in src/lib/ssr-data.ts. Only public data is
+// allowlisted; viewer-specific endpoints and mutations keep the API's headers.
+const CACHEABLE_SSR_GET = [
+  /^\/api\/posts\/?$/,
+  /^\/api\/posts\/recommended\/?$/,
+  /^\/api\/posts\/[^/]+\/thread\/?$/,
+  /^\/api\/posts\/[^/]+\/replies\/?$/,
+  /^\/api\/users\/[^/]+\/?$/,
+  /^\/api\/games\/?$/,
+];
+
+export const handleFetch: HandleFetch = async ({ event, request, fetch }) => {
+  const response = await fetch(request);
+  if (request.method !== 'GET') return response;
+
+  const url = new URL(request.url);
+  if (url.origin !== event.url.origin || !CACHEABLE_SSR_GET.some((pattern) => pattern.test(url.pathname))) {
+    return response;
+  }
+
+  // Clone with fresh headers: the public API handler's response must not be
+  // mutated, and the exact private max-age replaces any upstream policy.
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'private, max-age=10');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+};
 
 export const handle: Handle = async ({ event, resolve }) => {
   if (isPreviewHostname(event.url.hostname)) {

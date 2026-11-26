@@ -5,7 +5,8 @@
 // history.state (`sveltekit:metadata`); replacing that object makes the router
 // stop reacting to the URL, which is why links only worked after a full reload.
 // Routing every navigation through goto() keeps SvelteKit's state intact.
-import { goto } from '$app/navigation';
+import { goto, preloadCode, preloadData } from '$app/navigation';
+import { isDataSaverEnabled } from './settings.ts';
 
 export interface NavigateOptions {
   replaceState?: boolean;
@@ -28,4 +29,29 @@ export function navigate(url: string, options: NavigateOptions = {}): Promise<vo
  * the caller has already written the URL with pushState. */
 export function navigateReplace(url: string, state: Record<string, unknown> = {}): Promise<void> {
   return navigate(url, { replaceState: true, state });
+}
+
+const THREAD_ROUTE_ID = '/thread/[id]';
+const PREFETCH_DELAY_MS = 100;
+const prefetchedThreads = new Set<string>();
+const pendingThreads = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Warm a thread's load data and route code after a short hover intent delay.
+ * `preloadData` fills SvelteKit's load cache (keyed by pathname + search), so
+ * the subsequent `goto()` reuses it. Never invalidate the load cache here: it
+ * throws away the prefetched data and makes the prefetch pointless.
+ */
+export function prefetchThread(href: string): void {
+  if (typeof window === 'undefined' || isDataSaverEnabled()) return;
+  if (prefetchedThreads.has(href) || pendingThreads.has(href)) return;
+  const timer = setTimeout(() => {
+    pendingThreads.delete(href);
+    if (prefetchedThreads.has(href)) return;
+    if (prefetchedThreads.size > 256) prefetchedThreads.clear();
+    prefetchedThreads.add(href);
+    void preloadData(href).catch(() => {});
+    void preloadCode(THREAD_ROUTE_ID).catch(() => {});
+  }, PREFETCH_DELAY_MS);
+  pendingThreads.set(href, timer);
 }

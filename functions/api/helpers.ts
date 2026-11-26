@@ -32,13 +32,10 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
       path.startsWith('/api/wvfs-zip/'));
   if (skipsSession) {
-    const token = getSessionToken(c.req.raw);
-    if (token) {
-      const sessionData = await getMeWithSession(c.env, token);
-      c.set('user', sessionData?.user || null);
-    } else {
-      c.set('user', null);
-    }
+    // Public GETs need no session at all. Set an explicit null so handlers that
+    // use resolveRequestUser do not treat it as "middleware did not run" and
+    // repeat the auth chain. DM media is excluded above and keeps its session.
+    c.set('user', null);
     await next();
     return;
   }
