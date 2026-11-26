@@ -145,7 +145,9 @@ describe('Differential activity shapes', () => {
     assert.equal(shape.undoneType, 'Like');
     assert.equal(shape.undoneObjectIsString, true);
     assert.equal(shape.addressedToPublic, true);
-    assert.equal(shape.contextIsArray, false);
+    // JSON-LD allows either a string or an array context; the differential
+    // shape intentionally does not compare that representation detail.
+    assert.equal('contextIsArray' in shape, false);
   });
 
   it('can ignore the inner object of an Undo but still reports other differences', () => {
