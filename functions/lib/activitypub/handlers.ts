@@ -625,10 +625,28 @@ async function handleLike(
     return;
   }
 
+  // `fresh_count` is the public Fresh number on the post card. It counts local
+  // Fresh!s and remote Likes alike, so a Like received over ActivityPub has to
+  // move the same counters as a local one (+2 hotness). INSERT OR IGNORE above
+  // guarantees a replayed Like never increments them a second time.
+  await env.DB.prepare(
+    'UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id = ?',
+  )
+    .bind(postId)
+    .run();
+
   if (post.user_id) {
     try {
-      await env.DB.prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(randomId(), post.user_id, 'ap_like', postId, actorId)
+      // Idempotent: a delivered Like that is retried with a new activity id
+      // still only produces one notification per (post, actor).
+      await env.DB.prepare(`
+        INSERT INTO notifications (id, user_id, type, post_id, actor_id)
+        SELECT ?, ?, 'ap_like', ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'ap_like' AND actor_id = ?
+        )
+      `)
+        .bind(randomId(), post.user_id, postId, actorId, post.user_id, postId, actorId)
         .run();
     } catch (error) {
       console.error('Failed to create Like notification:', error);
@@ -735,7 +753,22 @@ async function handleUndo(
       const objectUrl = typeof object.object === 'string' ? object.object : '';
       const postId = await resolveLikeTarget(env, objectUrl);
       if (postId) {
-        await env.DB.prepare('DELETE FROM likes WHERE post_id = ? AND actor_id = ?').bind(postId, actorId).run();
+        // Only the actor that signed the Undo can retract its own Like. The
+        // counters follow the row that was actually deleted, so an Undo from
+        // another actor (or a replay) cannot decrement them.
+        const removed = await env.DB.prepare('DELETE FROM likes WHERE post_id = ? AND actor_id = ?')
+          .bind(postId, actorId)
+          .run();
+        if ((removed.meta?.changes ?? 0) > 0) {
+          await env.DB.prepare(
+            'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 2.0) WHERE id = ?',
+          )
+            .bind(postId)
+            .run();
+          await env.DB.prepare("DELETE FROM notifications WHERE post_id = ? AND actor_id = ? AND type = 'ap_like'")
+            .bind(postId, actorId)
+            .run();
+        }
         console.log('Like removed:', postId, actorId);
       }
       break;

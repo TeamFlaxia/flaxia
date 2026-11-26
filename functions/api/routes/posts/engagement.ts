@@ -20,10 +20,11 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
 
   // Get post to check ownership for notification and remote actor
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
+    "SELECT id, user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
   )
     .bind(postId)
     .first()) as {
+    id: string;
     user_id: string;
     actor_id: string | null;
     username: string;
@@ -51,17 +52,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
       .first<{ fresh_count: number }>();
 
     // The like of a post of another instance is retracted there as well.
-    const actorUrl = post.actor_id;
-    if (actorUrl && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
-      const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
-      const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
-      waitUntil(
-        c,
-        () => deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity: undo }),
-        'Failed to deliver undo Like to remote actor',
-      );
-    }
+    if (currentUser) deliverFreshLike(c, post, currentUser.username, 'remove');
 
     return c.json({ freshed: false, is_freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
@@ -125,21 +116,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
     // A post of another instance is liked on the instance that published it:
     // the activity has to reference the object id of that note, not a note
     // URL of this instance.
-    const freshActorUrl = post.actor_id;
-    if (freshActorUrl && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
-      const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
-      waitUntil(
-        c,
-        () =>
-          deliverToActorInbox(c.env, {
-            actorUrl: freshActorUrl,
-            username: currentUser.username,
-            activity: likeActivity,
-          }),
-        'Failed to deliver Like to remote actor',
-      );
-    }
+    if (currentUser) deliverFreshLike(c, post, currentUser.username, 'add');
 
     return c.json({ freshed: true, is_freshed: true, fresh_count: result?.fresh_count ?? 0 });
   }
@@ -422,15 +399,17 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
     }
 
     const userId = c.get('user')?.id || '';
+    const currentUser = c.get('user');
     const maxBatchSize = 50;
 
     if (post_ids.length > maxBatchSize) {
       return c.json({ error: `Maximum batch size is ${maxBatchSize}` }, 400);
     }
 
-    // Get posts to check ownership for notifications
+    // Get posts to check ownership for notifications and to address the
+    // ActivityPub Like/Undo to the original author of a remote note.
     const posts = await c.env.DB.prepare(`
-      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
+      SELECT id, user_id, actor_id, ap_object_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
     `)
       .bind(...post_ids)
       .all();
@@ -538,6 +517,18 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
             console.error('Failed to create batch fresh notifications:', e);
           }
         }
+
+        // One Like per freshly liked remote post, delivered to its author.
+        // A Set makes a repeated id in the request still produce one delivery.
+        if (currentUser) {
+          const postById = new Map<string, FederatedPost>(
+            (posts.results ?? []).map((p) => [p.id as string, p as unknown as FederatedPost]),
+          );
+          for (const id of new Set(toFresh as string[])) {
+            const post = postById.get(id);
+            if (post) deliverFreshLike(c, post, currentUser.username, 'add');
+          }
+        }
       }
 
       return c.json({ freshed: toFresh, already_freshed: Array.from(alreadyFreshed) });
@@ -566,6 +557,17 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
         `)
           .bind(...actuallyFreshed)
           .run();
+
+        // Retract the Like on each remote post whose Fresh was removed.
+        if (currentUser) {
+          const postById = new Map<string, FederatedPost>(
+            (posts.results ?? []).map((p) => [p.id as string, p as unknown as FederatedPost]),
+          );
+          for (const id of new Set(actuallyFreshed)) {
+            const post = postById.get(id);
+            if (post) deliverFreshLike(c, post, currentUser.username, 'remove');
+          }
+        }
       }
 
       return c.json({ unfreshed: post_ids });
@@ -577,6 +579,42 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
 });
 
 type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/** Post columns needed to address a Like to the right object and inbox. */
+type FederatedPost = {
+  id: string;
+  actor_id: string | null;
+  ap_object_id: string | null;
+};
+
+/**
+ * ActivityPub object id of a post. Mirrored remote posts keep the id they were
+ * published with; local posts are addressed by their canonical note URL.
+ */
+function engagementObjectUrl(baseUrl: string, post: FederatedPost): string {
+  return post.ap_object_id ?? `${baseUrl}/api/notes/${post.id}`;
+}
+
+/**
+ * Queue a Like (or its Undo) for the author of a remote post.
+ *
+ * Only mirrored remote posts carry an `actor_id`, i.e. an inbox that can
+ * receive the Like; a purely local post has no remote author to notify. Callers
+ * pass at most one entry per post, so a batch produces exactly one activity per
+ * post. Delivery is always scheduled with `waitUntil` and never awaited on the
+ * request's critical path.
+ */
+function deliverFreshLike(c: PostsContext, post: FederatedPost, username: string, action: 'add' | 'remove'): void {
+  const actorUrl = post.actor_id;
+  if (!actorUrl) return;
+  const like = buildLikeActivity(c.env.BASE_URL, username, engagementObjectUrl(c.env.BASE_URL, post), nanoid());
+  const activity = action === 'add' ? like : buildUndoActivity(c.env.BASE_URL, username, like, nanoid());
+  waitUntil(
+    c,
+    () => deliverToActorInbox(c.env, { actorUrl, username, activity }),
+    `Failed to deliver ${activity.type} to remote actor`,
+  );
+}
 
 /**
  * Delivers a reload Announce/Undo to the reloading user's federated followers
