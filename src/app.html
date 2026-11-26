@@ -15,6 +15,22 @@
   
   <meta name="theme-color" content="#ffffff">
   
+  <!-- SSR boot data is injected here per request as inert JSON (see hooks.server.ts). -->
+  <!--FLAXIA_BOOT_DATA-->
+  <script>
+    (function () {
+      try {
+        const node = document.getElementById('__flaxia_boot__');
+        if (!node) return;
+        const data = JSON.parse(node.textContent || '');
+        if (!data || typeof data !== 'object') return;
+        if (data.locale) window.__FLAXIA_LOCALE__ = data.locale;
+        if ('session' in data) window.__FLAXIA_SESSION__ = data.session;
+        if (data.locale || 'session' in data) window.__FLAXIA_BOOT__ = true;
+      } catch (_e) {}
+    })();
+  </script>
+
   <!-- Theme boot: apply theme before first paint to avoid FOUC -->
   <script>
     (function () {

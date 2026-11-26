@@ -1,9 +1,21 @@
 type Locale = string;
 type Strings = Record<string, string>;
 
-let currentLocale: Locale = 'ja';
-let strings: Strings = {};
-let fallbackStrings: Strings = {};
+/**
+ * SSR can inline the negotiated locale (already merged with the fallback) into
+ * the page before SvelteKit hydrates. Read it at module evaluation so t() and
+ * getLocale() see the SSR strings during the first render, with no fetch.
+ * On the server (and in native builds) there is no window, so the defaults stay.
+ */
+type BootLocale = { locale: Locale; strings?: Strings; fallback?: Strings };
+const bootLocale: BootLocale | undefined =
+  typeof window !== 'undefined' && (typeof import.meta.env === 'undefined' || import.meta.env.BUILD_TARGET !== 'native')
+    ? (window as unknown as { __FLAXIA_LOCALE__?: BootLocale }).__FLAXIA_LOCALE__
+    : undefined;
+
+let currentLocale = bootLocale?.locale ?? 'ja';
+let strings = bootLocale?.strings ?? {};
+let fallbackStrings = bootLocale?.fallback ?? {};
 let loadPromise: Promise<void> | null = null;
 
 /**
@@ -101,6 +113,9 @@ export function getLocale(): Locale {
 }
 
 export async function initI18n(): Promise<void> {
+  // SSR already shipped the locale: hydration needs no network gate. Deliberate
+  // language changes still go through setLocale() and fetch the new files.
+  if (bootLocale) return;
   if (!loadPromise) {
     loadPromise = (async () => {
       const initial = getInitialLocale();

@@ -1,6 +1,7 @@
-// Locale boot work must not block hydration, but the session snapshot is read
-// synchronously by route components (settings, mail, auth guards) so it must
-// still be awaited by the root universal load.
+// Locale boot work must not block hydration when SSR inlined the boot data.
+// Without it (native builds / degraded SSR), the session snapshot is read
+// synchronously by route components (settings, mail, auth guards), so the root
+// universal load must still await boot work on that fallback path.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -15,11 +16,16 @@ test('root layout load does not await locale network work', async () => {
   assert.match(layout, /bootShell\(/);
 });
 
-test('root layout awaits boot before routes mount', async () => {
+test('root layout awaits boot before routes mount without SSR boot data', async () => {
   const layout = await read('src/routes/+layout.ts');
   // Deferring locale/session made SSR text turn into translation keys and made
-  // auth guards treat signed-in users as guests.
-  assert.match(layout, /await bootShell\(\)/);
+  // auth guards treat signed-in users as guests. The boot branch is allowed to
+  // skip the gate, but the fallback branch must keep it.
+  const bootAt = layout.indexOf('__FLAXIA_BOOT__');
+  const fallbackAt = layout.indexOf('await bootShell()');
+  assert.ok(bootAt >= 0 && fallbackAt > bootAt, 'the await must be in the fallback branch');
+  assert.doesNotMatch(layout.slice(bootAt, fallbackAt), /await bootShell\(\)/);
+  assert.match(layout.slice(fallbackAt), /await bootShell\(\)/);
   const shell = await read('src/routes/+layout.svelte');
   // Remounting children on session arrival duplicates global nav elements.
   assert.doesNotMatch(shell, /\{#key sessionVersion\}/);
