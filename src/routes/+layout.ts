@@ -13,7 +13,8 @@ import { bootShell } from '../lib/svelte/shell-boot.ts';
 export async function load() {
   if (typeof window === 'undefined') return {};
   const bootWindow = window as typeof window & { __FLAXIA_BOOT__?: boolean };
-  if (bootWindow.__FLAXIA_BOOT__) {
+  const canUseBoot = typeof import.meta.env === 'undefined' || import.meta.env.BUILD_TARGET !== 'native';
+  if (canUseBoot && bootWindow.__FLAXIA_BOOT__) {
     void bootShell().catch(() => {
       // onMount attaches its own handler; keep this starter quiet.
     });

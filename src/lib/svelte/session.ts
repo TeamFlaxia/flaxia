@@ -13,7 +13,10 @@ export interface SessionUser {
  * explicit guest) without an /api/me request. A missing key means "unknown",
  * so the native/degraded path still loads the session as before.
  */
-const hasBootSession = typeof window !== 'undefined' && '__FLAXIA_SESSION__' in window;
+const hasBootSession =
+  typeof window !== 'undefined' &&
+  (typeof import.meta.env === 'undefined' || import.meta.env.BUILD_TARGET !== 'native') &&
+  '__FLAXIA_SESSION__' in window;
 const bootSession = hasBootSession
   ? (window as unknown as { __FLAXIA_SESSION__: SessionUser | null }).__FLAXIA_SESSION__
   : null;

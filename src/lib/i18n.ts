@@ -9,7 +9,7 @@ type Strings = Record<string, string>;
  */
 type BootLocale = { locale: Locale; strings?: Strings; fallback?: Strings };
 const bootLocale: BootLocale | undefined =
-  typeof window !== 'undefined'
+  typeof window !== 'undefined' && (typeof import.meta.env === 'undefined' || import.meta.env.BUILD_TARGET !== 'native')
     ? (window as unknown as { __FLAXIA_LOCALE__?: BootLocale }).__FLAXIA_LOCALE__
     : undefined;
 
