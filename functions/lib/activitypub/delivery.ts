@@ -22,9 +22,17 @@ export interface DeliveryActivity {
 }
 
 /**
- * True when the activities are delivered without the queue.
+ * Environments where a queue consumer is not running, so activities have to be
+ * delivered in the request itself. Mirrors `isPrivatePeerAllowed()` in
+ * `fetch.ts`: the binding is ignored anywhere else, even if it is set by
+ * mistake. Direct delivery skips the queue worker's URL re-validation.
  */
+const DIRECT_DELIVERY_ENVIRONMENTS = new Set(['test', 'development']);
+
+/** True when the activities are delivered without the queue. */
 export function isDirectDelivery(env: DeliveryEnv): boolean {
+  const environment = (env.ENVIRONMENT ?? '').toLowerCase();
+  if (!DIRECT_DELIVERY_ENVIRONMENTS.has(environment)) return false;
   return env.AP_DIRECT_DELIVERY === '1' || env.AP_DIRECT_DELIVERY === 'true';
 }
 
@@ -186,8 +194,8 @@ export async function resolveActorInbox(env: DeliveryEnv, actorUrl: string): Pro
   if (!actor) return null;
 
   await env.DB.prepare(`
-    INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, summary, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     ON CONFLICT(actor_url) DO UPDATE SET
       inbox_url = excluded.inbox_url,
       shared_inbox_url = excluded.shared_inbox_url,
@@ -196,6 +204,7 @@ export async function resolveActorInbox(env: DeliveryEnv, actorUrl: string): Pro
       display_name = excluded.display_name,
       icon_url = excluded.icon_url,
       domain = excluded.domain,
+      summary = excluded.summary,
       fetched_at = excluded.fetched_at
   `)
     .bind(
@@ -207,6 +216,7 @@ export async function resolveActorInbox(env: DeliveryEnv, actorUrl: string): Pro
       actor.displayName,
       actor.iconUrl,
       actor.domain,
+      actor.summary,
     )
     .run();
 

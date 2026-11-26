@@ -32,6 +32,7 @@ test('/users/:username is not redirected to the JSON API', async () => {
 
 test('the ActivityPub inbox redirect is preserved in the handle hook', async () => {
   assert.deepEqual(legacyRedirect('/users/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
+  assert.deepEqual(legacyRedirect('/actors/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
   const source = await readFile(HOOKS_URL, 'utf8');
   assert.match(source, /users/);
   assert.match(source, /inbox/);

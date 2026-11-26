@@ -2,7 +2,7 @@ import { buildAcceptActivity } from './activities.ts';
 import { actorUrl, localProfileUsername, noteUrl } from './actor.ts';
 import { storeRemoteAttachments } from './attachments.ts';
 import { deliverToInbox } from './delivery.ts';
-import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
+import { type FederationEnv, normalizeActorSummary, resolveRemoteActor } from './fetch.ts';
 import { actorSignOptions } from './keys.ts';
 import { htmlToText } from './text.ts';
 
@@ -68,7 +68,9 @@ export function localPostIdFromNoteUrl(url: unknown, baseUrl: string): string | 
     return null;
   }
   if (parsed.origin !== base.origin) return null;
-  const match = parsed.pathname.match(/^\/notes\/([^/]+)$/);
+  // Peers may echo either the legacy path or the canonical /api path. Accept
+  // both so replies, likes and deletes still resolve to the local post.
+  const match = parsed.pathname.match(/^\/(?:api\/)?notes\/([^/]+)$/);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -419,8 +421,8 @@ async function handleFollow(
 
   if (actor) {
     await env.DB.prepare(`
-      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, summary, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       ON CONFLICT(actor_url) DO UPDATE SET
         inbox_url = excluded.inbox_url,
         shared_inbox_url = excluded.shared_inbox_url,
@@ -429,6 +431,7 @@ async function handleFollow(
         display_name = excluded.display_name,
         icon_url = excluded.icon_url,
         domain = excluded.domain,
+        summary = excluded.summary,
         fetched_at = excluded.fetched_at
     `)
       .bind(
@@ -440,6 +443,7 @@ async function handleFollow(
         actor.displayName,
         actor.iconUrl,
         actor.domain,
+        actor.summary,
       )
       .run();
   }
@@ -848,11 +852,17 @@ async function handleUpdate(
 
   const displayName = typeof object.name === 'string' ? object.name : null;
   const preferredUsername = typeof object.preferredUsername === 'string' ? object.preferredUsername : null;
+  // A partial Update (for example only a new display name) must not wipe a bio
+  // we already cached. An explicit summary — even an empty one — replaces it.
+  const hasSummary = typeof object.summary === 'string';
+  const summary = hasSummary ? normalizeActorSummary(object.summary) : null;
   await env.DB.prepare(`
-    UPDATE ap_actors SET display_name = ?, preferred_username = ?, fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    UPDATE ap_actors SET display_name = ?, preferred_username = ?,
+      summary = CASE WHEN ? = 1 THEN ? ELSE summary END,
+      fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE actor_url = ?
   `)
-    .bind(displayName, preferredUsername, actorId)
+    .bind(displayName, preferredUsername, hasSummary ? 1 : 0, summary, actorId)
     .run();
   await env.DB.prepare('UPDATE ap_followers SET display_name = ?, username = ? WHERE actor_url = ?')
     .bind(displayName, preferredUsername, actorId)

@@ -1,5 +1,6 @@
 import { checkRateLimit, getClientIp } from '../rate-limit.ts';
 import { localActorUsername } from './actor.ts';
+import { isDirectDelivery } from './delivery.ts';
 import { type FetchOptions, resolveActorPublicKey } from './fetch.ts';
 import { actorSignOptions, ensureActorKey } from './keys.ts';
 import { parseSignatureHeader, verifyDigest, verifyHttpSignature } from './signature.ts';
@@ -202,7 +203,7 @@ async function enqueueForTargets(
   activity: Record<string, unknown>,
   actorId: string,
 ): Promise<number> {
-  if (env.AP_DIRECT_DELIVERY === '1' || env.AP_DIRECT_DELIVERY === 'true') {
+  if (isDirectDelivery(env)) {
     const { handleIncomingActivity } = await import('./handlers.ts');
     for (const username of targets) {
       await handleIncomingActivity(

@@ -63,7 +63,7 @@ export function withSecurityHeaders(response: Response, setCookie?: string): Res
 // Static redirects live in `_redirects`; parameterised ones cannot be expressed
 // there because adapter-cloudflare must list them in `_routes.json`.
 export function legacyRedirect(pathname: string): { location: string; status: number } | null {
-  let match = pathname.match(/^\/users\/([^/]+)\/inbox$/);
+  let match = pathname.match(/^(?:\/users|\/actors)\/([^/]+)\/inbox$/);
   if (match) return { location: `/api/actors/${match[1]}/inbox`, status: 308 };
   match = pathname.match(/^\/actors\/([^/]+)(\/(?:outbox|followers|following|liked|featured))?$/);
   if (match) return { location: `/api/actors/${match[1]}${match[2] ?? ''}`, status: 301 };
