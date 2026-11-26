@@ -994,6 +994,5 @@
   opacity: 0.75;
 }
 
-.post-composer:not(:focus-within) .composer-visibility-hint {
-  display: none;
-}
+/* Federation/mention guidance is part of the normal composer, not a tooltip:
+   keep it readable while browsing so the select's description is available. */

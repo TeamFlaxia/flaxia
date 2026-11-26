@@ -56,6 +56,13 @@ interface Props {
 let { onPostCreated, currentUser = null, onDraftSaved, quotedPost = null }: Props = $props();
 let user = $state(currentUser);
 
+// The select must have its own accessible name instead of inheriting the
+// concatenated text of the label, the hints and the options.
+const visibilityUid = $props.id();
+const visibilityLabelId = `composer-visibility-label-${visibilityUid}`;
+const visibilityHintId = `composer-visibility-hint-${visibilityUid}`;
+const mentionHintId = `composer-mention-hint-${visibilityUid}`;
+
 const SAVED_DRAFTS_KEY = 'flaxia.saved_drafts';
 const AUTOSAVE_KEY = 'flaxia.post_autosave';
 
@@ -772,17 +779,22 @@ export function deleteAllDraftsPublic(): void {
       </div>
     {/if}
 
-    <label class="composer-visibility-row">
-      <span class="composer-visibility-label">{t('composer.visibility_label')}</span>
-      <select class="composer-visibility-select" bind:value={visibility}>
+    <div class="composer-visibility-row">
+      <span class="composer-visibility-label" id={visibilityLabelId}>{t('composer.visibility_label')}</span>
+      <select
+        class="composer-visibility-select"
+        aria-labelledby={visibilityLabelId}
+        aria-describedby="{visibilityHintId} {mentionHintId}"
+        bind:value={visibility}
+      >
         <option value="public">{t('composer.visibility_public')}</option>
         <option value="unlisted">{t('composer.visibility_unlisted')}</option>
         <option value="private">{t('composer.visibility_followers')}</option>
         <option value="direct">{t('composer.visibility_direct')}</option>
       </select>
-      <span class="composer-visibility-hint">{t('composer.visibility_hint')}</span>
-      <span class="composer-visibility-hint">{t('composer.mention_remote_hint')}</span>
-    </label>
+      <span class="composer-visibility-hint" id={visibilityHintId}>{t('composer.visibility_hint')}</span>
+      <span class="composer-visibility-hint" id={mentionHintId}>{t('composer.mention_remote_hint')}</span>
+    </div>
 
     <div class="composer-divider"></div>
 

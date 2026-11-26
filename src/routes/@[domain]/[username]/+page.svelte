@@ -14,7 +14,9 @@ const DEFAULT_OG_IMAGE = `${SEO_ORIGIN}/og-default-v2.png`;
 
 let { data }: PageProps = $props();
 
-const domain = $derived(page.params.domain ?? '');
+// Match the load() redirect even when a mixed-case param reaches the page
+// directly, so the handle, head metadata and canonical URL never diverge.
+const domain = $derived((page.params.domain ?? '').toLowerCase());
 const username = $derived(page.params.username ?? '');
 const actor = $derived(data.profile?.actor ?? null);
 const handle = $derived(`@${username}@${domain}`);

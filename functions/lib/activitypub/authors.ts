@@ -73,8 +73,13 @@ export async function enrichPostsWithRemoteAuthors(posts: Array<Record<string, u
     row.title_icon = null;
     row.author_language = null;
     row.is_remote = true;
-    row.profile_path = domain
-      ? `/@${encodeURIComponent(domain)}/${encodeURIComponent(username)}`
-      : `/@${encodeURIComponent(actorUrl)}/`;
+    // Only a derivable domain yields a local `/@domain/user` route. The route
+    // rejects encoded actor URLs (DOMAIN_PATTERN), so an encoded URL here would
+    // 404 instead of falling back to the actor's own profile.
+    if (domain) {
+      row.profile_path = `/@${encodeURIComponent(domain)}/${encodeURIComponent(username)}`;
+    } else {
+      delete row.profile_path;
+    }
   }
 }

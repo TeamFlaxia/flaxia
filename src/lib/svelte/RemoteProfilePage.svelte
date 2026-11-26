@@ -20,6 +20,7 @@ interface Props {
       bio?: string | null;
     } | null;
     following?: boolean;
+    follow_state?: string | null;
     posts?: RemotePost[];
   } | null;
 }
@@ -42,13 +43,23 @@ let bio = $state<string | null>(initialActor?.bio ?? null);
 let actorUrl = $state<string | null>(initialActor?.actor_url ?? null);
 let posts = $state<RemotePost[]>(initialProfile?.posts ?? []);
 let notFound = $state(Boolean(initialProfile) && !initialActor);
-let following = $state(Boolean(initialProfile?.following));
+// `follow_state` distinguishes an accepted follow from a pending request,
+// which the old boolean `following` alone could not express.
+let following = $state(
+  initialProfile?.follow_state ? initialProfile.follow_state === 'accepted' : Boolean(initialProfile?.following),
+);
+let followPending = $state(initialProfile?.follow_state === 'pending');
 let followVisible = $state(Boolean(initialActor));
 let followBusy = $state(false);
 
 const handle = $derived(`@${username}@${domain}`);
-// The actor URL comes from a remote document: only http(s) links may be opened.
+const followLabel = $derived(
+  followPending ? t('search.remote_follow_pending') : following ? t('profile.unfollow') : t('profile.follow'),
+);
+// Actor links and avatars come from a remote document: only http(s) URLs may
+// be loaded or opened.
 const safeActorUrl = $derived(actorUrl && /^https?:\/\//i.test(actorUrl) ? actorUrl : null);
+const safeAvatarUrl = $derived(avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : null);
 
 // The SSR load already supplied this handle's data. Skip the duplicate fetch on
 // the first client effect; later param changes (outside the keyed route) fetch.
@@ -71,6 +82,7 @@ $effect(() => {
   actorUrl = null;
   posts = [];
   followVisible = false;
+  followPending = false;
   displayName = t('profile.loading');
 
   void (async () => {
@@ -91,6 +103,7 @@ $effect(() => {
           bio?: string | null;
         };
         following?: boolean;
+        follow_state?: string | null;
         posts?: RemotePost[];
       };
       if (cancelled) return;
@@ -98,7 +111,8 @@ $effect(() => {
       avatarUrl = data.actor?.icon_url ?? null;
       bio = data.actor?.bio ?? null;
       actorUrl = data.actor?.actor_url ?? null;
-      following = Boolean(data.following);
+      following = data.follow_state ? data.follow_state === 'accepted' : Boolean(data.following);
+      followPending = data.follow_state === 'pending';
       followVisible = true;
       posts = data.posts ?? [];
       signalSsrHandover();
@@ -121,6 +135,7 @@ async function toggleFollow(): Promise<void> {
     return;
   }
   if (followBusy) return;
+  if (followPending) return;
   followBusy = true;
   const wasFollowing = following;
   // Federation can be slow: show the new state immediately, restore on failure.
@@ -136,8 +151,16 @@ async function toggleFollow(): Promise<void> {
       following = !following;
       return;
     }
+    if (wasFollowing) {
+      followPending = false;
+    } else {
+      const body = (await response.json().catch(() => ({}))) as { status?: string };
+      followPending = body.status !== 'accepted';
+      following = body.status === 'accepted';
+    }
   } catch {
     following = !following;
+    followPending = false;
   } finally {
     followBusy = false;
   }
@@ -153,8 +176,8 @@ async function toggleFollow(): Promise<void> {
   <div class="profile-header">
     <div class="profile-avatar-section">
       <div class="profile-avatar fx-display">
-        {#if avatarUrl}
-          <img class="profile-avatar-image" src={avatarUrl} alt={displayName} />
+        {#if safeAvatarUrl}
+          <img class="profile-avatar-image" src={safeAvatarUrl} alt={displayName} />
         {:else}
           {username.charAt(0).toUpperCase()}
         {/if}
@@ -182,9 +205,10 @@ async function toggleFollow(): Promise<void> {
             type="button"
             class="profile-follow-button"
             aria-busy={followBusy}
+            disabled={followPending}
             onclick={toggleFollow}
           >
-            {following ? t('profile.unfollow') : t('profile.follow')}
+            {followLabel}
           </button>
         {/if}
       </div>
@@ -218,8 +242,8 @@ async function toggleFollow(): Promise<void> {
                     rel="noopener noreferrer"
                   >
                     ↗ {isAbsoluteMediaUrl(att.r2_key)
-                      ? att.r2_key.split('/').pop()?.split('?')[0] || 'link'
-                      : att.r2_key.split('/').pop() || 'file'}
+                      ? att.r2_key.split('/').pop()?.split('?')[0] || t('composer.preview_open_document')
+                      : att.r2_key.split('/').pop() || t('composer.download_file')}
                   </a>
                 {/if}
               {/each}

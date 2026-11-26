@@ -1,4 +1,4 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { loadRemoteProfile } from '../../../lib/ssr-data.ts';
 import type { PageLoad } from './$types';
 
@@ -22,7 +22,12 @@ export const load: PageLoad = async ({ fetch, params, setHeaders }) => {
     throw error(404, 'Remote account not found');
   }
 
-  const profile = await loadRemoteProfile(fetch, domain, username);
+  // Domains are case-insensitive; the API lowercase-matches them. Serve one
+  // canonical URL per account instead of a separate URL for every casing.
+  const normalizedDomain = domain.toLowerCase();
+  if (normalizedDomain !== domain) throw redirect(308, `/@${normalizedDomain}/${encodeURIComponent(username)}`);
+
+  const profile = await loadRemoteProfile(fetch, normalizedDomain, username);
   if (!profile) throw error(404, 'Remote account not found');
   return { profile };
 };
