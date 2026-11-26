@@ -202,6 +202,54 @@ function pushesTo(userId: string): PushPayload[] {
   return pushes.filter((push) => push.userId === userId).map((push) => push.payload);
 }
 
+describe('mention notifications must obey the new post visibility', () => {
+  async function commitMention(text: string, visibility: 'public' | 'private' | 'direct'): Promise<string> {
+    const postId = `mention-${++postCounter}`;
+    const response = await appFor(BOB).request(
+      'http://localhost/posts/commit',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ postId, text, visibility }),
+      },
+      envFor(db),
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    await flushBackground();
+    return postId;
+  }
+
+  it('does not notify a mentioned user who cannot read a followers-only post', async () => {
+    await commitMention('@carol FOLLOWERS_ONLY_MENTION_SECRET', 'private');
+    assert.deepEqual(await notificationsOfType(CAROL.id, 'mention'), []);
+    assert.deepEqual(pushesTo(CAROL.id), []);
+  });
+
+  it('sends restricted mentions as metadata only, even to an authorized reader', async () => {
+    db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(CAROL.id, BOB.id).run();
+    const postId = await commitMention('@carol FOLLOWER_MENTION_SECRET', 'private');
+    const notifications = await notificationsOfType(CAROL.id, 'mention');
+    assert.deepEqual(
+      notifications.map((notification) => notification.post_id),
+      [postId],
+    );
+    const payloads = pushesTo(CAROL.id);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].body?.includes('FOLLOWER_MENTION_SECRET'), false, 'push must not carry the private text');
+  });
+
+  it('sends a direct mention to its recipient without the private body in the push', async () => {
+    const postId = await commitMention('@carol DIRECT_MENTION_SECRET', 'direct');
+    assert.deepEqual(
+      (await notificationsOfType(CAROL.id, 'mention')).map((n) => n.post_id),
+      [postId],
+    );
+    const payloads = pushesTo(CAROL.id);
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0].body?.includes('DIRECT_MENTION_SECRET'), false);
+  });
+});
+
 describe('quote notifications must obey the new post visibility', () => {
   it('preserves the public behaviour: quoted author gets a quote notification and a push with the text', async () => {
     const text = 'PUBLIC_QUOTE_BODY_123';

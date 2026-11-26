@@ -700,14 +700,23 @@ composer.post('/posts/commit', requireAuth, async (c) => {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
         const seenMentionUserIds = new Set<string>();
-        const mentionTargets = mentionData.filter((m) => {
-          if (m.user_id === userId) return false;
+        const mentionTargets: typeof mentionData = [];
+        for (const mention of mentionData) {
+          if (mention.user_id === userId) continue;
           // The quoted post author gets a dedicated 'quote' notification below.
-          if (m.user_id === quotedPostAuthorId) return false;
-          if (seenMentionUserIds.has(m.user_id)) return false;
-          seenMentionUserIds.add(m.user_id);
-          return true;
-        });
+          if (mention.user_id === quotedPostAuthorId) continue;
+          if (seenMentionUserIds.has(mention.user_id)) continue;
+          seenMentionUserIds.add(mention.user_id);
+          // A mention does not grant read access to a followers-only post. Only
+          // tell users who can actually load the post, using the same predicate
+          // as GET /api/posts/:id.
+          const { sql, params } = visibilityFilter(mention.user_id);
+          const readable = await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? ${sql}`)
+            .bind(postId, ...params)
+            .first<{ id: string }>();
+          if (!readable) continue;
+          mentionTargets.push(mention);
+        }
         const mentionStmts = mentionTargets.map((m) =>
           c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
@@ -717,19 +726,13 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           await c.env.DB.batch(mentionStmts);
         }
         const actor = c.get('user');
+        // Restricted posts are metadata-only: a push must not carry the body.
+        const preview = visibility === 'private' || visibility === 'direct' ? '' : text || '';
         for (const mention of mentionTargets) {
           waitUntil(
             c,
             () =>
-              sendPushToAll(
-                c.env,
-                mention.user_id,
-                'mention',
-                actor?.username,
-                actor?.display_name,
-                text || '',
-                postId,
-              ),
+              sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, preview, postId),
             'Failed to send mention push',
           );
         }
