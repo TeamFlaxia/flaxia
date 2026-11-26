@@ -6,6 +6,7 @@ import {
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../../shared/recommendation/vector-codec.ts';
+import { POOL_JOIN_SQL, POOL_SCORE_SQL } from '../../../lib/activitypub/ap-pool.ts';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
 import { computeQualityScore } from '../../../lib/scoring';
@@ -77,6 +78,77 @@ function decayingRecommendationPenalty(
 const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
 
+/**
+ * Federated popularity is a small nudge, never a takeover: a log scale keeps
+ * viral remote posts bounded and the bounded weight keeps them behind equally
+ * good local candidates before the 50:50 presentation mix.
+ */
+export const POOL_SCORE_WEIGHT = 0.08;
+
+export function normalizePoolScore(poolScore: number | null | undefined): number {
+  if (typeof poolScore !== 'number' || !Number.isFinite(poolScore) || poolScore <= 0) return 0;
+  return Math.min(1, Math.log1p(poolScore) / Math.log1p(50));
+}
+
+export interface CandidateScoreInput {
+  sourceScore: number;
+  popularity: number;
+  freshness: number;
+  contentQuality: number;
+  /** Raw `ap_pool_metrics.score`; local posts have no row and score zero. */
+  poolScore?: number | null;
+  historyPenalty?: number;
+}
+
+/** Shared by the server-ranked feed and the client-ranked candidate batch. */
+export function scoreRecommendationCandidate(input: CandidateScoreInput): number {
+  const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, input.contentQuality));
+  const baseScore =
+    (0.65 * input.sourceScore + 0.18 * input.popularity + 0.17 * input.freshness) * qualityFactor +
+    POOL_SCORE_WEIGHT * normalizePoolScore(input.poolScore);
+  const historyPenalty = Math.min(0.55, Math.max(0, input.historyPenalty ?? 0));
+  return baseScore * (1 - historyPenalty);
+}
+
+/** Pool IDs join the other independent sources and pass through one dedup step. */
+export function collectRecommendationCandidateIds(...sources: ReadonlyArray<Iterable<string>>): string[] {
+  const ids = new Set<string>();
+  for (const source of sources) {
+    for (const id of source) ids.add(id);
+  }
+  return [...ids];
+}
+
+export function buildPoolCandidateSql(visibilityFilter: string): string {
+  return `SELECT p.id, ${POOL_SCORE_SQL} AS pool_score
+    FROM posts p ${POOL_JOIN_SQL}
+    LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.actor_id IS NOT NULL AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+      ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+    ORDER BY pool_score DESC LIMIT ?`;
+}
+
+async function loadPoolCandidates(
+  db: D1Database,
+  limit: number,
+  asOfMs: number,
+  visibilityFilter: string,
+  visibilityParams: string[],
+): Promise<{ ids: string[]; scoreById: Map<string, number> }> {
+  const cutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const result = await db
+    .prepare(buildPoolCandidateSql(visibilityFilter))
+    .bind(...visibilityParams, cutoff, new Date(asOfMs).toISOString(), limit)
+    .all<{ id: string; pool_score: number | null }>();
+  const rows = result.results ?? [];
+  const scoreById = new Map<string, number>();
+  for (const row of rows) {
+    const score = Number(row.pool_score);
+    scoreById.set(String(row.id), Number.isFinite(score) ? Math.max(0, score) : 0);
+  }
+  return { ids: rows.map((row) => String(row.id)), scoreById };
+}
+
 async function attachRecommendationVectors(
   db: D1Database,
   posts: Array<Record<string, unknown>>,
@@ -143,7 +215,7 @@ async function loadClientRankedCandidatePage(
   const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
   const sourceLimit = Math.min(limit * 2, 200);
 
-  const [recentResult, trendingResult, followingResult] = await Promise.all([
+  const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
     db
       .prepare(
         `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
@@ -178,18 +250,18 @@ async function loadClientRankedCandidatePage(
           .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, sourceLimit)
           .all<Record<string, unknown>>()
       : Promise.resolve(null),
+    loadPoolCandidates(db, sourceLimit, asOfMs, visibilityFilter, visibilityParams),
   ]);
 
   const recentPosts = recentResult.results ?? [];
   const trendingPosts = trendingResult.results ?? [];
   const followingPosts = followingResult?.results ?? [];
-  const candidateIds = [
-    ...new Set([
-      ...followingPosts.map((post) => String(post.id)),
-      ...trendingPosts.map((post) => String(post.id)),
-      ...recentPosts.map((post) => String(post.id)),
-    ]),
-  ];
+  const candidateIds = collectRecommendationCandidateIds(
+    followingPosts.map((post) => String(post.id)),
+    trendingPosts.map((post) => String(post.id)),
+    recentPosts.map((post) => String(post.id)),
+    poolCandidates.ids,
+  );
   if (candidateIds.length === 0) {
     return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
   }
@@ -259,15 +331,19 @@ async function loadClientRankedCandidatePage(
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
-      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
-      const historyPenalty = Math.min(
-        0.55,
+      const historyPenalty =
         decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
-          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
-      );
+        decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3);
+      const score = scoreRecommendationCandidate({
+        sourceScore,
+        popularity,
+        freshness,
+        contentQuality,
+        poolScore: poolCandidates.scoreById.get(id),
+        historyPenalty,
+      });
       delete post.eng_score;
-      return { post, score: baseScore * (1 - historyPenalty) };
+      return { post, score };
     })
     .sort(compareScoredPosts);
 
@@ -362,7 +438,7 @@ recommendations.get('/posts/recommended', async (c) => {
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
     const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
-    const [recentResult, trendingResult, followingResult] = await Promise.all([
+    const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
       db
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
@@ -397,18 +473,18 @@ recommendations.get('/posts/recommended', async (c) => {
             .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
             .all<Record<string, unknown>>()
         : Promise.resolve(null),
+      loadPoolCandidates(db, limit * 4, asOfMs, visibilityFilter, visibilityParams),
     ]);
 
     const recentPosts = recentResult.results || [];
     const trendingPosts = trendingResult.results || [];
     const followingPosts = followingResult?.results || [];
-    const candidateIds = [
-      ...new Set([
-        ...followingPosts.map((post) => String(post.id)),
-        ...trendingPosts.map((post) => String(post.id)),
-        ...recentPosts.map((post) => String(post.id)),
-      ]),
-    ];
+    const candidateIds = collectRecommendationCandidateIds(
+      followingPosts.map((post) => String(post.id)),
+      trendingPosts.map((post) => String(post.id)),
+      recentPosts.map((post) => String(post.id)),
+      poolCandidates.ids,
+    );
     if (candidateIds.length === 0) {
       const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
       return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
@@ -478,14 +554,17 @@ recommendations.get('/posts/recommended', async (c) => {
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
-      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
-      const historyPenalty = Math.min(
-        0.55,
+      const historyPenalty =
         decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
-          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
-      );
-      const score = baseScore * (1 - historyPenalty);
+        decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3);
+      const score = scoreRecommendationCandidate({
+        sourceScore,
+        popularity,
+        freshness,
+        contentQuality,
+        poolScore: poolCandidates.scoreById.get(id),
+        historyPenalty,
+      });
       delete post.eng_score;
       return { post, score };
     });
@@ -519,7 +598,7 @@ recommendations.get('/posts/recommended', async (c) => {
     // monotonic; only the response is interleaved for display.
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
-    // At most 700 candidates come from the four sources (100 vector + 3*200).
+    // At most 800 candidate IDs come from the four time-bounded sources (4*200).
     // Bound cursor growth well below Cloudflare's URL ceiling before moving
     // into the chronological archive, whose cursor does not need an ID set.
     const nextCursor = !lastPost
