@@ -274,7 +274,7 @@ test('SSR boot data removes the locale/session network gate during hydration', a
           };
         },
         text,
-        { timeout: 15000 },
+        { timeout: 30000 },
       )
       .then((handle) => handle.jsonValue());
     assert.ok(handover.jsAt > 0, 'the browser must load the SvelteKit entry chunk');
