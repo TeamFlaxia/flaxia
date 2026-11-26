@@ -4,6 +4,7 @@ import { clampLimit } from '../../../lib/pagination';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
 import { batchGetFreshAndBookmarkStatus, requireAuth, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
+import { visibilityFilter } from '../posts/helpers.ts';
 import { enrichPostsWithReactions, RECOMMENDED_SELECT } from './helpers.ts';
 
 export const profiles = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -122,10 +123,13 @@ profiles.get('/users/:username/pinned', async (c) => {
     const viewer = await resolveRequestUser(c, c.get('user'));
     const currentUserId = viewer?.id ?? null;
 
+    // A pinned post is still subject to the post visibility rules — pinning a
+    // private/direct post must not publish it on the (public) profile page.
+    const visibility = visibilityFilter(currentUserId);
     const row = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 ${visibility.sql}`,
     )
-      .bind(user.pinned_post_id)
+      .bind(user.pinned_post_id, ...visibility.params)
       .first();
 
     if (!row) {

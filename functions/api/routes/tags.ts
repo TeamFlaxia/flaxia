@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const tags = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -14,12 +15,17 @@ tags.get('/tags/trending', async (c) => {
     const recentCount = recentCountParam ? parseInt(recentCountParam, 10) : 100;
     const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
 
+    // These aggregates are cached and served publicly, so they must only count
+    // posts that are public for everybody. Remote Notes remain eligible.
+    const visibility = visibilityFilter(null);
+
     const result = await c.env.DB.prepare(`
 WITH recent_posts AS (
-  SELECT id, hashtags, ai_tags
-  FROM posts
-  WHERE hidden = 0 AND status = 'published'
-  ORDER BY created_at DESC
+  SELECT p.id, p.hashtags, p.ai_tags
+  FROM posts p
+  WHERE p.hidden = 0 AND p.status = 'published'
+    ${visibility.sql}
+  ORDER BY p.created_at DESC
   LIMIT ?
 ),
 all_tags AS (
@@ -42,7 +48,7 @@ GROUP BY tag
 ORDER BY count DESC, tag ASC
 LIMIT 5
     `)
-      .bind(validRecentCount)
+      .bind(...visibility.params, validRecentCount)
       .all();
 
     if (!result.success) {
@@ -71,16 +77,18 @@ tags.get('/tags/suggest', async (c) => {
     const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
     const prefix = q.toLowerCase();
 
+    const visibility = visibilityFilter(null);
     const result = await c.env.DB.prepare(`
       SELECT DISTINCT value AS tag, COUNT(*) AS count
-      FROM posts, json_each(posts.hashtags)
-      WHERE posts.hidden = 0 AND posts.status = 'published'
+      FROM posts p, json_each(p.hashtags)
+      WHERE p.hidden = 0 AND p.status = 'published'
+        ${visibility.sql}
         AND LOWER(value) LIKE ?
       GROUP BY value
       ORDER BY count DESC
       LIMIT ?
     `)
-      .bind(prefix + '%', limit)
+      .bind(...visibility.params, prefix + '%', limit)
       .all();
 
     const tagsList = result.results || [];

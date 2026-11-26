@@ -15,6 +15,7 @@ import {
   runBatched,
 } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 import { loadDwellStats } from './recommender';
 
 const games = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -87,6 +88,7 @@ games.get('/games', async (c) => {
     // no session cookie, where it skips the session lookup).
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId = user?.id;
+    const visibility = visibilityFilter(currentUserId);
 
     if (shuffle) {
       const shuffleToken = c.req.query('token');
@@ -116,8 +118,11 @@ games.get('/games', async (c) => {
             AND p.status = 'published'
             AND p.hidden = 0
             AND p.parent_id IS NULL
+            ${visibility.sql}
           ORDER BY p.created_at DESC
-        `).all();
+        `)
+          .bind(...visibility.params)
+          .all();
 
         shuffledIds = (idResults.results || []).map((r: Record<string, unknown>) => r.id as string);
 
@@ -135,11 +140,12 @@ games.get('/games', async (c) => {
           } else {
             // Check if the initialId exists and is actually a game post
             const check = await c.env.DB.prepare(`
-              SELECT id FROM posts 
-              WHERE id = ? AND payload_key IS NOT NULL AND swf_key IS NULL
-                AND status = 'published' AND hidden = 0
+              SELECT p.id FROM posts p
+              WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
+                AND p.status = 'published' AND p.hidden = 0
+                ${visibility.sql}
             `)
-              .bind(initialId)
+              .bind(initialId, ...visibility.params)
               .first();
             if (check) {
               shuffledIds.unshift(initialId);
@@ -176,9 +182,9 @@ games.get('/games', async (c) => {
             u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
           FROM posts p
           JOIN users u ON p.user_id = u.id
-          WHERE p.id IN (${placeholders})
+          WHERE p.id IN (${placeholders}) ${visibility.sql}
         `)
-          .bind(...pageIds)
+          .bind(...pageIds, ...visibility.params)
           .all<{
             postId: string;
             user_id: string;
@@ -277,10 +283,13 @@ games.get('/games', async (c) => {
         JOIN users u ON p.user_id = u.id
         WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+          ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT 200
       `;
-      const candidates = await c.env.DB.prepare(candidateQuery).all<ArcadeCandidateRow>();
+      const candidates = await c.env.DB.prepare(candidateQuery)
+        .bind(...visibility.params)
+        .all<ArcadeCandidateRow>();
       const candidateRows = candidates.results || [];
 
       // The Arcade can be opened directly for any ZIP post (timeline, thread,
@@ -297,8 +306,9 @@ games.get('/games', async (c) => {
           JOIN users u ON p.user_id = u.id
           WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
             AND p.status = 'published' AND p.hidden = 0
+            ${visibility.sql}
         `)
-          .bind(initialId)
+          .bind(initialId, ...visibility.params)
           .first<ArcadeCandidateRow>();
         if (initialRow) candidateRows.push(initialRow);
       }
@@ -464,6 +474,10 @@ games.get('/games', async (c) => {
       params.push(cursor);
     }
 
+    // Visibility binds come after every other WHERE bind and before LIMIT.
+    sql += ` ${visibility.sql}`;
+    params.push(...visibility.params);
+
     if (trending) {
       // 0146's expression index is the only B-tree that can serve this ORDER BY;
       // force it here or the planner falls back to 0052's engagement index.
@@ -564,21 +578,28 @@ games.get('/games', async (c) => {
     return c.json({ error: 'Failed to fetch games' }, 500);
   }
 });
-// D1 permits at most 100 bound parameters per query.
-const GAME_VALIDATION_CHUNK_SIZE = 100;
+// D1 permits at most 100 bound parameters per query; reserve room for the
+// visibility binds appended below.
+const GAME_VALIDATION_CHUNK_SIZE = 96;
 
 /** Published, visible game posts (payload or swf present) among the given ids. */
-async function loadValidGamePostIds(db: D1Database, postIds: unknown[]): Promise<Set<string>> {
+async function loadValidGamePostIds(
+  db: D1Database,
+  postIds: unknown[],
+  viewerId?: string | null,
+): Promise<Set<string>> {
+  const visibility = visibilityFilter(viewerId);
+  const chunkSize = GAME_VALIDATION_CHUNK_SIZE - visibility.params.length;
   const unique = [...new Set(postIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
   const validIds = new Set<string>();
-  for (let offset = 0; offset < unique.length; offset += GAME_VALIDATION_CHUNK_SIZE) {
-    const chunk = unique.slice(offset, offset + GAME_VALIDATION_CHUNK_SIZE);
+  for (let offset = 0; offset < unique.length; offset += chunkSize) {
+    const chunk = unique.slice(offset, offset + chunkSize);
     const placeholders = chunk.map(() => '?').join(',');
     const rows = await db
       .prepare(
-        `SELECT id FROM posts WHERE id IN (${placeholders}) AND status = 'published' AND hidden = 0 AND (payload_key IS NOT NULL OR swf_key IS NOT NULL)`,
+        `SELECT p.id FROM posts p WHERE p.id IN (${placeholders}) AND p.status = 'published' AND p.hidden = 0 AND (p.payload_key IS NOT NULL OR p.swf_key IS NOT NULL) ${visibility.sql}`,
       )
-      .bind(...chunk)
+      .bind(...chunk, ...visibility.params)
       .all<{ id: string }>();
     for (const row of rows.results ?? []) validIds.add(row.id);
   }
@@ -643,6 +664,7 @@ games.post('/games/events', async (c) => {
     const validGamePostIds = await loadValidGamePostIds(
       c.env.DB,
       eventList.map((event) => event?.postId),
+      currentUserId,
     );
 
     for (const event of eventList) {
@@ -717,6 +739,7 @@ games.post('/games/dwell', async (c) => {
     const validGamePostIds = await loadValidGamePostIds(
       c.env.DB,
       playList.map((play) => play?.postId),
+      currentUserId,
     );
 
     const statements: D1PreparedStatement[] = [];
