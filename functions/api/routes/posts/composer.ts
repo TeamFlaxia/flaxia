@@ -876,7 +876,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
       }
     }
 
-    await enrichPostsWithQuotes([fullPost], c.env.DB);
+    await enrichPostsWithQuotes([fullPost], c.env.DB, c.get('user')?.id);
     await enrichPostsWithAttachments([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
 

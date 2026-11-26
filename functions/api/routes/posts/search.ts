@@ -150,7 +150,7 @@ search.get('/search', async (c) => {
       .bind(...params, ...visibility.params, limit)
       .all();
 
-    await enrichPostsWithQuotes((posts.results || []) as PostRow[], c.env.DB);
+    await enrichPostsWithQuotes((posts.results || []) as PostRow[], c.env.DB, c.get('user')?.id);
     await enrichPostsWithAttachments((posts.results || []) as PostRow[], c.env.DB);
     await enrichPostsWithReactions((posts.results || []) as PostRow[], c.env.DB, c.get('user')?.id);
 

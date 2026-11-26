@@ -543,7 +543,7 @@ manage.put('/posts/:id', async (c) => {
       .bind(postId)
       .first()) as Record<string, unknown> | null;
 
-    await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
+    await enrichPostsWithQuotes([updated as PostRow], c.env.DB, c.get('user')?.id);
     await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
     await refreshUserTrustSafe(c.env.DB, userId);
     const updatedText = updated?.text;
@@ -643,7 +643,7 @@ manage.get('/posts/:id', async (c) => {
       };
     }
 
-    await enrichPostsWithQuotes([post as PostRow], c.env.DB);
+    await enrichPostsWithQuotes([post as PostRow], c.env.DB, c.get('user')?.id);
     await enrichPostsWithAttachments([post as PostRow], c.env.DB);
     await enrichPostsWithReactions([post as PostRow], c.env.DB, c.get('user')?.id);
     await enrichPostsWithRemoteAuthors([post], c.env.DB);

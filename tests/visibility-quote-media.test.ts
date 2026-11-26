@@ -29,6 +29,7 @@ registerHooks({
 const { default: media } = await import('../functions/api/routes/media.ts');
 const { feed } = await import('../functions/api/routes/posts/feed.ts');
 const { enrichPostsWithQuotes } = await import('../functions/api/feed-enrichment.ts');
+const { enrichFeedPosts } = await import('../functions/api/routes/posts/helpers.ts');
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 type TestStatement = ReturnType<TestDatabase['prepare']>;
@@ -255,6 +256,18 @@ describe('quoted post visibility', () => {
 
     const mentioned = await feedPosts(DAVE);
     assert.equal(mentioned.get('quoter-direct')?.quoted_post?.text, 'DIRECT_QUOTE_SECRET');
+  });
+
+  it('enrichFeedPosts forwards the viewer to quote enrichment', async () => {
+    await seedQuoteFixture();
+    const rows = [{ id: 'quoter-private', quoted_post_id: 'private-origin' }] as unknown as PostRow[];
+    const database = wrapDb(db) as unknown as D1Database;
+
+    await enrichFeedPosts(rows, database, null);
+    assert.equal(rows[0].quoted_post, null, 'an anonymous trending page must not embed the private quote');
+
+    await enrichFeedPosts(rows, database, CAROL.id);
+    assert.equal(rows[0].quoted_post?.text, 'PRIVATE_QUOTE_SECRET', 'the follower must still see the quote');
   });
 
   it('fails closed when enrichPostsWithQuotes is called without a viewer', async () => {

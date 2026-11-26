@@ -167,7 +167,7 @@ export async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentU
       });
     })(),
     enrichPostsWithPolls(posts, db, currentUserId),
-    enrichPostsWithQuotes(posts, db),
+    enrichPostsWithQuotes(posts, db, currentUserId),
     enrichPostsWithAttachments(posts, db),
     enrichPostsWithReactions(posts, db, currentUserId),
   ]);

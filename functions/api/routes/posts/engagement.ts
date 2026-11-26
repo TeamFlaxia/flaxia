@@ -282,7 +282,7 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
       });
     }
 
-    await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+    await enrichPostsWithQuotes(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
