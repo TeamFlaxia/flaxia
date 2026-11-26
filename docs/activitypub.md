@@ -118,12 +118,19 @@ becomes `direct`.
 
 ### HTTP Signatures
 
-* Draft Cavage (`draft-cavage-http-signatures-12`), RSA-SHA256.
-* The signature has to cover `(request-target)`, `date` and – for a request
-  with a body – `digest`.
-* The key is resolved from the `keyId` of the signature and only from the
-  origin of the actor: a key hosted somewhere else never vouches for an actor.
-* The `created` and `expires` parameters of the signature are honoured.
+* Draft Cavage (`draft-cavage-http-signatures-12`) and RFC 9421
+  (`Signature-Input` + `Signature`, including `Content-Digest` / RFC 9530),
+  both RSA-SHA256. RFC 9421 is tried first when advertised; the draft path
+  remains available for older peers (including Mastodon double-knocking).
+* A draft signature has to cover `(request-target)`, `date` and – for a
+  request with a body – `digest`. An RFC 9421 signature has to cover a target
+  component (`@target-uri`, `@request-target` or `@path`) and, for a request
+  with a body, `content-digest` or `digest`.
+* The key is resolved from the `keyId` / `keyid` of the signature and only from
+  the origin of the actor: a key hosted somewhere else never vouches for an
+  actor.
+* The `created` and `expires` parameters are honoured; `created` is bounded in
+  both directions so it can replace `Date` as the freshness signal.
 * A signature that does not cover the host is only accepted for the host the
   actor lives on.
 

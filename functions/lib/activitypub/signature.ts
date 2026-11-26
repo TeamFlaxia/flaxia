@@ -1,4 +1,7 @@
 import { importPublicKey } from './crypto.ts';
+import { verifyRfc9421Signature } from './rfc9421.ts';
+
+export { buildRfc9421SignatureBase, parseRfc9421Signatures } from './rfc9421.ts';
 
 /**
  * HTTP Signatures (draft-cavage-http-signatures-12) for ActivityPub.
@@ -179,6 +182,16 @@ export async function verifyHttpSignature(
       return false;
     }
 
+    // Peers that "double knock" send both formats; prefer RFC 9421 whenever
+    // it is advertised, then fall back to draft-cavage for older instances.
+    if (request.headers.has('Signature-Input')) {
+      try {
+        if (await verifyRfc9421Signature(request, publicKeyPem, options, decodeSignatureBytes)) return true;
+      } catch {
+        // Malformed RFC headers must not disable the draft verification path.
+      }
+    }
+
     let parsed: SignatureHeader;
     try {
       parsed = parseSignatureHeader(signatureHeader);
@@ -248,23 +261,27 @@ export async function verifyHttpSignature(
  */
 export async function verifyDigest(request: Request, body: string): Promise<boolean> {
   try {
+    const encoder = new TextEncoder();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(body));
+    const actualDigest = btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
+
+    // RFC 9530 (used by RFC 9421 signers): `sha-256=:base64:`.
+    const contentDigest = request.headers.get('Content-Digest');
+    if (contentDigest) {
+      const match = contentDigest.match(/sha-256\s*=\s*:([^:]+):/i);
+      if (match) {
+        const bytes = decodeSignatureBytes(match[1]);
+        if (bytes && btoa(String.fromCharCode(...bytes)) === actualDigest) return true;
+      }
+    }
+
+    // RFC 3230 (draft-cavage signers): `sha-256=base64`.
     const digestHeader = request.headers.get('Digest');
     if (!digestHeader) {
       return false;
     }
-
     const match = digestHeader.match(/sha-256=([A-Za-z0-9+/=]+)/i);
-    if (!match) {
-      return false;
-    }
-
-    const expectedDigest = match[1];
-    const encoder = new TextEncoder();
-    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(body));
-    const hashArray = new Uint8Array(hashBuffer);
-    const actualDigest = btoa(String.fromCharCode(...hashArray));
-
-    return expectedDigest === actualDigest;
+    return !!match && match[1] === actualDigest;
   } catch {
     return false;
   }
