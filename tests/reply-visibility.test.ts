@@ -49,6 +49,7 @@ export async function resolve(specifier, context, nextResolve) {
 );
 
 const { replies } = await import('../functions/api/routes/posts/replies.ts');
+const { visibilityFilter } = await import('../functions/api/routes/posts/helpers.ts');
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 
@@ -77,6 +78,22 @@ const CAROL: User = {
   bio: '',
   created_at: NOW,
 };
+const DAVE: User = {
+  id: 'dave',
+  email: 'dave@test.com',
+  username: 'dave',
+  display_name: 'Dave',
+  bio: '',
+  created_at: NOW,
+};
+const ERIN: User = {
+  id: 'erin',
+  email: 'erin@test.com',
+  username: 'erin',
+  display_name: 'Erin',
+  bio: '',
+  created_at: NOW,
+};
 
 const databases: TestDatabase[] = [];
 let db: TestDatabase;
@@ -85,7 +102,7 @@ beforeEach(() => {
   db = createTestDatabase();
   databases.push(db);
   db.prepare('DELETE FROM posts').run();
-  for (const user of [ALICE, BOB, CAROL]) {
+  for (const user of [ALICE, BOB, CAROL, DAVE, ERIN]) {
     db.prepare(
       `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
        VALUES (?, ?, '', ?, ?, '', ?)`,
@@ -93,8 +110,11 @@ beforeEach(() => {
       .bind(user.id, user.email, user.username, user.display_name, NOW)
       .run();
   }
-  // Carol follows Alice; Bob does not.
+  // Carol follows Alice; Bob does not. Dave follows only the reply author,
+  // Erin only the original author.
   db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(CAROL.id, ALICE.id).run();
+  db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(DAVE.id, CAROL.id).run();
+  db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(ERIN.id, ALICE.id).run();
 });
 
 after(() => {
@@ -137,6 +157,24 @@ async function storedPost(id: string): Promise<StoredPost | null> {
     .prepare('SELECT id, text, visibility, mentions, status FROM posts WHERE id = ?')
     .bind(id)
     .first<StoredPost>();
+}
+
+async function storedVisibilityRootAuthorId(id: string): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT visibility_root_author_id FROM posts WHERE id = ?')
+    .bind(id)
+    .first<{ visibility_root_author_id: string | null }>();
+  return row?.visibility_root_author_id ?? null;
+}
+
+/** Real D1 read through the exact predicate the API routes use. */
+async function canReadPost(viewer: User | null, id: string): Promise<boolean> {
+  const { sql, params } = visibilityFilter(viewer?.id);
+  const row = await db
+    .prepare(`SELECT p.id FROM posts p WHERE p.id = ? ${sql}`)
+    .bind(id, ...params)
+    .first<{ id: string }>();
+  return Boolean(row);
 }
 
 type ReplyPayload = {
@@ -234,6 +272,11 @@ describe('reply visibility inheritance', () => {
         mentions: row?.mentions,
         status: 'published',
       });
+      assert.equal(
+        await storedVisibilityRootAuthorId(replyId),
+        visibility === 'private' ? ALICE.id : null,
+        `${parentId}: only a private reply pins the original author`,
+      );
     }
   });
 
@@ -248,6 +291,7 @@ describe('reply visibility inheritance', () => {
     const pending = await storedPost(replyId);
     assert.equal(pending?.status, 'pending');
     assert.equal(pending?.visibility, 'private', 'the prepared row must not fall back to the public default');
+    assert.equal(await storedVisibilityRootAuthorId(replyId), ALICE.id);
 
     const committed = await commitReply(ALICE, 'private-media-parent', {
       replyId,
@@ -261,6 +305,7 @@ describe('reply visibility inheritance', () => {
     assert.equal(row?.status, 'published');
     assert.equal(row?.text, 'private media reply');
     assert.equal(row?.visibility, 'private');
+    assert.equal(await storedVisibilityRootAuthorId(replyId), ALICE.id);
   });
 
   it('hides a private reply from strangers while followers and the author read it', async () => {
@@ -357,5 +402,46 @@ describe('reply visibility inheritance', () => {
       .map((mention) => mention.user_id)
       .filter(Boolean);
     assert.deepEqual(userIds.sort(), [BOB.id, CAROL.id].sort());
+  });
+
+  it('gives a private reply the original author’s followers, not the responder’s', async () => {
+    await seedParent({ id: 'alice-private-thread', text: 'alice followers only', visibility: 'private' });
+    const replyId = 'carol-private-reply';
+    const text = 'CAROL_PRIVATE_REPLY_SECRET';
+    const committed = await commitReply(CAROL, 'alice-private-thread', { replyId, text });
+    assert.equal(committed.status, 200, committed.raw);
+    assert.equal(committed.payload.reply?.visibility, 'private');
+    assert.equal((await storedPost(replyId))?.visibility, 'private');
+    assert.equal(await storedVisibilityRootAuthorId(replyId), ALICE.id);
+
+    // Dave follows Carol (the reply author) but not Alice (the thread author):
+    // the old behaviour leaked the reply to exactly this reader.
+    assert.equal(await canReadPost(DAVE, replyId), false, 'the responder’s followers must not gain access');
+    // Erin follows Alice but has no relationship with Carol: she is part of
+    // the inherited private audience even though she cannot see its author.
+    assert.equal(await canReadPost(ERIN, replyId), true, 'the thread author’s followers must keep access');
+    assert.equal(
+      await canReadPost(ALICE, replyId),
+      true,
+      'the original author can read a private reply without following its writer',
+    );
+    assert.equal(await canReadPost(null, replyId), false);
+
+    const daveReplies = await listReplies(DAVE, 'alice-private-thread');
+    assert.equal(daveReplies.status, 404, 'a non-follower of the author cannot load the private thread');
+    for (const viewer of [ALICE, ERIN, CAROL]) {
+      const replies = await listReplies(viewer, 'alice-private-thread');
+      assert.equal(replies.status, 200, `${viewer.id}: inherited audience must see the thread`);
+      assert.deepEqual(
+        replies.replies.map((reply) => [reply.id, reply.text]),
+        [[replyId, text]],
+      );
+      const thread = await threadReplies(viewer, 'alice-private-thread');
+      assert.equal(thread.status, 200);
+      assert.deepEqual(
+        thread.replies.map((reply) => [reply.id, reply.text]),
+        [[replyId, text]],
+      );
+    }
   });
 });

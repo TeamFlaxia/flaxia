@@ -89,7 +89,10 @@ export const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display
  * - `public` / `unlisted` are visible to everyone.
  * - Remote Notes obey their stored visibility too: the inbound ActivityPub
  *   handler derives it from the Note's audience.
- * - `private` (Followers only) is visible to the author and local followers.
+ * - `private` (Followers only) is visible to the post's author, to the thread's
+ *   original author (`visibility_root_author_id`) and to local followers of the
+ *   original author (falling back to the poster for legacy rows), so a private
+ *   reply keeps its parent audience and its parent author can read it.
  * - `direct` is visible to the author and local users in `mentions.user_id`.
  *
  * Append `sql` at the very end of the WHERE clause and `params` immediately
@@ -110,8 +113,9 @@ export function visibilityFilter(currentUserId: string | null | undefined): {
     sql: `AND (
       COALESCE(p.visibility, 'public') IN ('public', 'unlisted')
       OR (COALESCE(p.visibility, 'public') = 'private' AND (
-        p.user_id = ? OR EXISTS (
-          SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = p.user_id
+        p.user_id = ? OR p.visibility_root_author_id = ? OR EXISTS (
+          SELECT 1 FROM follows
+          WHERE follower_id = ? AND followee_id = COALESCE(p.visibility_root_author_id, p.user_id)
         ) OR EXISTS (
           SELECT 1 FROM ap_following f
           WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
@@ -125,7 +129,7 @@ export function visibilityFilter(currentUserId: string | null | undefined): {
         )
       ))
     )`,
-    params: [currentUserId, currentUserId, currentUserId, currentUserId, currentUserId],
+    params: [currentUserId, currentUserId, currentUserId, currentUserId, currentUserId, currentUserId],
   };
 }
 

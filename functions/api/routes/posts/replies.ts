@@ -6,7 +6,9 @@ import { extractMentionHandles } from '../../../lib/activitypub/text.ts';
 import { embedPost, screenPostImages } from '../../../lib/crowd';
 import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
+import type { Db } from '../../../lib/ports/index.ts';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
+import { quoteNotificationDecision } from '../../../lib/quote-notification';
 import { runInBackground } from '../../../lib/scan/index';
 import { enrichPostsForFeed } from '../../feed-enrichment';
 import { requireAuth, resolveMentions, resolveRequestUser } from '../../helpers';
@@ -44,6 +46,35 @@ function parseMentionEntries(json: unknown): MentionEntry[] {
 function inheritedVisibility(parent: { visibility?: unknown }): PostVisibility {
   const value = parent.visibility;
   return typeof value === 'string' && VISIBILITIES.has(value) ? (value as PostVisibility) : 'public';
+}
+
+/**
+ * A followers-only reply belongs to the parent author's followers, not to the
+ * followers of the user who wrote the reply. Other visibilities keep their
+ * inherited value and leave the column NULL (legacy rows do the same).
+ */
+function inheritedVisibilityRootAuthorId(parent: ParentRow): string | null {
+  return inheritedVisibility(parent) === 'private' ? parent.user_id : null;
+}
+
+/**
+ * Decide whether a reply notification may reach a recipient. The read check
+ * uses the very same predicate as GET /api/posts/:id, and restricted replies
+ * are metadata-only so a push can never carry the private body.
+ */
+async function replyNotificationDecision(
+  db: Db,
+  replyId: string,
+  targetUserId: string,
+  visibility: PostVisibility,
+  text: string,
+): Promise<{ notify: boolean; pushPreview: string }> {
+  const { sql, params } = visibilityFilter(targetUserId);
+  const readable = await db
+    .prepare(`SELECT p.id FROM posts p WHERE p.id = ? ${sql}`)
+    .bind(replyId, ...params)
+    .first<{ id: string }>();
+  return quoteNotificationDecision(visibility, Boolean(readable), text);
 }
 
 /**
@@ -349,8 +380,8 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Store pending reply in D1
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'pending', ?, ?, ?, 0, ?)
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility, visibility_root_author_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'pending', ?, ?, ?, 0, ?, ?)
     `)
       .bind(
         replyId,
@@ -366,6 +397,7 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
         rootId,
         depth,
         inheritedVisibility(parentPost),
+        inheritedVisibilityRootAuthorId(parentPost),
       )
       .run();
 
@@ -477,10 +509,18 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       // Update reply to published status
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
-        SET text = ?, hashtags = ?, mentions = ?, visibility = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        SET text = ?, hashtags = ?, mentions = ?, visibility = ?, visibility_root_author_id = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE id = ? AND user_id = ? AND status = 'pending'
       `)
-        .bind(text, JSON.stringify(hashtags), mentionsJson, replyVisibility, replyId, c.get('user')?.id || '')
+        .bind(
+          text,
+          JSON.stringify(hashtags),
+          mentionsJson,
+          replyVisibility,
+          inheritedVisibilityRootAuthorId(parentPost),
+          replyId,
+          c.get('user')?.id || '',
+        )
         .run();
 
       if (!updateResult.success) {
@@ -511,8 +551,8 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 
       try {
         const result = await c.env.DB.prepare(`
-          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'published', ?, ?, ?, 0, ?)
+          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count, visibility, visibility_root_author_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'published', ?, ?, ?, 0, ?, ?)
         `)
           .bind(
             replyId,
@@ -528,6 +568,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
             rootId,
             depth,
             replyVisibility,
+            inheritedVisibilityRootAuthorId(parentPost),
           )
           .run();
 
@@ -574,41 +615,50 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     const replyUserId = c.get('user')?.id || '';
     if (parentPost.user_id !== replyUserId) {
       try {
-        // Group reply notifications: check for existing reply notification for this post
-        const existingNotif = (await c.env.DB.prepare(
-          "SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'reply' ORDER BY created_at DESC LIMIT 1",
-        )
-          .bind(parentPost.user_id, postId)
-          .first()) as Record<string, unknown>;
+        const decision = await replyNotificationDecision(c.env.DB, replyId, parentPost.user_id, replyVisibility, text);
+        // Never notify (or push to) someone who cannot read the reply.
+        if (decision.notify) {
+          // Group reply notifications: check for existing reply notification for this post
+          const existingNotif = (await c.env.DB.prepare(
+            "SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'reply' ORDER BY created_at DESC LIMIT 1",
+          )
+            .bind(parentPost.user_id, postId)
+            .first()) as Record<string, unknown>;
 
-        if (existingNotif) {
-          const actorData = existingNotif.actor_data
-            ? JSON.parse(existingNotif.actor_data as string)
-            : existingNotif.actor_id
-              ? [existingNotif.actor_id as string]
-              : [];
-          if (!actorData.includes(replyUserId)) {
-            actorData.push(replyUserId);
-          }
-          await c.env.DB.prepare(
-            "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
-          )
-            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id as string)
-            .run();
-        } else {
-          await c.env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-          )
-            .bind(nanoid(), parentPost.user_id, 'reply', postId, replyUserId)
-            .run();
-          // Send push notification to parent post author
-          {
+          if (existingNotif) {
+            const actorData = existingNotif.actor_data
+              ? JSON.parse(existingNotif.actor_data as string)
+              : existingNotif.actor_id
+                ? [existingNotif.actor_id as string]
+                : [];
+            if (!actorData.includes(replyUserId)) {
+              actorData.push(replyUserId);
+            }
+            await c.env.DB.prepare(
+              "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
+            )
+              .bind(actorData[0], JSON.stringify(actorData), existingNotif.id as string)
+              .run();
+          } else {
+            await c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+            )
+              .bind(nanoid(), parentPost.user_id, 'reply', postId, replyUserId)
+              .run();
+            // Restricted replies are metadata-only: no private body in the push.
             const actor = c.get('user');
-
-            await sendPushToAll(c.env, parentPost.user_id, 'reply', actor?.username, actor?.display_name, text, postId);
+            await sendPushToAll(
+              c.env,
+              parentPost.user_id,
+              'reply',
+              actor?.username,
+              actor?.display_name,
+              decision.pushPreview,
+              postId,
+            );
           }
+          notifiedUserIds.add(parentPost.user_id);
         }
-        notifiedUserIds.add(parentPost.user_id);
       } catch (e) {
         console.error('Failed to create reply notification:', e);
         // Don't fail the whole operation, just log the error
@@ -620,23 +670,37 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
-        const mentionTargets = mentionData.filter((m) => {
-          if (m.user_id === replyUserId) return false;
-          if (notifiedUserIds.has(m.user_id)) return false;
-          notifiedUserIds.add(m.user_id);
-          return true;
-        });
+        const mentionTargets: Array<{ userId: string; pushPreview: string }> = [];
+        for (const mention of mentionData) {
+          if (mention.user_id === replyUserId) continue;
+          if (notifiedUserIds.has(mention.user_id)) continue;
+          // A mention is not an invitation: only recipients who can actually
+          // read the reply get a notification, and restricted bodies stay out
+          // of the push preview.
+          const decision = await replyNotificationDecision(c.env.DB, replyId, mention.user_id, replyVisibility, text);
+          if (!decision.notify) continue;
+          notifiedUserIds.add(mention.user_id);
+          mentionTargets.push({ userId: mention.user_id, pushPreview: decision.pushPreview });
+        }
         const mentionStmts = mentionTargets.map((m) =>
           c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-          ).bind(nanoid(), m.user_id, 'mention', replyId, replyUserId),
+          ).bind(nanoid(), m.userId, 'mention', replyId, replyUserId),
         );
         if (mentionStmts.length > 0) {
           await c.env.DB.batch(mentionStmts);
         }
         const actor = c.get('user');
         for (const mention of mentionTargets) {
-          await sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, text, postId);
+          await sendPushToAll(
+            c.env,
+            mention.userId,
+            'mention',
+            actor?.username,
+            actor?.display_name,
+            mention.pushPreview,
+            postId,
+          );
         }
       } catch (e) {
         // Don't fail the reply creation if mention notifications fail
@@ -667,7 +731,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 
         const refUpdateStmts: D1PreparedStatement[] = [];
         const refNotifyStmts: D1PreparedStatement[] = [];
-        const refNotifyTargets: Array<{ userId: string; user_id: string }> = [];
+        const refNotifyTargets: Array<{ userId: string; pushPreview: string }> = [];
         for (const refIndex of referencedIndices) {
           const arrayIndex = refIndex - 1;
           if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
@@ -679,20 +743,23 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
                 ).bind(referencedPost.id as string),
               );
             }
-            if (
-              referencedPost.user_id &&
-              (referencedPost.user_id as string) !== replyUserId &&
-              !notifiedUserIds.has(referencedPost.user_id as string)
-            ) {
+            const targetUserId = referencedPost.user_id as string | undefined;
+            if (targetUserId && targetUserId !== replyUserId && !notifiedUserIds.has(targetUserId)) {
+              const decision = await replyNotificationDecision(
+                c.env.DB,
+                replyId,
+                targetUserId,
+                replyVisibility,
+                text || '',
+              );
+              if (!decision.notify) continue;
+              notifiedUserIds.add(targetUserId);
               refNotifyStmts.push(
                 c.env.DB.prepare(
                   'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-                ).bind(nanoid(), referencedPost.user_id as string, 'reply', replyId, replyUserId),
+                ).bind(nanoid(), targetUserId, 'reply', replyId, replyUserId),
               );
-              refNotifyTargets.push({
-                userId: referencedPost.user_id as string,
-                user_id: referencedPost.user_id as string,
-              });
+              refNotifyTargets.push({ userId: targetUserId, pushPreview: decision.pushPreview });
             }
           }
         }
@@ -702,7 +769,15 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         }
         for (const target of refNotifyTargets) {
           const actor = c.get('user');
-          await sendPushToAll(c.env, target.userId, 'reply', actor?.username, actor?.display_name, text || '', replyId);
+          await sendPushToAll(
+            c.env,
+            target.userId,
+            'reply',
+            actor?.username,
+            actor?.display_name,
+            target.pushPreview,
+            replyId,
+          );
         }
       }
     } catch (e) {

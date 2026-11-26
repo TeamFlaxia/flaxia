@@ -52,6 +52,7 @@ function fixture(authenticated = true) {
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
       root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
       visibility TEXT NOT NULL DEFAULT 'public',
+      visibility_root_author_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     -- Recommendation queries LEFT JOIN the federated popularity pool (migration 0150).

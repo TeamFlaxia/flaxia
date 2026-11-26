@@ -49,6 +49,7 @@ export async function resolve(specifier, context, nextResolve) {
 );
 
 const { composer } = await import('../functions/api/routes/posts/composer.ts');
+const { replies } = await import('../functions/api/routes/posts/replies.ts');
 
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 type CapturedPush = { userId: string; payload: PushPayload };
@@ -78,6 +79,22 @@ const CAROL: User = {
   bio: '',
   created_at: NOW,
 };
+const DAVE: User = {
+  id: 'dave',
+  email: 'dave@test.com',
+  username: 'dave',
+  display_name: 'Dave',
+  bio: '',
+  created_at: NOW,
+};
+const ERIN: User = {
+  id: 'erin',
+  email: 'erin@test.com',
+  username: 'erin',
+  display_name: 'Erin',
+  bio: '',
+  created_at: NOW,
+};
 
 const QUOTED_POST_ID = 'quoted-target';
 
@@ -90,7 +107,7 @@ beforeEach(() => {
   db = createTestDatabase();
   databases.push(db);
   db.prepare('DELETE FROM posts').run();
-  for (const user of [ALICE, BOB, CAROL]) {
+  for (const user of [ALICE, BOB, CAROL, DAVE, ERIN]) {
     db.prepare(
       `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
        VALUES (?, ?, '', ?, ?, '', ?)`,
@@ -142,6 +159,16 @@ function appFor(viewer: User): Hono<AppEnv> {
   return app;
 }
 
+function appForReplies(viewer: User): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  app.use('*', async (c, next) => {
+    c.set('user', viewer);
+    await next();
+  });
+  app.route('/', replies);
+  return app;
+}
+
 /** Let the `waitUntil`-scheduled push tasks settle after the response. */
 async function flushBackground(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -172,6 +199,40 @@ async function commitQuote(options: {
   const body = await response.text();
   await flushBackground();
   return { status: response.status, postId, body };
+}
+
+async function seedPrivateParent(id: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status, visibility, created_at)
+       VALUES (?, ?, ?, ?, '[]', '[]', 'published', 'private', ?)`,
+    )
+    .bind(id, ALICE.id, ALICE.username, 'alice followers only', NOW)
+    .run();
+  // Carol must be able to read the private parent to reply to it. Followers of
+  // Alice (Erin) and followers of Carol only (Dave) then have distinct access
+  // to the inherited-private reply.
+  db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(CAROL.id, ALICE.id).run();
+}
+
+async function commitReply(options: {
+  parentId: string;
+  replyId: string;
+  text: string;
+  viewer?: User;
+}): Promise<{ status: number; body: string }> {
+  const response = await appForReplies(options.viewer ?? CAROL).request(
+    `http://localhost/posts/${options.parentId}/replies/commit`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ replyId: options.replyId, text: options.text, hashtags: [] }),
+    },
+    envFor(db),
+  );
+  const body = await response.text();
+  await flushBackground();
+  return { status: response.status, body };
 }
 
 async function quoteNotifications(userId: string): Promise<Array<{ id: string; post_id: string }>> {
@@ -320,5 +381,71 @@ describe('quote notifications must obey the new post visibility', () => {
     for (const payload of pushesTo(ALICE.id)) {
       assert.ok(!payload.body?.includes(text), `push leaked the direct post body: ${payload.body}`);
     }
+  });
+});
+
+describe('reply notifications must obey the inherited reply visibility', () => {
+  const PARENT = 'reply-private-parent';
+
+  it('never notifies or pushes to a mentioned reader who cannot read a private reply', async () => {
+    await seedPrivateParent(PARENT);
+    // Dave follows the responder (Carol), not the thread author (Alice).
+    db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(DAVE.id, CAROL.id).run();
+
+    const secret = 'PRIVATE_REPLY_SECRET_DAVE';
+    const replyId = 'reply-leak-mention';
+    const { status, body } = await commitReply({ parentId: PARENT, replyId, text: `@dave ${secret}` });
+    assert.equal(status, 200, body);
+
+    assert.deepEqual(
+      (await notificationsOfType(DAVE.id, 'mention')).filter((n) => n.post_id === replyId),
+      [],
+      'a reader outside the inherited audience must not receive a notification',
+    );
+    assert.deepEqual(pushesTo(DAVE.id), [], 'no push must reach an unauthorized reader');
+  });
+
+  it('sends an inherited-audience mention as metadata only, without the private body', async () => {
+    await seedPrivateParent(PARENT);
+    // Erin follows the thread author (Alice) but not the responder (Carol).
+    db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(ERIN.id, ALICE.id).run();
+
+    const secret = 'PRIVATE_REPLY_SECRET_ERIN';
+    const replyId = 'reply-authorized-mention';
+    const { status, body } = await commitReply({ parentId: PARENT, replyId, text: `@erin ${secret}` });
+    assert.equal(status, 200, body);
+
+    assert.deepEqual(
+      (await notificationsOfType(ERIN.id, 'mention')).map((n) => n.post_id),
+      [replyId],
+    );
+    const payloads = pushesTo(ERIN.id);
+    assert.equal(payloads.length, 1);
+    for (const payload of payloads) {
+      assert.ok(!payload.body?.includes(secret), `push leaked the private reply body: ${payload.body}`);
+    }
+  });
+
+  it('does not notify or push the private body to a >>N reference author outside the audience', async () => {
+    await seedPrivateParent(PARENT);
+    db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?, ?)').bind(DAVE.id, CAROL.id).run();
+    db.prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status, visibility, parent_id, root_id, created_at)
+       VALUES (?, ?, ?, ?, '[]', '[]', 'published', 'public', ?, ?, ?)`,
+    )
+      .bind('reply-ref-target', DAVE.id, DAVE.username, 'dave thread post', PARENT, PARENT, NOW)
+      .run();
+
+    const secret = 'REFERENCE_SECRET_DAVE';
+    const replyId = 'reply-leak-reference';
+    const { status, body } = await commitReply({ parentId: PARENT, replyId, text: `>>1 ${secret}` });
+    assert.equal(status, 200, body);
+
+    assert.deepEqual(
+      (await notificationsOfType(DAVE.id, 'reply')).filter((n) => n.post_id === replyId),
+      [],
+      'a >>N reference must not notify a reader who cannot see the private reply',
+    );
+    assert.deepEqual(pushesTo(DAVE.id), []);
   });
 });
