@@ -280,7 +280,9 @@ test('SSR boot data removes the locale/session network gate during hydration', a
 
     // 4. Signed-in UI, not the guest shell (selectors from app-shell.browser.mjs).
     await page.waitForSelector('.nav-user-area', { timeout: budgetMs });
-    assert.ok(await page.$('.nav-post-button'), 'compose button must render for the boot session');
+    // The rail compose button is absent for signed-in users (see
+    // app-shell.browser.mjs); the account row is the signed-in signal.
+    assert.ok(await page.$('.nav-user-area'), 'account row must render for the boot session');
     assert.equal(await page.$('.nav-auth-buttons'), null, 'guest auth buttons must not render');
     assert.equal(await page.$('.nav-promo'), null, 'guest promo must not render');
 

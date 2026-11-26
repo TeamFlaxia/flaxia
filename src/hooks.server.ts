@@ -125,11 +125,15 @@ export function injectBootData(html: string, locale: LocaleData, session: unknow
   );
 }
 
+// Vite replaces this exact expression at build time; plain Node unit tests
+// have no import.meta.env, so fall back to the web path there.
+const BUILD_TARGET: string = typeof import.meta.env === 'undefined' ? 'web' : import.meta.env.BUILD_TARGET;
+
 /** Only real document navigations get viewer-specific boot data. */
 function isDocumentNavigation(event: Parameters<Handle>[0]['event']): boolean {
   // The native build has no server at runtime; its static fallback must keep
   // the marker so the client takes the original /api/me path.
-  if (import.meta.env?.BUILD_TARGET === 'native') return false;
+  if (BUILD_TARGET === 'native') return false;
   if (event.request.method !== 'GET') return false;
   if (event.url.pathname.startsWith('/api/')) return false;
   if ((event.request.headers.get('upgrade') ?? '').toLowerCase() === 'websocket') return false;
