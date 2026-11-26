@@ -11,6 +11,10 @@ import { checkImageSizeLimit, renderFilePreview } from '../file-preview.ts';
 import { formatCount } from '../format.ts';
 import { t } from '../i18n.ts';
 import { attachIcons } from '../icons.ts';
+// Shared http(s) check for remote ActivityPub media (same rule as the search
+// and remote-profile avatar renderers), used by the mention avatar markup.
+// biome-ignore lint/correctness/noUnusedImports: used in markup
+import { isAbsoluteMediaUrl } from '../media/attachments.ts';
 import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import { showToast } from '../toast.ts';
@@ -446,7 +450,7 @@ export function insertText(value: string): void {
             >
               {#if suggestion.kind === 'tag'}
                 <span class="mention-avatar" style="width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-size:0.8rem;font-weight:bold;">#</span>
-              {:else if suggestion.kind === 'remote' && suggestion.avatarUrl}
+              {:else if suggestion.kind === 'remote' && suggestion.avatarUrl && isAbsoluteMediaUrl(suggestion.avatarUrl)}
                 <img class="mention-avatar" src={suggestion.avatarUrl} alt="" style="width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;" />
               {:else if suggestion.avatarKey}
                 <span class="mention-avatar" style="width:24px;height:24px;border-radius:50%;background-image:url({nativeApiHref(`/api/images/${suggestion.avatarKey}`)});background-size:cover;background-position:center;flex-shrink:0;"></span>

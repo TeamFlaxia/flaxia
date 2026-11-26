@@ -4,11 +4,14 @@ const VALID_VISIBILITIES = new Set<string>(['public', 'unlisted', 'private', 'di
 
 /**
  * Fail-closed validation for a visibility read from a stored draft/autosave.
- * Anything unexpected becomes the historical `public` default: a stale or
- * tampered draft must never carry an arbitrary audience value into the composer.
+ * Unknown or wrong-typed values must never widen the audience: a stale or
+ * tampered draft restores as `private`. Only a genuinely absent field (a
+ * legacy draft written before visibility existed) keeps the historical
+ * `public` default.
  */
 export function normalizeDraftVisibility(value: unknown): PostVisibility {
-  return typeof value === 'string' && VALID_VISIBILITIES.has(value) ? (value as PostVisibility) : 'public';
+  if (value === undefined) return 'public';
+  return typeof value === 'string' && VALID_VISIBILITIES.has(value) ? (value as PostVisibility) : 'private';
 }
 
 /** Return a plain storage-ready copy with a validated `visibility` field. */
@@ -19,12 +22,13 @@ export function encodeDraftVisibility<T extends object>(draft: T): T & { visibil
 
 /**
  * Decode a persisted draft/autosave payload. Legacy entries written before the
- * visibility field existed (and malformed data) default to `public`.
+ * visibility field existed default to `public`; malformed or tampered values
+ * fall back to `private` so they cannot widen the audience.
  */
 export function decodeDraftVisibility(data: unknown): Record<string, unknown> & { visibility: PostVisibility } {
-  const raw = (typeof data === 'object' && data !== null && !Array.isArray(data) ? data : {}) as Record<
-    string,
-    unknown
-  >;
-  return { ...raw, visibility: normalizeDraftVisibility(raw.visibility) };
+  const isRecord = typeof data === 'object' && data !== null && !Array.isArray(data);
+  const raw = (isRecord ? data : {}) as Record<string, unknown>;
+  // A non-object payload is malformed, not a legacy draft: never assume public.
+  const visibility = isRecord ? normalizeDraftVisibility(raw.visibility) : 'private';
+  return { ...raw, visibility };
 }

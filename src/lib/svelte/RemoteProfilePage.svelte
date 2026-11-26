@@ -151,6 +151,9 @@ async function toggleFollow(): Promise<void> {
       following = !following;
       return;
     }
+    // apiJson() caches the SSR profile for 10s; a successful follow/unfollow
+    // must evict it so navigating back reloads the current follow state.
+    window.dispatchEvent(new CustomEvent('followChanged'));
     if (wasFollowing) {
       followPending = false;
     } else {

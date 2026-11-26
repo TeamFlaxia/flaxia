@@ -31,19 +31,30 @@ describe('draft visibility codec', () => {
     }
   });
 
-  it('fails closed to public for unknown or wrong-typed values', () => {
-    const invalid: unknown[] = ['everyone', 'PRIVATE', 'private ', 'direct\n', '', 0, 1, true, null, undefined, {}, []];
+  it('fails closed to private for unknown or wrong-typed values', () => {
+    const invalid: unknown[] = ['everyone', 'PRIVATE', 'private ', 'direct\n', '', 0, 1, true, null, {}, []];
     for (const value of invalid) {
-      assert.equal(normalizeDraftVisibility(value), 'public', `normalize rejects ${JSON.stringify(value)}`);
+      assert.equal(normalizeDraftVisibility(value), 'private', `normalize rejects ${JSON.stringify(value)}`);
       assert.equal(
         roundTrip(value).visibility,
-        'public',
-        `stored draft with visibility ${JSON.stringify(value)} must restore as public`,
+        'private',
+        `stored draft with visibility ${JSON.stringify(value)} must restore as private`,
       );
     }
   });
 
-  it('defaults legacy drafts and autosave payloads without visibility to public', () => {
+  it('never degrades an invalid visibility to a looser audience', () => {
+    const loose = new Set(['public', 'unlisted']);
+    const invalid: unknown[] = ['everyone', 'PUBLIC', 'unlisted ', 'public\n', 'direct, public', 0, true, null, {}];
+    for (const value of invalid) {
+      const normalized = normalizeDraftVisibility(value);
+      assert.equal(loose.has(normalized), false, `${JSON.stringify(value)} must not normalize to ${normalized}`);
+      assert.equal(loose.has(roundTrip(value).visibility), false, `stored ${JSON.stringify(value)} must stay closed`);
+    }
+  });
+
+  it('keeps the historical public default for drafts without a visibility field', () => {
+    assert.equal(normalizeDraftVisibility(undefined), 'public');
     const legacyDraft = JSON.parse(
       JSON.stringify({ id: 'legacy-1', text: 'written before visibility', savedAt: 42 }),
     ) as unknown;
@@ -59,8 +70,16 @@ describe('draft visibility codec', () => {
   });
 
   it('never throws on malformed stored data', () => {
-    for (const raw of [null, undefined, 42, 'public', [], true]) {
-      assert.equal(decodeDraftVisibility(raw).visibility, 'public');
+    const expected: Array<[unknown, string]> = [
+      [null, 'private'],
+      [undefined, 'private'],
+      [42, 'private'],
+      ['public', 'private'],
+      [[], 'private'],
+      [true, 'private'],
+    ];
+    for (const [raw, visibility] of expected) {
+      assert.equal(decodeDraftVisibility(raw).visibility, visibility);
     }
   });
 });

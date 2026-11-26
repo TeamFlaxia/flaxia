@@ -142,6 +142,9 @@ async function toggleRemoteFollow(): Promise<void> {
       body: JSON.stringify({ target: remoteUser.handle.replace(/^@/, '') }),
     });
     if (!response.ok) throw new Error('follow failed');
+    // The follow state is SSR-loaded through the short-lived client cache;
+    // invalidate it so returning to the profile never shows a stale state.
+    window.dispatchEvent(new CustomEvent('followChanged'));
     if (!wasFollowing) {
       const body = (await response.json().catch(() => ({}))) as { status?: string };
       remoteFollowPending = body.status === 'pending';
@@ -380,7 +383,12 @@ onDestroy(() => {
           onclick={() => goRemoteUser(remote)}
           role="button"
           tabindex="0"
-          onkeydown={(e) => { if (e.key === 'Enter') goRemoteUser(remote); }}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              goRemoteUser(remote);
+            }
+          }}
         >
           {#if safeAvatarUrl(remote.avatarUrl)}
             <img class="search-avatar" src={safeAvatarUrl(remote.avatarUrl)} alt="" style="object-fit:cover;" />

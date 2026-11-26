@@ -27,6 +27,7 @@ const OWN_META_ROUTES: ReadonlySet<string> = new Set([
   '/arcade',
   '/arcade/[id]',
   '/download',
+  '/federated',
   '/docs',
   '/docs/[slug]',
   '/about',
