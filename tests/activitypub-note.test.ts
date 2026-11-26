@@ -85,7 +85,9 @@ describe('ActivityPub Note builder', () => {
     assert.ok(note.content.includes('href="https://remote.example/users/bob"'));
 
     const tags = note.tag ?? [];
-    assert.ok(tags.some((tag) => tag.type === 'Mention' && tag.href === 'https://remote.example/users/bob'));
+    const mentionTag = tags.find((tag) => tag.type === 'Mention');
+    assert.equal(mentionTag?.name, '@bob');
+    assert.equal(mentionTag?.href, 'https://remote.example/users/bob');
     assert.ok(tags.some((tag) => tag.type === 'Hashtag' && tag.name === '#flaxia'));
   });
 

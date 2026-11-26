@@ -122,8 +122,10 @@ function mastodonFetch(trends: unknown[]): (url: string) => { status?: number; b
 }
 
 describe('federated popularity pool', () => {
-  it('uses the agreed freshness-boosted score formula', () =>
+  it('scores only the counters Mastodon REST statuses actually expose', () =>
     withFixedNow(() => {
+      // Extra Flaxia-specific counters are not part of a Mastodon REST status;
+      // even if a caller supplies them, they must not change the score.
       const params = {
         favourites: 4,
         reblogs: 9,
@@ -131,15 +133,28 @@ describe('federated popularity pool', () => {
         flaxiaFresh: 2,
         flaxiaReload: 3,
       };
-      const expected =
-        1.0 * Math.log1p(4) + 2.0 * Math.log1p(9) + 1.5 * freshnessBoost(CREATED_AT) + 2.0 * Math.log1p(5);
+      const expected = 1.0 * Math.log1p(4) + 2.0 * Math.log1p(9) + 1.5 * freshnessBoost(CREATED_AT);
       assert.equal(computePoolScore(params), expected);
       assert.equal(
-        computePoolScore({ ...params, favourites: 0, reblogs: 0, flaxiaFresh: 0, flaxiaReload: 0 }),
+        computePoolScore({ favourites: 0, reblogs: 0, createdAt: CREATED_AT }),
         1.5 * freshnessBoost(CREATED_AT),
       );
       // Bad counters must not poison the ranking with NaN.
-      assert.ok(Number.isFinite(computePoolScore({ ...params, favourites: Number.NaN })));
+      assert.ok(Number.isFinite(computePoolScore({ favourites: Number.NaN, reblogs: 9, createdAt: CREATED_AT })));
+    }));
+
+  it('ignores Flaxia-specific reaction counters on a Mastodon status', () =>
+    withFixedNow(() => {
+      const plain = normalizeMastodonStatus(status(), actorInfo(), BASE);
+      const withReactions = normalizeMastodonStatus(
+        status({ flaxia_fresh: 9, flaxia_reload: 7, fresh_count: 11, reload_count: 13 }),
+        actorInfo(),
+        BASE,
+      );
+      assert.ok(plain);
+      assert.ok(withReactions);
+      assert.equal(withReactions.metrics.score, computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT }));
+      assert.equal(withReactions.metrics.score, plain.metrics.score);
     }));
 
   it('normalizes a Mastodon status into a plain-text remote post with metrics', () =>
@@ -158,16 +173,7 @@ describe('federated popularity pool', () => {
       assert.doesNotMatch(String(result.post.text), /<|script|&amp/);
       assert.equal(result.metrics.favourites, 3);
       assert.equal(result.metrics.reblogs, 2);
-      assert.equal(
-        result.metrics.score,
-        computePoolScore({
-          favourites: 3,
-          reblogs: 2,
-          createdAt: CREATED_AT,
-          flaxiaFresh: 0,
-          flaxiaReload: 0,
-        }),
-      );
+      assert.equal(result.metrics.score, computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT }));
     }));
 
   it('caps text at 200 characters and marks sensitive posts hidden', () => {
@@ -247,7 +253,7 @@ describe('federated popularity pool', () => {
     );
     try {
       const result = await runPoolDiscovery(envFor(db));
-      assert.deepEqual(result, { instances: 1, fetched: 3, stored: 1, skipped: 2, errors: 0 });
+      assert.deepEqual(result, { instances: 1, fetched: 3, stored: 1, refreshed: 0, skipped: 2, errors: 0 });
 
       const post = await db
         .prepare('SELECT id, user_id, text, hidden, ap_object_id FROM posts WHERE ap_object_id = ?')
@@ -385,7 +391,7 @@ describe('federated popularity pool', () => {
     });
     try {
       const result = await runPoolDiscovery(envFor(db, { AP_POOL_SEED_DOMAINS: 'social.test' }));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 1, skipped: 0, errors: 0 });
+      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 1, refreshed: 0, skipped: 0, errors: 0 });
       const metrics = await db
         .prepare(
           `SELECT pm.favourites, pm.reblogs, pm.instance FROM ap_pool_metrics pm JOIN posts p ON p.id = pm.post_id WHERE p.ap_object_id = ?`,
@@ -413,6 +419,64 @@ describe('federated popularity pool', () => {
         .prepare("SELECT COUNT(*) AS count FROM posts WHERE user_id = '' AND ap_object_id IS NOT NULL")
         .first<{ count: number }>();
       assert.equal(count?.count, 1);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('fetches a broken actor document only once for many statuses from that actor', async () => {
+    const db = createTestDatabase();
+    const brokenActor = `https://${DOMAIN}/users/broken`;
+    const many = Array.from({ length: 12 }, (_, index) =>
+      status({
+        id: `${ACTOR_URL}/statuses/broken-${index}`,
+        account: { url: brokenActor, acct: 'broken' },
+      }),
+    );
+    let actorDocumentFetches = 0;
+    const restore = stubFetch((url) => {
+      if (url === brokenActor) {
+        actorDocumentFetches++;
+        // An id that disagrees with the requested URL makes resolution fail.
+        return {
+          body: { id: `https://${DOMAIN}/users/someone-else`, type: 'Person', inbox: `${brokenActor}/inbox` },
+        };
+      }
+      return mastodonFetch(many)(url);
+    });
+    try {
+      const result = await runPoolDiscovery(envFor(db), { maxPostsPerInstance: many.length });
+      assert.equal(actorDocumentFetches, 1);
+      assert.equal(result.fetched, 0);
+      assert.equal(result.stored, 0);
+      assert.equal(result.skipped, many.length);
+      assert.equal(result.errors, 0);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('does not repeat a failed WebFinger lookup for every status of the same account', async () => {
+    const db = createTestDatabase();
+    const many = Array.from({ length: 8 }, (_, index) =>
+      status({ id: `${ACTOR_URL}/statuses/ghost-${index}`, account: { acct: 'ghost' } }),
+    );
+    const webfingerPrefix = `https://${DOMAIN}/.well-known/webfinger`;
+    let webfingerFetches = 0;
+    const restore = stubFetch((url) => {
+      if (url.startsWith(webfingerPrefix)) {
+        webfingerFetches++;
+        return null; // 404: no such account on this instance
+      }
+      return mastodonFetch(many)(url);
+    });
+    try {
+      const result = await runPoolDiscovery(envFor(db), { maxPostsPerInstance: many.length });
+      assert.equal(webfingerFetches, 1);
+      assert.equal(result.fetched, 0);
+      assert.equal(result.skipped, many.length);
     } finally {
       restore();
       db.close();
@@ -475,6 +539,7 @@ describe('federated popularity pool', () => {
     try {
       const firstResult = await withNowAsync(firstNow, () => runPoolDiscovery(envFor(db)));
       assert.equal(firstResult.stored, 1);
+      assert.equal(firstResult.refreshed, 0);
       const initial = await db
         .prepare('SELECT favourites, reblogs, score, fetched_at FROM ap_pool_metrics')
         .first<{ favourites: number; reblogs: number; score: number; fetched_at: string }>();
@@ -483,14 +548,13 @@ describe('federated popularity pool', () => {
       assert.equal(initial.reblogs, 2);
       assert.equal(
         initial.score,
-        withNow(firstNow, () =>
-          computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
-        ),
+        withNow(firstNow, () => computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT })),
       );
 
       trends = [viral];
       const secondResult = await withNowAsync(secondNow, () => runPoolDiscovery(envFor(db)));
       assert.equal(secondResult.stored, 1);
+      assert.equal(secondResult.refreshed, 1);
       const refreshed = await db
         .prepare('SELECT favourites, reblogs, score, fetched_at FROM ap_pool_metrics')
         .first<{ favourites: number; reblogs: number; score: number; fetched_at: string }>();
@@ -499,24 +563,22 @@ describe('federated popularity pool', () => {
       assert.equal(refreshed.reblogs, 50);
       assert.equal(
         refreshed.score,
-        withNow(secondNow, () =>
-          computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
-        ),
+        withNow(secondNow, () => computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT })),
       );
       assert.notEqual(refreshed.score, initial.score);
       assert.equal(refreshed.fetched_at, new Date(secondNow).toISOString());
 
       // Same counters, later clock: the stored freshness component must decay.
-      await withNowAsync(thirdNow, () => runPoolDiscovery(envFor(db)));
+      const thirdResult = await withNowAsync(thirdNow, () => runPoolDiscovery(envFor(db)));
+      assert.equal(thirdResult.stored, 1);
+      assert.equal(thirdResult.refreshed, 1);
       const decayed = await db
         .prepare('SELECT score, fetched_at FROM ap_pool_metrics')
         .first<{ score: number; fetched_at: string }>();
       assert.ok(decayed);
       assert.equal(
         decayed.score,
-        withNow(thirdNow, () =>
-          computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT, flaxiaFresh: 0, flaxiaReload: 0 }),
-        ),
+        withNow(thirdNow, () => computePoolScore({ favourites: 100, reblogs: 50, createdAt: CREATED_AT })),
       );
       assert.ok(decayed.score < refreshed.score);
       assert.equal(decayed.fetched_at, new Date(thirdNow).toISOString());
@@ -638,7 +700,7 @@ describe('federated popularity pool', () => {
     const restore = stubFetch(mastodonFetch([status({ visibility: 'unlisted' })]));
     try {
       const result = await runPoolDiscovery(envFor(db));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, skipped: 1, errors: 0 });
+      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, refreshed: 0, skipped: 1, errors: 0 });
       const post = await db.prepare('SELECT id FROM posts WHERE ap_object_id = ?').bind(OBJECT_ID).first();
       assert.equal(post, null);
       const metrics = await db.prepare('SELECT post_id FROM ap_pool_metrics').all<{ post_id: string }>();
@@ -696,7 +758,7 @@ describe('federated popularity pool', () => {
     });
     try {
       const result = await runPoolDiscovery(envFor(db, { AP_POOL_SEED_DOMAINS: 'social.test' }));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, skipped: 1, errors: 0 });
+      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, refreshed: 0, skipped: 1, errors: 0 });
       const posts = await db
         .prepare('SELECT id FROM posts WHERE ap_object_id = ?')
         .bind(`${actor}/notes/1`)

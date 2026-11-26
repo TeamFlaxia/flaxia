@@ -209,9 +209,10 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
   object id used by inbox delivery, so a Note appears once and a received
   `Delete` hides every copy. Blocked actors, sensitive posts and timestamps
   more than ten minutes in the future are skipped.
-* Popularity is recorded in `ap_pool_metrics` with a composite score of likes,
-  reposts, freshness and Flaxia reactions (`freshnessBoost()` from
-  `functions/lib/scoring.ts`). The score and counters are recomputed on every
+* Popularity is recorded in `ap_pool_metrics` with a composite score of
+  favourites (likes), reposts and freshness (`freshnessBoost()` from
+  `functions/lib/scoring.ts`). Flaxia-only reaction counters are not exposed by
+  Mastodon REST, so they are not part of this score. The score and counters are recomputed on every
   hourly discovery, so the freshness term decays. Per-instance and per-actor
   caps prevent one instance from taking over. Only pool-origin rows (marked by
   an `ap_pool_metrics` row) older than 7 days are pruned; Notes received from

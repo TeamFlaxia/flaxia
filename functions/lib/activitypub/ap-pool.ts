@@ -16,13 +16,19 @@ export interface PoolEnv extends FederationEnv {
   DB: D1Database;
   AP_POOL_SEED_DOMAINS?: string;
 }
-type PoolResult = { instances: number; fetched: number; stored: number; skipped: number; errors: number };
+export type PoolResult = {
+  instances: number;
+  fetched: number;
+  stored: number;
+  /** How many of `stored` were refreshes of an existing pool row. */
+  refreshed: number;
+  skipped: number;
+  errors: number;
+};
 type PoolMetrics = {
   favourites: number;
   reblogs: number;
   score: number;
-  flaxiaFresh: number;
-  flaxiaReload: number;
 };
 export type PoolActorInfo = {
   actorUrl: string;
@@ -68,30 +74,22 @@ function firstString(...values: unknown[]): string | null {
   return null;
 }
 const randomPostId = (): string => crypto.randomUUID().replaceAll('-', '').slice(0, 10);
-/** Freshness reuses the local ranking boost; local activity adds popularity. */
-export function computePoolScore(params: {
-  favourites: number;
-  reblogs: number;
-  createdAt: string;
-  flaxiaFresh: number;
-  flaxiaReload: number;
-}): number {
+/**
+ * Freshness reuses the local ranking boost; popularity comes from the likes
+ * and reposts a Mastodon REST status actually exposes. Flaxia-specific
+ * "fresh"/"reload" counters are not part of those responses, so a term based
+ * on them would always score zero and can only make the formula misleading.
+ */
+export function computePoolScore(params: { favourites: number; reblogs: number; createdAt: string }): number {
   return (
     1.0 * Math.log1p(safeCount(params.favourites)) +
     2.0 * Math.log1p(safeCount(params.reblogs)) +
-    1.5 * freshnessBoost(params.createdAt) +
-    2.0 * Math.log1p(safeCount(params.flaxiaFresh) + safeCount(params.flaxiaReload))
+    1.5 * freshnessBoost(params.createdAt)
   );
 }
 /** Recompute at refresh time so the freshness term decays with the clock. */
 function currentScore(metrics: PoolMetrics, createdAt: string): number {
-  return computePoolScore({
-    favourites: metrics.favourites,
-    reblogs: metrics.reblogs,
-    createdAt,
-    flaxiaFresh: metrics.flaxiaFresh,
-    flaxiaReload: metrics.flaxiaReload,
-  });
+  return computePoolScore({ favourites: metrics.favourites, reblogs: metrics.reblogs, createdAt });
 }
 
 /** Plain-text post and counters; boosts and non-public posts are rejected. */
@@ -138,8 +136,6 @@ export function normalizeMastodonStatus(
   }
   const favourites = safeCount(status.favourites_count ?? status.favourites);
   const reblogs = safeCount(status.reblogs_count ?? status.reblogs);
-  const flaxiaFresh = safeCount(status.flaxia_fresh ?? status.flaxia_fresh_count ?? status.fresh_count);
-  const flaxiaReload = safeCount(status.flaxia_reload ?? status.flaxia_reload_count ?? status.reload_count);
   return {
     post: {
       id: randomPostId(),
@@ -157,9 +153,7 @@ export function normalizeMastodonStatus(
     metrics: {
       favourites,
       reblogs,
-      flaxiaFresh,
-      flaxiaReload,
-      score: computePoolScore({ favourites, reblogs, createdAt, flaxiaFresh, flaxiaReload }),
+      score: computePoolScore({ favourites, reblogs, createdAt }),
     },
   };
 }
@@ -237,19 +231,24 @@ interface DiscoveredStatus {
   status: Record<string, unknown>;
   actor: PoolActor;
 }
+/** Failed resolutions are cached too, so one broken actor is fetched at most once per run. */
+type ActorCache = Map<string, PoolActor | null>;
 /** Resolve an author from the status, our actor cache, or WebFinger on the instance. */
 async function resolvePoolActor(
   env: PoolEnv,
   domain: string,
   acct: string,
   account: Record<string, unknown> | null,
-  cache: Map<string, PoolActor>,
+  cache: ActorCache,
 ): Promise<PoolActor | null> {
   const username = acct.split('@')[0];
-  if (!/^[A-Za-z0-9_]{1,30}$/.test(username)) return null;
   const key = `${domain}:${username.toLowerCase()}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
+  if (cache.has(key)) return cache.get(key) ?? null;
+  const fail = (): null => {
+    cache.set(key, null);
+    return null;
+  };
+  if (!/^[A-Za-z0-9_]{1,30}$/.test(username)) return fail();
   let actorUrl: URL | null = urlOf(account?.url);
   let inboxUrl: string | null = null;
   if (actorUrl && !sameHost(actorUrl, domain)) actorUrl = null;
@@ -278,11 +277,11 @@ async function resolvePoolActor(
     actorUrl = urlOf(self?.href);
     if (actorUrl && !sameHost(actorUrl, domain)) actorUrl = null;
   }
-  if (!actorUrl) return null;
+  if (!actorUrl) return fail();
   if (!inboxUrl) {
     const document = await fetchActivityPubJson(actorUrl.toString(), env, { sameOrigin: true, timeoutMs: 8000 });
     const documentId = urlOf(document?.id);
-    if (documentId && canonical(documentId) !== canonical(actorUrl)) return null;
+    if (documentId && canonical(documentId) !== canonical(actorUrl)) return fail();
     inboxUrl = urlOf(document?.inbox)?.toString() ?? null;
     if (inboxUrl && !sameHost(new URL(inboxUrl), domain)) inboxUrl = null;
   }
@@ -330,7 +329,7 @@ async function isMastodon(env: PoolEnv, domain: string): Promise<boolean> {
   const software = recordOf(info?.software);
   return typeof software?.name === 'string' && software.name.toLowerCase().includes('mastodon');
 }
-async function fetchMastodonStatuses(env: PoolEnv, domain: string, cache: Map<string, PoolActor>, cap: number) {
+async function fetchMastodonStatuses(env: PoolEnv, domain: string, cache: ActorCache, cap: number) {
   const pages: unknown[] = [await fetchInstanceJson(env, domain, `/api/v1/trends/statuses?limit=${TIMELINE_LIMIT}`)];
   if (pages[0] !== null) {
     for (const tag of await localTrendingHashtags(env.DB)) {
@@ -358,7 +357,7 @@ async function fetchMastodonStatuses(env: PoolEnv, domain: string, cache: Map<st
   return { statuses, skipped };
 }
 /** Non-Mastodon instances: one page of a known actor's outbox. */
-async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: Map<string, PoolActor>, cap: number) {
+async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: ActorCache, cap: number) {
   const statuses: DiscoveredStatus[] = [];
   const row = await env.DB.prepare(
     `SELECT actor_url, inbox_url, preferred_username, display_name, icon_url, summary
@@ -441,15 +440,22 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: Map<stri
   }
   return { statuses, skipped };
 }
+/** `'refreshed'` counts separately from a newly `'inserted'` pool row. */
+type StoreOutcome = 'inserted' | 'refreshed' | null;
 /** Store one status, or refresh an existing pool row. Inbox posts are left alone. */
-async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, instance: string, baseUrl: string) {
+async function storeDiscoveredStatus(
+  env: PoolEnv,
+  entry: DiscoveredStatus,
+  instance: string,
+  baseUrl: string,
+): Promise<StoreOutcome> {
   const normalized = normalizeMastodonStatus(entry.status, entry.actor, baseUrl);
-  if (!normalized) return false;
+  if (!normalized) return null;
   const objectId = normalized.post.ap_object_id as string;
   const blocked = await env.DB.prepare('SELECT 1 AS blocked FROM ap_blocks WHERE actor_url = ? LIMIT 1')
     .bind(entry.actor.actorUrl)
     .first();
-  if (blocked) return false;
+  if (blocked) return null;
   const existing = await env.DB.prepare('SELECT id FROM posts WHERE ap_object_id = ?')
     .bind(objectId)
     .first<{ id: string }>();
@@ -464,13 +470,13 @@ async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, inst
     const poolRow = await env.DB.prepare('SELECT post_id FROM ap_pool_metrics WHERE post_id = ?')
       .bind(existing.id)
       .first();
-    if (!poolRow) return false;
+    if (!poolRow) return null;
     await upsertPoolActor(env.DB, entry.actor);
     await env.DB.prepare(`UPDATE ap_pool_metrics SET instance = ?, favourites = ?, reblogs = ?,
       score = ?, fetched_at = ? WHERE post_id = ?`)
       .bind(instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt, existing.id)
       .run();
-    return true;
+    return 'refreshed';
   }
   await upsertPoolActor(env.DB, entry.actor);
   const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO posts
@@ -487,23 +493,23 @@ async function storeDiscoveredStatus(env: PoolEnv, entry: DiscoveredStatus, inst
       normalized.post.created_at,
     )
     .run();
-  if ((inserted.meta?.changes ?? 0) === 0) return false;
+  if ((inserted.meta?.changes ?? 0) === 0) return null;
   await env.DB.prepare(`INSERT INTO ap_pool_metrics (post_id, instance, favourites, reblogs, score, fetched_at)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(post_id) DO UPDATE SET instance = excluded.instance, favourites = excluded.favourites,
       reblogs = excluded.reblogs, score = excluded.score, fetched_at = excluded.fetched_at`)
     .bind(normalized.post.id, instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt)
     .run();
-  return true;
+  return 'inserted';
 }
 /** Sample public posts from known instances and refresh their scores. */
 export async function runPoolDiscovery(env: PoolEnv, options: PoolOptions = {}): Promise<PoolResult> {
   const maxInstances = Math.max(0, options.maxInstances ?? 20);
   const maxPostsPerInstance = Math.max(0, options.maxPostsPerInstance ?? TIMELINE_LIMIT);
   const maxTotal = Math.max(0, options.maxTotal ?? 500);
-  const result: PoolResult = { instances: 0, fetched: 0, stored: 0, skipped: 0, errors: 0 };
+  const result: PoolResult = { instances: 0, fetched: 0, stored: 0, refreshed: 0, skipped: 0, errors: 0 };
   if (!maxInstances || !maxPostsPerInstance || !maxTotal) return result;
-  const actors = new Map<string, PoolActor>();
+  const actors: ActorCache = new Map();
   const perActor = new Map<string, number>();
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   for (const domain of await discoverInstances(env, maxInstances)) {
@@ -524,8 +530,10 @@ export async function runPoolDiscovery(env: PoolEnv, options: PoolOptions = {}):
           continue;
         }
         try {
-          if (await storeDiscoveredStatus(env, entry, domain, baseUrl)) {
+          const outcome = await storeDiscoveredStatus(env, entry, domain, baseUrl);
+          if (outcome) {
             result.stored++;
+            if (outcome === 'refreshed') result.refreshed++;
             perInstance++;
             perActor.set(entry.actor.actorUrl, count + 1);
           } else result.skipped++;

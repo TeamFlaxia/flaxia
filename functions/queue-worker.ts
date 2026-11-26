@@ -78,7 +78,7 @@ export default {
         const discovered = await runPoolDiscovery(env);
         const pruned = await prunePool(env);
         console.log(
-          `Popularity pool finished: ${discovered.stored}/${discovered.fetched} posts stored, ${pruned} rows pruned`,
+          `Popularity pool finished: ${discovered.stored}/${discovered.fetched} posts stored (${discovered.refreshed} refreshed), ${pruned} rows pruned`,
         );
       } catch (error) {
         console.error('Popularity pool discovery failed:', (error as Error).message);

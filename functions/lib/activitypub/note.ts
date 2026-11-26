@@ -43,7 +43,7 @@ export interface NoteInput {
   sensitive?: boolean;
   attachments?: NoteAttachment[];
   /** Mentioned accounts: local ones carry a username, remote ones an actor URL. */
-  mentions?: Array<{ username: string; url?: string; domain?: string; name?: string }>;
+  mentions?: Array<{ username: string; url?: string; domain?: string }>;
 }
 
 export interface NoteObject {
