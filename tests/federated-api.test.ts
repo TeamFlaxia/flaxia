@@ -34,18 +34,24 @@ const { default: federatedRouter } = await import('../functions/api/routes/feder
 type AppEnv = { Bindings: Bindings; Variables: Variables };
 type TestStatement = ReturnType<TestDatabase['prepare']>;
 
-function wrapStatement(statement: TestStatement): TestStatement {
+function wrapStatement(statement: TestStatement, failAll = false): TestStatement {
   return {
-    bind: (...values: unknown[]) => wrapStatement(statement.bind(...values)),
+    bind: (...values: unknown[]) => wrapStatement(statement.bind(...values), failAll),
     first: <T>() => statement.first<T>(),
-    all: async <T>() => ({ ...(await statement.all<T>()), success: true }) as { results: T[] },
+    // D1 reports a failed `all()` with `success: false`. Normally the adapter
+    // only produces successful results, so the wrapper supplies that flag. A
+    // test can inject a failure to exercise the route's error branch.
+    all: async <T>() =>
+      failAll
+        ? ({ results: [], success: false } as unknown as { results: T[] })
+        : ({ ...(await statement.all<T>()), success: true } as { results: T[] }),
     run: () => statement.run(),
   };
 }
 
-function wrapDb(database: TestDatabase): TestDatabase {
+function wrapDb(database: TestDatabase, failAll = false): TestDatabase {
   return {
-    prepare: (sql: string) => wrapStatement(database.prepare(sql)),
+    prepare: (sql: string) => wrapStatement(database.prepare(sql), failAll),
     batch: (statements: TestStatement[]) => database.batch(statements),
     exec: (sql: string) => database.exec(sql),
     close: () => database.close(),
@@ -273,5 +279,18 @@ describe('GET /api/federated/posts', () => {
     assert.equal(post.avatar_key, null);
     assert.equal(post.pool_score, 4);
     assert.ok('is_freshed' in post, 'enrichFeedPosts must add per-viewer flags');
+  });
+
+  it('returns a 500 when the pool query reports a failure', async () => {
+    // The D1 `all()` of the pool query can answer with `success: false`. The
+    // route must turn that into the 500 error response instead of handing an
+    // empty, misleadingly successful feed to the client.
+    seedPoolPost({ id: 'p-ok', actor: ACTOR_A, score: 4 });
+    const app = appFor(null);
+    const response = await app.request('http://localhost/federated/posts', {}, {
+      DB: wrapDb(db, true) as unknown as Bindings['DB'],
+    } as Bindings);
+    assert.equal(response.status, 500, `expected a 500, got ${response.status}: ${await response.clone().text()}`);
+    assert.deepEqual(await response.json(), { error: 'Failed to fetch federated posts' });
   });
 });

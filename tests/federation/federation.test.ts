@@ -22,6 +22,13 @@ const PEER_DOMAIN = new URL(BASE).host;
 
 const describeFederation = PEER_KIND ? describe : describe.skip;
 
+// This check lives outside the skipped suite so it runs even when the peer
+// name is missing. Without it, `describe.skip` would report a green run for a
+// federation test that never actually talked to a peer.
+it('requires FLAXIA_FEDERATION_PEER to name the peer under test', () => {
+  assert.ok(PEER_KIND, 'FLAXIA_FEDERATION_PEER must be set to "gotosocial" or "mastodon" to run the federation suite');
+});
+
 async function waitFor(check: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

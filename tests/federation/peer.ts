@@ -17,9 +17,6 @@ export interface PeerStatus {
   id: string;
   content: string;
   url: string;
-  /** State of the status for the authenticated peer account. */
-  favourited?: boolean;
-  reblogged?: boolean;
 }
 
 export interface FederationPeer {
@@ -31,16 +28,6 @@ export interface FederationPeer {
   account(): Promise<PeerAccount>;
   /** Post a note and return it. */
   post(text: string): Promise<PeerStatus>;
-  /** Read a status by id. */
-  status(statusId: string): Promise<PeerStatus>;
-  /** Favourite / unfavourite a status (Like and Undo-Like on the wire). */
-  favourite(statusId: string): Promise<PeerStatus>;
-  unfavourite(statusId: string): Promise<PeerStatus>;
-  /** Reblog / unreblog a status (Announce and Undo-Announce on the wire). */
-  reblog(statusId: string): Promise<PeerStatus>;
-  unreblog(statusId: string): Promise<PeerStatus>;
-  /** Delete a status (Delete on the wire). */
-  deleteStatus(statusId: string): Promise<void>;
   /** The statuses the peer received (home timeline). */
   timeline(): Promise<PeerStatus[]>;
   /** Follow an account by its id. */
@@ -237,15 +224,13 @@ export async function loginWithPassword(origin: string, username: string, passwo
   return token.access_token;
 }
 
-type StatusJson = { id: string; content: string; url: string; favourited?: boolean; reblogged?: boolean };
+type StatusJson = { id: string; content: string; url: string };
 
 function asPeerStatus(status: StatusJson): PeerStatus {
   return {
     id: status.id,
     content: status.content,
     url: status.url,
-    favourited: status.favourited,
-    reblogged: status.reblogged,
   };
 }
 
@@ -307,50 +292,6 @@ export class PeerClient {
       body: JSON.stringify({ status: text }),
     });
     return asPeerStatus(status);
-  }
-
-  async status(statusId: string): Promise<PeerStatus> {
-    return asPeerStatus(await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}`));
-  }
-
-  async favourite(statusId: string): Promise<PeerStatus> {
-    return asPeerStatus(
-      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/favourite`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
-    );
-  }
-
-  async unfavourite(statusId: string): Promise<PeerStatus> {
-    return asPeerStatus(
-      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/unfavourite`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
-    );
-  }
-
-  async reblog(statusId: string): Promise<PeerStatus> {
-    return asPeerStatus(
-      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/reblog`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
-    );
-  }
-
-  async unreblog(statusId: string): Promise<PeerStatus> {
-    return asPeerStatus(
-      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/unreblog`, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      }),
-    );
-  }
-
-  async deleteStatus(statusId: string): Promise<void> {
-    await this.request(`/api/v1/statuses/${encodeURIComponent(statusId)}`, { method: 'DELETE' });
   }
 
   async timeline(): Promise<PeerStatus[]> {
@@ -501,30 +442,6 @@ export class GoToSocialPeer implements FederationPeer {
     return this.requireClient().post(text);
   }
 
-  async status(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().status(statusId);
-  }
-
-  async favourite(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().favourite(statusId);
-  }
-
-  async unfavourite(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().unfavourite(statusId);
-  }
-
-  async reblog(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().reblog(statusId);
-  }
-
-  async unreblog(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().unreblog(statusId);
-  }
-
-  async deleteStatus(statusId: string): Promise<void> {
-    await this.requireClient().deleteStatus(statusId);
-  }
-
   async timeline(): Promise<PeerStatus[]> {
     return this.requireClient().timeline();
   }
@@ -637,30 +554,6 @@ export class MastodonPeer implements FederationPeer {
 
   async post(text: string): Promise<PeerStatus> {
     return this.requireClient().post(text);
-  }
-
-  async status(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().status(statusId);
-  }
-
-  async favourite(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().favourite(statusId);
-  }
-
-  async unfavourite(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().unfavourite(statusId);
-  }
-
-  async reblog(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().reblog(statusId);
-  }
-
-  async unreblog(statusId: string): Promise<PeerStatus> {
-    return this.requireClient().unreblog(statusId);
-  }
-
-  async deleteStatus(statusId: string): Promise<void> {
-    await this.requireClient().deleteStatus(statusId);
   }
 
   async timeline(): Promise<PeerStatus[]> {

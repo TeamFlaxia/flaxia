@@ -64,13 +64,15 @@ FLAXIA_FEDERATION_PEER=gotosocial npm run test:federation
 | Delete (inbound) | A deleted remote post is hidden on the instance |
 
 The Like, Announce and Delete scenarios are driven by the remote instance of
-the test (`tests/federation/remote.ts`), which signs its deliveries. The
-activities the instance sends back are recorded and compared with
-`activityShape()`; differences in the inner object of an `Undo` are ignored
-with `diffShapes(..., { ignore: ['Undo.object'] })`, because implementations
-express the retracted activity differently. The peer client also exposes
-`favourite`, `unfavourite`, `reblog`, `unreblog` and `deleteStatus` for local
-Mastodon-style checks.
+the test (`tests/federation/remote.ts`), which signs its deliveries. Their
+effect is checked on the instance under test: a Like notifies the author, an
+Announce counts as a reload, and a Delete of a local post arrives as a signed
+delivery whose shape is compared with `activityShape()`. These flows do not go
+through the peer client, which is used only to look up accounts, post notes,
+read the timeline and manage follows. The `ignore: ['Undo.object']` option of `diffShapes()` is
+covered by the shape unit tests in `tests/activitypub-ap-gaps.test.ts`; the
+only ignore used in this suite is for the optional actor properties
+`hasLiked` and `hasSharedInbox`.
 
 The comparison reduces a document to the properties a peer reads, because
 the documents of two instances never look the same: the ids, the hosts and
@@ -100,6 +102,6 @@ once a week; `differential-mastodon` does the same with Mastodon **only on the
 weekly schedule** (45 minute timeout). A weekly run matters because a new
 release of a peer may change the behaviour of the federation. Both jobs set
 `FLAXIA_FEDERATION_PEER` to the peer they start; a missing or misspelled name
-fails the suite instead of silently skipping it. The Mastodon job removes its
+fails the test run instead of silently skipping it. The Mastodon job removes its
 compose containers and volumes with `if: always()` cleanup, so a failed test
 cannot leave a dirty runner.
