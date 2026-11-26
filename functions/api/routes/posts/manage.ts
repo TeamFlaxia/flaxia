@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { buildDeleteActivity } from '../../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
-import { deliverToFollowers } from '../../../lib/activitypub/delivery';
+import { deliverToFollowers, deliverToInbox, resolveActorInbox } from '../../../lib/activitypub/delivery';
+import { audienceFor, type Visibility } from '../../../lib/activitypub/note';
 import { isAdmin } from '../../../lib/admin.ts';
 import {
   type AttachmentInput,
@@ -41,9 +42,11 @@ manage.delete('/posts/:id', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Get the post to verify ownership and get file keys
+    // Get the post to verify ownership and get file keys. `visibility` and
+    // `mentions` are needed below so the Delete keeps the audience of the
+    // original Create instead of announcing a private post to the network.
     const post = (await c.env.DB.prepare(
-      'SELECT id, user_id, username, parent_id, gif_key, payload_key, swf_key, thumbnail_key, status FROM posts WHERE id = ?',
+      'SELECT id, user_id, username, parent_id, gif_key, payload_key, swf_key, thumbnail_key, status, visibility, mentions FROM posts WHERE id = ?',
     )
       .bind(postId)
       .first()) as {
@@ -56,6 +59,8 @@ manage.delete('/posts/:id', requireAuth, async (c) => {
       swf_key?: string;
       thumbnail_key?: string;
       status?: string;
+      visibility?: string | null;
+      mentions?: string | null;
     } | null;
 
     if (!post) {
@@ -200,20 +205,71 @@ manage.delete('/posts/:id', requireAuth, async (c) => {
         .run();
     }
 
-    // Queue ActivityPub delete delivery for public posts
+    // Queue ActivityPub delete delivery for published posts. The Delete must
+    // carry the same audience as the original Create: a private post is only
+    // for followers and a direct post only for its mentioned actors. Otherwise
+    // a Public-addressed Tombstone would reveal the note's existence to peers
+    // that were never addressed by the Create.
     if (post && post.status === 'published') {
       try {
         const user = c.get('user');
         if (user?.username) {
           const noteId = `${c.env.BASE_URL}/api/notes/${postId}`;
-          const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown');
 
-          // Queue one delivery per remote inbox of the followers
-          await deliverToFollowers(c.env, {
-            userId: user.id,
-            username: user.username,
-            activity,
-          });
+          // Stored mentions are actor documents of remote accounts; keep only
+          // http(s) URLs, exactly like the Note builder does for the Create.
+          const isHttpUrl = (value: unknown): value is string => {
+            if (typeof value !== 'string') return false;
+            try {
+              const parsed = new URL(value);
+              return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+            } catch {
+              return false;
+            }
+          };
+          let storedMentions: Array<{ username?: unknown; url?: unknown; domain?: unknown }> = [];
+          try {
+            const parsed: unknown = JSON.parse(post.mentions ?? '[]');
+            if (Array.isArray(parsed)) {
+              storedMentions = parsed as Array<{ username?: unknown; url?: unknown; domain?: unknown }>;
+            }
+          } catch {
+            // A malformed mention column must not block the deletion.
+          }
+          const mentionUrls = [...new Set(storedMentions.map((m) => m.url).filter(isHttpUrl))];
+          // Direct posts are sent to remote mentions only, mirroring composer.ts.
+          const remoteMentions = [
+            ...new Set(
+              storedMentions
+                .filter((m) => typeof m.domain === 'string' && m.domain.length > 0 && isHttpUrl(m.url))
+                .map((m) => m.url as string),
+            ),
+          ];
+
+          const visibility: Visibility =
+            post.visibility === 'unlisted' || post.visibility === 'private' || post.visibility === 'direct'
+              ? post.visibility
+              : 'public';
+          const followersUrl = `${c.env.BASE_URL}/api/actors/${user.username}/followers`;
+          const { to, cc } = audienceFor(visibility, { followersUrl, mentionUrls });
+          const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown', { to, cc });
+
+          if (visibility === 'direct') {
+            // No follower fan-out: only the mentioned inboxes receive it.
+            for (const actorUrl of remoteMentions) {
+              const inbox = await resolveActorInbox(c.env, actorUrl);
+              if (inbox) {
+                await deliverToInbox(c.env, { inboxUrl: inbox, username: user.username, activity });
+              }
+            }
+          } else {
+            // Queue one delivery per remote inbox of the followers.
+            await deliverToFollowers(c.env, {
+              userId: user.id,
+              username: user.username,
+              activity,
+            });
+          }
         }
       } catch (deliveryError) {
         console.error('Failed to queue ActivityPub delete delivery:', deliveryError);
