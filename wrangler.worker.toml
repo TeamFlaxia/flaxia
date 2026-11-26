@@ -1,6 +1,6 @@
 name = "flaxia-ap-delivery"
 main = "functions/queue-worker.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-06-02"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
@@ -66,3 +66,13 @@ max_batch_timeout = 5
 # Retry transient failures a bounded number of times, then quarantine them.
 max_retries = 3
 dead_letter_queue = "activitypub-delivery-dlq"
+
+# Dead letters are consumed by this worker as well: it stores them in the
+# ap_dlq D1 table and acknowledges them. A bounded retry keeps a transient
+# database error from looping forever; persistence failures are logged and
+# acked in the worker so a not-yet-migrated environment cannot spin either.
+[[queues.consumers]]
+queue = "activitypub-delivery-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1

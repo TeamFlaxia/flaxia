@@ -51,6 +51,7 @@ function fixture(authenticated = true) {
       bookmark_count INTEGER DEFAULT 0,
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
       root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
+      visibility TEXT NOT NULL DEFAULT 'public',
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     CREATE TABLE post_attachments (post_id TEXT, r2_key TEXT, kind TEXT, position INTEGER);

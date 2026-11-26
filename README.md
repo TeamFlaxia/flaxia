@@ -31,7 +31,7 @@ wrangler pages deployment tail
 
 ### Worker Deployment
 ```bash
-npx wrangler deploy functions/queue-worker.ts --config wrangler.worker.toml --name flaxia-ap-delivery --compatibility-date 2024-01-01
+npx wrangler deploy functions/queue-worker.ts --config wrangler.worker.toml --name flaxia-ap-delivery
 ```
 
 ## Architecture

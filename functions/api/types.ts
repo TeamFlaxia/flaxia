@@ -1,3 +1,4 @@
+import type { PostVisibility } from '../../shared/types/post.ts';
 import type { User } from '../lib/auth';
 
 export type Bindings = {
@@ -97,6 +98,7 @@ export type PostRow = {
   impressions: number;
   status: string;
   hidden: number;
+  visibility?: PostVisibility;
   author_language?: string | null;
   actor_id: string | null;
   created_at: string;

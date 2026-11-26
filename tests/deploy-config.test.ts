@@ -265,3 +265,20 @@ test('Cloudflare Pages serves postbuild static files without hitting the worker'
     assert.ok(routes.exclude?.includes(pattern), `_routes.json must exclude ${pattern} from the worker`);
   }
 });
+
+test('the AP queue worker has a single compatibility date', async () => {
+  const root = new URL('..', import.meta.url).pathname;
+  const workerToml = await readFile(join(root, 'wrangler.worker.toml'), 'utf8');
+  const match = workerToml.match(/^\s*compatibility_date\s*=\s*"([^"]+)"/m);
+  assert.ok(match, 'wrangler.worker.toml must declare compatibility_date');
+  assert.equal(match[1], '2026-06-02');
+
+  // An override on the CLI would make production behave differently from
+  // local `wrangler dev`, which is how dev-only federation flags used to leak.
+  const deploy = await readFile(join(root, '.github/workflows/deploy.yml'), 'utf8');
+  assert.doesNotMatch(deploy, /--compatibility-date/, 'the deploy workflow must not override the toml value');
+  const doc = await readFile(DEPLOYMENT_DOC_URL, 'utf8');
+  assert.doesNotMatch(doc, /--compatibility-date/, 'the deployment doc must not suggest an override');
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(readme, /--compatibility-date/, 'the README must not suggest an override');
+});

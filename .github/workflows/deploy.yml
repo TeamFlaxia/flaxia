@@ -112,7 +112,7 @@ jobs:
         run: |
           set -euo pipefail
           retry() { local n=0; until "$@"; do n=$((n+1)); if [ "$n" -ge 5 ]; then return 1; fi; echo "retrying in 15s ($n/5): $*"; sleep 15; done; }
-          retry npx wrangler deploy functions/queue-worker.ts --name flaxia-ap-delivery --config wrangler.worker.toml --compatibility-date 2026-06-02
+          retry npx wrangler deploy functions/queue-worker.ts --name flaxia-ap-delivery --config wrangler.worker.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,0 +1,1 @@
+ALTER TABLE posts ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public';
