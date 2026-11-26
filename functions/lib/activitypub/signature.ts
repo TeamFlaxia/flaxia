@@ -35,6 +35,27 @@ export interface VerifyOptions {
 const DEFAULT_MAX_SKEW_MS = 30 * 60 * 1000;
 
 /**
+ * Decode the `signature` parameter into raw bytes.
+ *
+ * Peers differ in padding, whitespace and base64 alphabet, so the canonical
+ * byte form is used both for verification and for replay fingerprints.
+ * Returns null when the value is not a valid base64(base64url) string.
+ */
+export function decodeSignatureBytes(value: string): Uint8Array<ArrayBuffer> | null {
+  let base64 = value.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4 !== 0) base64 += '=';
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64) || base64.length === 0) return null;
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parse a `Signature` header.
  *
  * Peers differ in quoting and in the order of the parameters, so the parser
@@ -206,24 +227,10 @@ export async function verifyHttpSignature(
     });
     const publicKey = await importPublicKey(publicKeyPem);
 
-    let signatureBase64 = parsed.signature.replace(/\s/g, '');
-    signatureBase64 = signatureBase64.replace(/-/g, '+').replace(/_/g, '/');
-
-    while (signatureBase64.length % 4 !== 0) {
-      signatureBase64 += '=';
-    }
-
-    if (/[^A-Za-z0-9+/=]/.test(signatureBase64)) {
-      return false;
-    }
+    const signatureArray = decodeSignatureBytes(parsed.signature);
+    if (!signatureArray) return false;
 
     try {
-      const signatureString = atob(signatureBase64);
-      const signatureArray = new Uint8Array(signatureString.length);
-      for (let i = 0; i < signatureString.length; i++) {
-        signatureArray[i] = signatureString.charCodeAt(i);
-      }
-
       const encoder = new TextEncoder();
       const signingStringArray = encoder.encode(signingString);
 

@@ -1,7 +1,7 @@
 import { buildAcceptActivity } from './activities.ts';
 import { actorUrl, localActorUsername, localProfileUsername, noteUrl } from './actor.ts';
 import { storeRemoteAttachments } from './attachments.ts';
-import { PUBLIC_COLLECTION } from './context.ts';
+import { audienceEntries, isPublicAddress } from './context.ts';
 import { deliverToInbox } from './delivery.ts';
 import { type FederationEnv, normalizeActorSummary, resolveRemoteActor } from './fetch.ts';
 import { actorSignOptions } from './keys.ts';
@@ -190,62 +190,45 @@ interface NoteTag {
 /** The maximum number of local users one inbound Note can mention. */
 const MAX_INBOUND_MENTIONS = 10;
 
-/** Audience entries a peer placed on the Create and/or on the Note itself. */
+/** Audience on the Create/Note; bto/bcc/audience resolve mentions but never widen visibility. */
 function inboundAudience(activity: Record<string, unknown>, object: Record<string, unknown>): string[] {
   const values: string[] = [];
   for (const source of [activity, object]) {
-    for (const field of ['to', 'cc']) {
-      const value = source[field];
-      if (typeof value === 'string') values.push(value);
-      else if (Array.isArray(value))
-        values.push(...value.filter((entry): entry is string => typeof entry === 'string'));
+    for (const field of ['to', 'cc', 'bto', 'bcc', 'audience']) {
+      values.push(...audienceEntries(source[field]));
     }
   }
   return [...new Set(values)];
 }
 
-/** True when a URL names an actor's followers collection. */
+/** True when a URL is exactly the given actor's followers collection. */
 function isFollowersCollection(value: string, actorId: string): boolean {
-  if (value === `${actorId}/followers` || value === `${actorId}/followers/`) return true;
   try {
-    const url = new URL(value);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-    return url.pathname.replace(/\/$/, '').endsWith('/followers');
+    const expected = new URL(actorId);
+    const actual = new URL(value);
+    if (expected.origin !== actual.origin || !['http:', 'https:'].includes(actual.protocol)) return false;
+    const path = expected.pathname.replace(/\/$/, '');
+    return actual.pathname.replace(/\/$/, '') === `${path}/followers`;
   } catch {
     return false;
   }
 }
 
-/**
- * Inverse of `audienceFor()` in note.ts: map the audience of an inbound Note
- * to a local visibility. Peers put the audience on the Create, on the Note, or
- * on both; the union is used so a mismatched copy cannot widen the audience.
- *
- * An absent audience keeps the historical default (public).
- */
+/** Inverse of `audienceFor()` in note.ts: map an inbound Note's audience to a visibility. */
 export function visibilityFromInboundAudience(
   activity: Record<string, unknown>,
   object: Record<string, unknown>,
   actorId: string,
 ): Visibility {
-  const audience = inboundAudience(activity, object);
-  if (audience.length === 0) return 'public';
-
   const to: string[] = [];
   const cc: string[] = [];
   for (const source of [activity, object]) {
-    for (const [field, target] of [
-      ['to', to],
-      ['cc', cc],
-    ] as const) {
-      const value = source[field];
-      if (typeof value === 'string') target.push(value);
-      else if (Array.isArray(value))
-        target.push(...value.filter((entry): entry is string => typeof entry === 'string'));
-    }
+    to.push(...audienceEntries(source.to));
+    cc.push(...audienceEntries(source.cc));
   }
-  if (to.includes(PUBLIC_COLLECTION)) return 'public';
-  if (cc.includes(PUBLIC_COLLECTION)) return 'unlisted';
+  if (to.length === 0 && cc.length === 0) return inboundAudience(activity, object).length === 0 ? 'public' : 'direct';
+  if (to.some(isPublicAddress)) return 'public';
+  if (cc.some(isPublicAddress)) return 'unlisted';
   if ([...to, ...cc].some((value) => isFollowersCollection(value, actorId))) return 'private';
   return 'direct';
 }
@@ -947,20 +930,21 @@ async function handleDelete(
     return;
   }
 
-  // A deleted actor loses its follower relation and its posts.
-  if (object?.type === 'Person' || object?.type === 'Tombstone') {
-    const isActor = objectUrl === actorId;
-    if (isActor) {
-      const userId = await localUserId(env, username);
-      if (userId) {
-        await env.DB.prepare('DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
-          .bind(userId, actorId)
-          .run();
-      }
-      await env.DB.prepare('UPDATE posts SET status = ?, hidden = 1 WHERE actor_id = ?').bind('deleted', actorId).run();
-      console.log('Remote actor deleted:', actorId);
-      return;
+  // A deleted actor loses its follower relation and its posts. Peers send the
+  // actor URL either as a bare string object or as a Person/Tombstone object.
+  const isActorDelete =
+    objectUrl === actorId &&
+    (typeof activity.object === 'string' || object?.type === 'Person' || object?.type === 'Tombstone');
+  if (isActorDelete) {
+    const userId = await localUserId(env, username);
+    if (userId) {
+      await env.DB.prepare('DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+        .bind(userId, actorId)
+        .run();
     }
+    await env.DB.prepare('UPDATE posts SET status = ?, hidden = 1 WHERE actor_id = ?').bind('deleted', actorId).run();
+    console.log('Remote actor deleted:', actorId);
+    return;
   }
 
   const postId = await resolveLikeTarget(env, objectUrl);
@@ -1051,8 +1035,21 @@ async function handleMove(
   username: string,
 ): Promise<void> {
   const object = objectOf(activity);
-  const movedTo = typeof object?.movedTo === 'string' ? object.movedTo : null;
+  // Mastodon emits `target`; other peers use `movedTo` on the object.
+  const movedTo =
+    typeof activity.target === 'string' ? activity.target : typeof object?.movedTo === 'string' ? object.movedTo : null;
   if (!movedTo) return;
+  if (typeof object?.id === 'string' && object.id !== actorId) return;
+  let target: URL;
+  let source: URL;
+  try {
+    target = new URL(movedTo);
+    source = new URL(actorId);
+  } catch {
+    return;
+  }
+  // Only a valid URL on the signing actor's origin may become its new identity.
+  if (!['http:', 'https:'].includes(target.protocol) || target.origin !== source.origin) return;
   await env.DB.prepare(
     `UPDATE ap_actors SET moved_to = ?, fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE actor_url = ?`,
   )

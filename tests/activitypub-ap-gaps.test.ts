@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { inboxReplayKey } from '../functions/lib/activitypub/inbox.ts';
 import queueWorker, { AP_DLQ_QUEUE } from '../functions/queue-worker.ts';
 import { activityShape, diffShapes } from './federation/diff.ts';
 import { createTestDatabase, type TestDatabase } from './helpers/d1.ts';
@@ -124,6 +125,56 @@ describe('ActivityPub dead-letter queue consumer', () => {
     assert.equal(after?.n, before?.n);
     assert.deepEqual(acked, ['delivery-1'], 'an unroutable inbox is still acked, not stored as a dead letter');
     assert.deepEqual(retried, []);
+  });
+});
+
+describe('Inbox replay fingerprint', () => {
+  const DATE = 'Wed, 21 Oct 2015 07:28:00 GMT';
+  const DIGEST = 'sha-256=AQIDBAUGBwg=';
+  const BASE_SIGNATURE =
+    'keyId="https://remote.example/users/alice#main-key",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="AQIDBA=="';
+
+  function request(signature: string, digest = DIGEST): Request {
+    return new Request('https://flaxia.app/api/actors/alice/inbox', {
+      method: 'POST',
+      headers: { Signature: signature, Date: DATE, Digest: digest },
+    });
+  }
+
+  it('ignores unknown Signature parameters and parameter order', async () => {
+    const base = await inboxReplayKey(request(BASE_SIGNATURE));
+    const extended = await inboxReplayKey(
+      request(
+        `signature="AQIDBA==",keyId="https://remote.example/users/alice#main-key",headers="(request-target) host date digest",algorithm="rsa-sha256",vendor_extension="whatever"`,
+      ),
+    );
+    assert.ok(base);
+    assert.equal(extended, base, 'a vendor extension must not create a second replay key');
+  });
+
+  it('changes when the signed identity, clock, digest or signature bytes change', async () => {
+    const base = await inboxReplayKey(request(BASE_SIGNATURE));
+    const variants = [
+      BASE_SIGNATURE.replace('alice#main-key', 'bob#main-key'),
+      BASE_SIGNATURE.replace('signature="AQIDBA=="', 'signature="AQIDBg=="'),
+      BASE_SIGNATURE.replace('algorithm="rsa-sha256"', 'created="1700000000",algorithm="rsa-sha256"'),
+    ];
+    for (const signature of variants) {
+      const key = await inboxReplayKey(request(signature));
+      assert.ok(key);
+      assert.notEqual(key, base);
+    }
+    assert.notEqual(await inboxReplayKey(request(BASE_SIGNATURE, 'sha-256=OTHER')), base);
+  });
+
+  it('returns null when the signature is unparseable', async () => {
+    assert.equal(await inboxReplayKey(request('not-a-signature')), null);
+    assert.equal(
+      await inboxReplayKey(
+        new Request('https://flaxia.app/api/inbox', { method: 'POST', headers: { Date: DATE, Digest: DIGEST } }),
+      ),
+      null,
+    );
   });
 });
 

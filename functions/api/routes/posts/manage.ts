@@ -3,6 +3,7 @@ import { buildDeleteActivity } from '../../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
 import { deliverToFollowers, deliverToInbox, resolveActorInbox } from '../../../lib/activitypub/delivery';
 import { audienceFor, type Visibility } from '../../../lib/activitypub/note';
+import { extractMentionHandles } from '../../../lib/activitypub/text.ts';
 import { isAdmin } from '../../../lib/admin.ts';
 import {
   type AttachmentInput,
@@ -397,15 +398,10 @@ manage.put('/posts/:id', async (c) => {
       }
       hashtagsJson = JSON.stringify(hashtags);
 
-      // Extract mentions from text
-      const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-      const mentionSet = new Set<string>();
-      let mentionMatch: RegExpExecArray | null;
-      while ((mentionMatch = mentionRegex.exec(trimmed)) !== null) {
-        mentionSet.add(mentionMatch[1]);
-      }
-      const mentionedUsernames = Array.from(mentionSet);
-      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, post.username);
+      // Extract mentions with their optional remote domain, exactly like the
+      // composer does, so an edited post keeps WebFinger-resolved actors.
+      const mentionedHandles = extractMentionHandles(trimmed);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedHandles, post.username, c.env);
     }
 
     // Handle attachment key updates and cleanup old files

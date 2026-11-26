@@ -3,7 +3,7 @@ import { localActorUsername } from './actor.ts';
 import { isDirectDelivery } from './delivery.ts';
 import { type FetchOptions, resolveActorPublicKey } from './fetch.ts';
 import { actorSignOptions, ensureActorKey } from './keys.ts';
-import { parseSignatureHeader, verifyDigest, verifyHttpSignature } from './signature.ts';
+import { decodeSignatureBytes, parseSignatureHeader, verifyDigest, verifyHttpSignature } from './signature.ts';
 
 /**
  * The inbox of this instance.
@@ -57,12 +57,34 @@ export async function readInboxBody(req: Request): Promise<string | null> {
  * that window.
  */
 export async function inboxReplayKey(req: Request): Promise<string | null> {
-  const signature = req.headers.get('Signature');
+  const signatureHeader = req.headers.get('Signature');
   const date = req.headers.get('Date');
   const digest = req.headers.get('Digest');
-  if (!signature || !date || !digest) return null;
+  if (!signatureHeader || !date || !digest) return null;
+  let keyId: string;
+  let created: number | undefined;
+  let signatureBytes: Uint8Array | null;
   try {
-    const bytes = new TextEncoder().encode(`${signature}\n${date}\n${digest}`);
+    const parsed = parseSignatureHeader(signatureHeader);
+    keyId = parsed.keyId;
+    created = parsed.created;
+    signatureBytes = decodeSignatureBytes(parsed.signature);
+  } catch {
+    return null;
+  }
+  if (!signatureBytes) return null;
+  try {
+    // Only the semantic parts of the signature enter the fingerprint: extra
+    // parameters (algorithm, key version, vendor extensions, ordering) must not
+    // turn the same signed delivery into a different replay key.
+    const fingerprint = [
+      keyId,
+      created === undefined ? '' : String(created),
+      date,
+      digest.replace(/\s+/g, '').toLowerCase(),
+      Array.from(signatureBytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+    ].join('\n');
+    const bytes = new TextEncoder().encode(fingerprint);
     const hash = await crypto.subtle.digest('SHA-256', bytes);
     return `ap:replay:${Array.from(new Uint8Array(hash))
       .map((byte) => byte.toString(16).padStart(2, '0'))

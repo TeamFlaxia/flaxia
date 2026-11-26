@@ -339,7 +339,8 @@ export async function resolveMentions(
   for (const raw of capped) {
     const handle = normalizeMentionInput(raw);
     if (!handle) continue;
-    const key = handle.domain ? `${handle.username.toLowerCase()}@${handle.domain}` : handle.username.toLowerCase();
+    // One canonical key per account, independent of the casing the author typed.
+    const key = `${handle.username.toLowerCase()}@${(handle.domain ?? '').toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
     normalized.push(handle);
@@ -365,7 +366,9 @@ export async function resolveMentions(
 
   const remoteActors = await Promise.all(
     normalized.map((handle) =>
-      handle.domain && env ? lookupRemoteHandle(`${handle.username}@${handle.domain}`, env) : null,
+      handle.domain && env
+        ? lookupRemoteHandle(`${handle.username.toLowerCase()}@${handle.domain.toLowerCase()}`, env)
+        : null,
     ),
   );
 

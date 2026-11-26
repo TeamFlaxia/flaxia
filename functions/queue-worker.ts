@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { backfillGameTitles } from './lib/game-title-backfill.ts';
-import { PUBLIC_COLLECTION } from './lib/activitypub/context.ts';
+import { isPublicAddress } from './lib/activitypub/context.ts';
 import { parsePublicHttpUrl } from './lib/url-guard.ts';
 
 /** How long a quarantined message may stay in D1 before the daily prune. */
@@ -244,14 +244,6 @@ function isJsonRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** `to`/`cc` can be a string, an array or an object with an `id`. */
-function addressesPublic(audience: unknown): boolean {
-  if (typeof audience === 'string') return audience === PUBLIC_COLLECTION;
-  if (Array.isArray(audience)) return audience.some(addressesPublic);
-  if (isJsonRecord(audience)) return audience.id === PUBLIC_COLLECTION;
-  return false;
-}
-
 /**
  * Drop private body fields from a non-public Create before it reaches D1.
  *
@@ -266,22 +258,25 @@ function redactPrivateActivity(record: JsonRecord): boolean {
 
   const object = activity.object;
   if (
-    addressesPublic(activity.to) ||
-    addressesPublic(activity.cc) ||
-    (isJsonRecord(object) && (addressesPublic(object.to) || addressesPublic(object.cc)))
+    isPublicAddress(activity.to) ||
+    isPublicAddress(activity.cc) ||
+    (isJsonRecord(object) && (isPublicAddress(object.to) || isPublicAddress(object.cc)))
   ) {
     return false;
   }
 
+  // `summary`, `name` and `attachment` can carry the private body just as
+  // well as `content` (and a CW is often the most sensitive part of all).
+  const privateKeys = ['to', 'cc', 'bto', 'bcc', 'audience', 'content', 'contentMap', 'summary', 'name', 'attachment'];
   let changed = false;
-  for (const key of ['to', 'cc', 'content', 'contentMap']) {
+  for (const key of privateKeys) {
     if (key in activity) {
       delete activity[key];
       changed = true;
     }
   }
   if (isJsonRecord(object)) {
-    for (const key of ['content', 'contentMap', 'to', 'cc']) {
+    for (const key of privateKeys) {
       if (key in object) {
         delete object[key];
         changed = true;

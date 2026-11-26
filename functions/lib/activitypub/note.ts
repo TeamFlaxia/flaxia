@@ -245,10 +245,15 @@ export function buildNoteObject(
 
   const { to, cc } = audienceFor(post.visibility ?? 'public', { followersUrl, mentionUrls });
 
-  const mentionHandles: Record<string, string> = { ...(options.mentionHandles ?? {}) };
+  // Both producers and consumers lower-case mention keys so a handle typed
+  // with different casing still links to the resolved remote actor.
+  const mentionHandles: Record<string, string> = {};
+  for (const [key, url] of Object.entries(options.mentionHandles ?? {})) {
+    mentionHandles[key.toLowerCase()] = url;
+  }
   for (const mention of post.mentions ?? []) {
     if (!mention.url || !isHttpUrl(mention.url)) continue;
-    const key = mention.domain ? `${mention.username}@${mention.domain}` : mention.username;
+    const key = (mention.domain ? `${mention.username}@${mention.domain}` : mention.username).toLowerCase();
     mentionHandles[key] = mention.url;
   }
 

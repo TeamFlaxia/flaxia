@@ -49,9 +49,10 @@ describe('inbound note references accept canonical URLs', () => {
 });
 
 describe('legacy actor inbox URLs', () => {
-  it('redirects both /users and /actors inbox paths', () => {
+  it('handles both /users and /actors inbox paths in place', () => {
+    // A 308 would break the signature: peers sign the original request target.
     for (const path of ['/users/alice/inbox', '/actors/alice/inbox']) {
-      assert.deepEqual(legacyRedirect(path), { location: '/api/actors/alice/inbox', status: 308 });
+      assert.equal(legacyRedirect(path), null);
     }
   });
 });

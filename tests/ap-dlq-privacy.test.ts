@@ -113,6 +113,80 @@ describe('ap_dlq privacy', () => {
     }
   });
 
+  it('redacts summary, name and attachments of a private Create', async () => {
+    const db = createTestDatabase();
+    try {
+      const secret = {
+        type: 'delivery',
+        inboxUrl: 'https://peer.example/inbox',
+        activity: {
+          type: 'Create',
+          actor: 'https://remote.example/actors/alice',
+          to: ['https://remote.example/actors/bob'],
+          cc: ['https://remote.example/followers/alice'],
+          bto: ['https://remote.example/actors/dave'],
+          audience: ['https://remote.example/actors/eve'],
+          summary: 'private warning',
+          object: {
+            id: 'https://remote.example/notes/secret-2',
+            type: 'Note',
+            content: 'eyes only',
+            summary: 'content warning for eyes only',
+            name: 'private title',
+            attachment: [{ type: 'Document', url: 'https://remote.example/media/private.zip' }],
+            bcc: ['https://remote.example/actors/frank'],
+          },
+        },
+      };
+      const { batch } = dlqBatch([JSON.stringify({ payload: JSON.stringify(secret), error: null })]);
+      await queueWorker.queue(batch, fakeEnv(db));
+      const row = await storedRow(db, 'privacy-0');
+      assert.ok(row);
+      assert.deepEqual(JSON.parse(row.payload), {
+        type: 'delivery',
+        inboxUrl: 'https://peer.example/inbox',
+        activity: {
+          type: 'Create',
+          actor: 'https://remote.example/actors/alice',
+          object: { id: 'https://remote.example/notes/secret-2', type: 'Note' },
+        },
+      });
+      for (const leak of [
+        'private warning',
+        'content warning for eyes only',
+        'private title',
+        'private.zip',
+        'actors/dave',
+        'actors/eve',
+        'actors/frank',
+        'eyes only',
+      ]) {
+        assert.equal(row.payload.includes(leak), false, `stored payload leaked ${leak}`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it('keeps a public Create with an alias address verbatim', async () => {
+    const db = createTestDatabase();
+    try {
+      const original = {
+        ...PUBLIC_ACTIVITY,
+        to: ['as:Public'],
+        object: { ...PUBLIC_ACTIVITY.object, to: [{ href: 'Public' }] },
+      };
+      const envelope = JSON.stringify({ payload: JSON.stringify(original), error: '503 peer unavailable' });
+      const { batch } = dlqBatch([envelope]);
+      await queueWorker.queue(batch, fakeEnv(db));
+      const row = await storedRow(db, 'privacy-0');
+      assert.ok(row);
+      assert.equal(row.payload, JSON.stringify(original));
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps a public Create payload verbatim', async () => {
     const db = createTestDatabase();
     try {

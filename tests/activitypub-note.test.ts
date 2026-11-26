@@ -102,6 +102,27 @@ describe('ActivityPub Note builder', () => {
     assert.ok(note.replies);
   });
 
+  it('links a mixed-case remote mention to the resolved actor', () => {
+    const note = buildNoteObject(
+      {
+        id: 'post-case',
+        text: 'hi @Bob@Example.COM',
+        created_at: '2026-01-01T00:00:00.000Z',
+        mentions: [{ username: 'Bob', domain: 'Example.COM', url: 'https://example.com/users/bob' }],
+      },
+      USER,
+      BASE,
+      { followersUrl: FOLLOWERS },
+    );
+    assert.ok(note.content.includes('href="https://example.com/users/bob"'), 'the actor URL must be used');
+    assert.ok(note.content.includes('>@Bob@Example.COM</a>'), 'the author’s casing stays in the visible handle');
+
+    const html = textToHtml('hi @Bob@Example.COM', BASE, {
+      'bob@example.com': 'https://example.com/users/bob',
+    });
+    assert.ok(html.includes('href="https://example.com/users/bob"'));
+  });
+
   it('wraps a Note in a Create activity', () => {
     const note = buildNoteObject({ id: 'post-3', text: 'hello', created_at: '2026-01-01T00:00:00.000Z' }, USER, BASE, {
       followersUrl: FOLLOWERS,
@@ -172,7 +193,7 @@ describe('ActivityPub activity builders', () => {
     assert.deepEqual(announce['@context'], activityContext());
   });
 
-  it('wraps the retracted activity in an Undo addressed to its object', () => {
+  it('wraps the retracted activity in an Undo addressed to its audience', () => {
     const like = buildLikeActivity(BASE, 'alice', `${REMOTE}/notes/1`, 'like-1');
     const undo = buildUndoActivity(BASE, 'alice', like, 'undo-1');
     assert.deepEqual(undo['@context'], activityContext());
@@ -180,9 +201,16 @@ describe('ActivityPub activity builders', () => {
     assert.equal(undo.type, 'Undo');
     assert.equal(undo.actor, `${BASE}/api/actors/alice`);
     assert.deepEqual(undo.object, like);
-    // The target of the retracted activity is the address of the Undo.
-    assert.deepEqual(undo.to, [`${REMOTE}/notes/1`]);
+    // The target and the actor of the retracted activity are both addressees.
+    assert.deepEqual(undo.to, [`${REMOTE}/notes/1`, `${BASE}/api/actors/alice`]);
     assert.deepEqual(undo.cc, []);
+  });
+
+  it('inherits the cc audience of the retracted activity', () => {
+    const like = buildLikeActivity(BASE, 'alice', `${REMOTE}/notes/1`, 'like-audience', { cc: [FOLLOWERS] });
+    const undo = buildUndoActivity(BASE, 'alice', like, 'undo-audience');
+    assert.deepEqual(undo.to, [`${REMOTE}/notes/1`, `${BASE}/api/actors/alice`]);
+    assert.deepEqual(undo.cc, [FOLLOWERS]);
   });
 
   it('builds a Delete as a Tombstone that names the former type', () => {

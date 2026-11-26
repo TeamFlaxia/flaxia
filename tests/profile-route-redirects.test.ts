@@ -30,13 +30,20 @@ test('/users/:username is not redirected to the JSON API', async () => {
   assert.equal(legacyRedirect('/users/alice'), null, '/users/:username is a SvelteKit page, not a redirect');
 });
 
-test('the ActivityPub inbox redirect is preserved in the handle hook', async () => {
-  assert.deepEqual(legacyRedirect('/users/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
-  assert.deepEqual(legacyRedirect('/actors/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
-  const source = await readFile(HOOKS_URL, 'utf8');
-  assert.match(source, /users/);
-  assert.match(source, /inbox/);
-  assert.match(source, /308/);
+test('legacy inbox URLs are handled in place, not redirected', async () => {
+  // A 308 would make peers recompute `(request-target)` and invalidate the
+  // HTTP Signature. SvelteKit routes handle both legacy spellings directly.
+  assert.equal(legacyRedirect('/users/alice/inbox'), null);
+  assert.equal(legacyRedirect('/actors/alice/inbox'), null);
+  const hooks = await readFile(HOOKS_URL, 'utf8');
+  assert.doesNotMatch(hooks, /status: 308/, 'no redirect may carry a signed inbox target');
+  for (const route of [
+    new URL('../src/routes/users/[username]/inbox/+server.ts', import.meta.url),
+    new URL('../src/routes/actors/[username]/inbox/+server.ts', import.meta.url),
+  ]) {
+    const body = await readFile(route, 'utf8');
+    assert.match(body, /handlePersonalInbox/);
+  }
 });
 
 test('_redirects keeps only static rules the adapter can exclude', async () => {

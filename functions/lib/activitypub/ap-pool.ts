@@ -1,7 +1,8 @@
 /** Federated popularity pool: public posts from known instances, SSRF-safe. */
+import type { Db } from '../ports/index.ts';
 import { freshnessBoost } from '../scoring.ts';
 import { checkUrlForSsrf } from '../url-guard.ts';
-import { PUBLIC_COLLECTION } from './context.ts';
+import { audienceEntries, isPublicAddress } from './context.ts';
 import {
   type FederationEnv,
   fetchActivityPubJson,
@@ -13,7 +14,7 @@ import { htmlToText } from './text.ts';
 export const POOL_JOIN_SQL = 'LEFT JOIN ap_pool_metrics pm ON pm.post_id = p.id';
 export const POOL_SCORE_SQL = 'COALESCE(pm.score, 0)';
 export interface PoolEnv extends FederationEnv {
-  DB: D1Database;
+  DB: Db;
   AP_POOL_SEED_DOMAINS?: string;
 }
 export type PoolResult = {
@@ -211,7 +212,7 @@ async function discoverInstances(env: PoolEnv, max: number): Promise<string[]> {
   return [...domains].slice(0, max);
 }
 /** Most-used local hashtags of the last day; json_each ignores malformed rows. */
-async function localTrendingHashtags(db: D1Database): Promise<string[]> {
+async function localTrendingHashtags(db: Db): Promise<string[]> {
   try {
     const rows = await db
       .prepare(`SELECT value AS tag, COUNT(*) AS uses FROM posts, json_each(posts.hashtags)
@@ -297,7 +298,7 @@ async function resolvePoolActor(
   cache.set(key, actor);
   return actor;
 }
-async function upsertPoolActor(db: D1Database, actor: PoolActor): Promise<void> {
+async function upsertPoolActor(db: Db, actor: PoolActor): Promise<void> {
   await db
     .prepare(`INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username,
       display_name, icon_url, domain, summary, fetched_at)
@@ -402,20 +403,10 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: ActorCac
     if (statuses.length >= cap) break;
     const note = recordOf(entry.object) ?? entry;
     if (note.type !== 'Note') continue;
-    const audience = (value: unknown): string[] =>
-      typeof value === 'string'
-        ? [value]
-        : Array.isArray(value)
-          ? value.filter((entry): entry is string => typeof entry === 'string')
-          : [];
-    const to = audience(note.to);
-    const cc = audience(note.cc);
+    const to = audienceEntries(note.to);
+    const cc = audienceEntries(note.cc);
     // `cc`-only PUBLIC is an unlisted Note: normalizeMastodonStatus rejects it.
-    const visibility = to.includes(PUBLIC_COLLECTION)
-      ? 'public'
-      : cc.includes(PUBLIC_COLLECTION)
-        ? 'unlisted'
-        : 'private';
+    const visibility = to.some(isPublicAddress) ? 'public' : cc.some(isPublicAddress) ? 'unlisted' : 'private';
     const attributedTo = urlOf(note.attributedTo);
     if (visibility === 'private' || canonical(attributedTo ?? known) !== actor.actorUrl) {
       skipped++;
@@ -552,25 +543,35 @@ export async function runPoolDiscovery(env: PoolEnv, options: PoolOptions = {}):
 /** Remove old pool rows and their counters; local posts are never eligible. */
 export async function prunePool(env: PoolEnv, olderThanDays = 7): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanDays * DAY_MS).toISOString();
-  await env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id NOT IN (SELECT id FROM posts)').run();
   // Only rows the pool created are eligible. Notes received from actors a
   // local user follows (and any local replies to them) are not pool content,
-  // even though they look remote in the posts table.
-  const stalePoolPost = `ap_object_id IS NOT NULL AND user_id = '' AND created_at < ?
-    AND EXISTS (SELECT 1 FROM ap_pool_metrics pm WHERE pm.post_id = posts.id)`;
+  // even though they look remote in the posts table. Date the cutoff from the
+  // last discovery, not the post: refreshing a popular old post must keep it.
+  const stalePoolPost = `posts.ap_object_id IS NOT NULL AND posts.user_id = ''
+    AND EXISTS (SELECT 1 FROM ap_pool_metrics pm WHERE pm.post_id = posts.id AND pm.fetched_at < ?)`;
   // Capture the ids before deleting metrics: the marker itself lives there.
   const stale = await env.DB.prepare(`SELECT posts.id FROM posts WHERE ${stalePoolPost}`)
     .bind(cutoff)
     .all<{ id: string }>();
   const ids = (stale.results ?? []).map((row) => row.id);
-  if (ids.length === 0) return 0;
+  const orphanMetrics = env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id NOT IN (SELECT id FROM posts)');
+  if (ids.length === 0) {
+    const [orphans] = await env.DB.batch([orphanMetrics]);
+    return (orphans as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+  }
   // A single JSON bind avoids D1's bind-parameter limit on a large prune.
   const idList = JSON.stringify(ids);
-  const metrics = await env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id IN (SELECT value FROM json_each(?))')
-    .bind(idList)
-    .run();
-  const posts = await env.DB.prepare('DELETE FROM posts WHERE id IN (SELECT value FROM json_each(?))')
-    .bind(idList)
-    .run();
-  return (metrics.meta?.changes ?? 0) + (posts.meta?.changes ?? 0);
+  const results = await env.DB.batch([
+    orphanMetrics,
+    // `parent_id`/`root_id` are plain REFERENCES with no ON DELETE action:
+    // detach local replies before removing their parent.
+    env.DB.prepare(
+      'UPDATE posts SET parent_id = NULL, root_id = NULL WHERE parent_id IN (SELECT value FROM json_each(?))',
+    ).bind(idList),
+    env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id IN (SELECT value FROM json_each(?))').bind(idList),
+    env.DB.prepare('DELETE FROM posts WHERE id IN (SELECT value FROM json_each(?))').bind(idList),
+  ]);
+  const changes = (index: number): number =>
+    (results[index] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+  return changes(0) + changes(2) + changes(3);
 }

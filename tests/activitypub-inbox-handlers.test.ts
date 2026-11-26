@@ -753,10 +753,7 @@ describe('ActivityPub inbox handlers', () => {
     assert.equal(actor?.moved_to, `${REMOTE}/users/alice-new`);
   });
 
-  it('ignores a Move that only names a target (the form peers commonly send)', async () => {
-    // Mastodon-style Move uses `target`, not `movedTo`. The handler currently
-    // only reads `movedTo`, so this form is a no-op. Keep the current behaviour
-    // visible here; see the handover report for the gap.
+  it('records a Move that only names a target (the form Mastodon sends)', async () => {
     await handleIncomingActivity(envFor(db), {
       actorId: REMOTE_ACTOR,
       username: 'alice',
@@ -773,7 +770,88 @@ describe('ActivityPub inbox handlers', () => {
       .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
       .bind(REMOTE_ACTOR)
       .first<{ moved_to: string | null }>();
-    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-new`, 'a target-only Move must not change the actor');
+    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-target`, 'a target-only Move must be honoured');
+  });
+
+  it('ignores a Move whose target is foreign or not a URL', async () => {
+    for (const [id, target] of [
+      ['move-foreign', 'https://evil.example/users/alice'],
+      ['move-invalid', 'not-a-url'],
+    ]) {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/${id}`,
+          type: 'Move',
+          actor: REMOTE_ACTOR,
+          object: REMOTE_ACTOR,
+          target,
+        },
+      });
+    }
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-target`, 'an untrusted target must not replace the actor');
+  });
+
+  it('treats an actor Delete with a string object as an actor deletion', async () => {
+    const originalFetch = globalThis.fetch;
+    const restore = stubRemoteActor(originalFetch);
+    try {
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+           VALUES ('following-bob-delete', 'local-1', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
+        )
+        .bind(REMOTE_BOB, `${REMOTE}/users/bob/inbox`)
+        .run();
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
+           VALUES ('follower-string-delete', 'local-1', ?, ?, '2026-01-01T00:00:00.000Z')`,
+        )
+        .bind(REMOTE_BOB, `${REMOTE}/users/bob/inbox`)
+        .run();
+      const noteId = `${REMOTE}/notes/string-delete`;
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_BOB,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/string-delete-create`,
+          type: 'Create',
+          actor: REMOTE_BOB,
+          object: { id: noteId, type: 'Note', attributedTo: REMOTE_BOB, content: 'temporary' },
+        },
+      });
+
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_BOB,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/string-delete`,
+          type: 'Delete',
+          actor: REMOTE_BOB,
+          object: REMOTE_BOB,
+        },
+      });
+
+      const follower = await db
+        .prepare('SELECT id FROM ap_followers WHERE actor_url = ?')
+        .bind(REMOTE_BOB)
+        .first<{ id: string }>();
+      assert.equal(follower, null, 'a bare-string actor Delete must remove the follower');
+      const post = await db
+        .prepare('SELECT status, hidden FROM posts WHERE ap_object_id = ?')
+        .bind(noteId)
+        .first<{ status: string; hidden: number }>();
+      assert.equal(post?.status, 'deleted');
+      assert.equal(post?.hidden, 1);
+    } finally {
+      restore();
+    }
   });
 
   it('removes the follower and hides the posts of a deleted actor', async () => {

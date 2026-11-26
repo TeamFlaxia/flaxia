@@ -694,6 +694,81 @@ describe('federated popularity pool', () => {
     }
   });
 
+  it('detaches local replies before deleting a stale pool post', async () => {
+    const db = createTestDatabase();
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+           VALUES ('pool-parent', '', 'alice@mastodon.test', 'from pool', 'published', ?, ?)`,
+        )
+        .bind(`${ACTOR_URL}/statuses/parent`, old)
+        .run();
+      await db
+        .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+        .bind('pool-parent', DOMAIN, old)
+        .run();
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, parent_id, root_id, created_at)
+           VALUES ('local-child', 'u1', 'local', 'a local reply', 'published', 'pool-parent', 'pool-parent', ?)`,
+        )
+        .bind(CREATED_AT)
+        .run();
+
+      const removed = await prunePool(envFor(db));
+      // Orphan metrics + stale metrics + the post itself; the reply is kept.
+      assert.equal(removed, 2);
+      assert.equal(await db.prepare('SELECT id FROM posts WHERE id = ?').bind('pool-parent').first(), null);
+      const reply = await db
+        .prepare('SELECT parent_id, root_id FROM posts WHERE id = ?')
+        .bind('local-child')
+        .first<{ parent_id: string | null; root_id: string | null }>();
+      assert.ok(reply, 'the local reply must not be deleted with its remote parent');
+      assert.equal(reply.parent_id, null);
+      assert.equal(reply.root_id, null);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('keeps a pool post refreshed recently even when the post itself is old', async () => {
+    const db = createTestDatabase();
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const fresh = new Date().toISOString();
+    try {
+      for (const [id, fetchedAt] of [
+        ['stale-pool', old],
+        ['refreshed-pool', fresh],
+      ] as const) {
+        await db
+          .prepare(
+            `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+             VALUES (?, '', 'alice@mastodon.test', 'from pool', 'published', ?, ?)`,
+          )
+          .bind(id, `${ACTOR_URL}/statuses/${id}`, old)
+          .run();
+        await db
+          .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+          .bind(id, DOMAIN, fetchedAt)
+          .run();
+      }
+
+      const removed = await prunePool(envFor(db));
+      assert.equal(removed, 2);
+      const remaining = await db
+        .prepare("SELECT id FROM posts WHERE id IN ('stale-pool', 'refreshed-pool') ORDER BY id")
+        .all<{ id: string }>();
+      assert.deepEqual(
+        remaining.results.map((row) => row.id),
+        ['refreshed-pool'],
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it('never exposes unlisted statuses in the public pool', async () => {
     assert.equal(normalizeMastodonStatus(status({ visibility: 'unlisted' }), actorInfo(), BASE), null);
     const db = createTestDatabase();

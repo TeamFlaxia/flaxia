@@ -1,5 +1,5 @@
 import { actorUrl } from './actor.ts';
-import { activityContext, PUBLIC_COLLECTION } from './context.ts';
+import { activityContext, audienceEntries, PUBLIC_COLLECTION } from './context.ts';
 
 /**
  * Builders for the activities Flaxia sends.
@@ -126,15 +126,29 @@ export function buildUndoActivity(
   unique: string,
   audience: ActivityAudience = {},
 ): Record<string, unknown> {
-  const target = typeof object.object === 'string' ? object.object : '';
+  // An Undo has to reach the same audience as the activity it retracts:
+  // dropping `cc` (or the actor URL) leaves peers with a stale follow/like.
+  const inheritedTo = audienceEntries(object.to);
+  const inheritedCc = audienceEntries(object.cc);
+  const originalActor = typeof object.actor === 'string' ? object.actor : null;
+  const target = typeof object.object === 'string' ? object.object : null;
+  const to = [
+    ...new Set([
+      ...(audience.to ?? inheritedTo),
+      ...inheritedTo,
+      ...(target ? [target] : []),
+      ...(originalActor ? [originalActor] : []),
+    ]),
+  ];
+  const cc = [...new Set([...(audience.cc ?? inheritedCc), ...inheritedCc])];
   return {
     '@context': activityContext(),
     id: activityId(baseUrl, 'Undo', unique),
     type: 'Undo',
     actor: actorOf(baseUrl, username),
     object,
-    to: target ? [target] : (audience.to ?? []),
-    cc: audience.cc ?? [],
+    to,
+    cc,
   };
 }
 

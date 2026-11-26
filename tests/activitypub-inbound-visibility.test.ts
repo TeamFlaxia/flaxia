@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, beforeEach, describe, it } from 'node:test';
 import { Hono } from 'hono';
 import type { Bindings, Variables } from '../functions/api/types.ts';
 import { PUBLIC_COLLECTION } from '../functions/lib/activitypub/context.ts';

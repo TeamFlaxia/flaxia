@@ -62,10 +62,10 @@ export function withSecurityHeaders(response: Response, setCookie?: string): Res
 
 // Static redirects live in `_redirects`; parameterised ones cannot be expressed
 // there because adapter-cloudflare must list them in `_routes.json`.
+// Inbox paths are deliberately absent: a 308 would make peers recompute
+// `(request-target)`, breaking the HTTP Signature. SvelteKit serves them in place.
 export function legacyRedirect(pathname: string): { location: string; status: number } | null {
-  let match = pathname.match(/^(?:\/users|\/actors)\/([^/]+)\/inbox$/);
-  if (match) return { location: `/api/actors/${match[1]}/inbox`, status: 308 };
-  match = pathname.match(/^\/actors\/([^/]+)(\/(?:outbox|followers|following|liked|featured))?$/);
+  let match = pathname.match(/^\/actors\/([^/]+)(\/(?:outbox|followers|following|liked|featured))?$/);
   if (match) return { location: `/api/actors/${match[1]}${match[2] ?? ''}`, status: 301 };
   match = pathname.match(/^\/notes\/([^/]+)$/);
   if (match) return { location: `/api/notes/${match[1]}`, status: 301 };

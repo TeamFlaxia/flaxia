@@ -137,10 +137,12 @@ export function textToHtml(text: string, baseUrl: string, mentionUrls?: Record<s
       const username = groups.username;
       const domain = groups.domain;
       const handle = domain ? `@${username}@${domain}` : `@${username}`;
-      const lookup = domain ? `${username}@${domain}` : username;
+      // Mention keys are stored lower-cased by both buildNoteObject and
+      // resolveMentions: `@Bob@Example.COM` must resolve like `@bob@example.com`.
+      const lookup = (domain ? `${username}@${domain}` : username).toLowerCase();
       // Stored mention URLs come from a remote actor document: escape again
       // before placing them in an attribute.
-      const mapped = mentionUrls?.[lookup] ?? mentionUrls?.[lookup.toLowerCase()];
+      const mapped = mentionUrls?.[lookup];
       const href = escapeHtml(mapped ?? `${baseUrl}/users/${username}`);
       linked += `<span class="h-card"><a href="${href}" class="u-url mention">${handle}</a></span>`;
       continue;
