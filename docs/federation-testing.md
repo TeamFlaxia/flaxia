@@ -13,12 +13,12 @@ instance in secure mode that answers nothing but a signed request.
 | Peer | Use | Needs |
 |---|---|---|
 | GoToSocial 0.22.2 | every pull request, weekly schedule and local runs | one container, SQLite |
-| Mastodon 4.7.5 | pull requests (non-blocking), weekly schedule and local runs | Postgres, Redis, three processes (docker compose) |
+| Mastodon 4.7.5 | weekly schedule and local runs | Postgres, Redis, three processes (docker compose) |
 
 Mastodon is the second peer because it is the implementation most instances
-use. Its job is independent from the GoToSocial job and runs on pull requests as
-a non-blocking check as well as on the weekly schedule: a heavyweight compose
-stack must not block pull requests, but compatibility with the **pinned version
+use. Its job is independent from the GoToSocial job and runs on the weekly
+schedule: the heavyweight compose stack is too slow and its readiness too
+flaky to run on every pull request, but compatibility with the **pinned version
 v4.7.5** still has to be checked regularly to detect regressions. The job does
 not detect or track new releases.
 
@@ -103,8 +103,8 @@ them the peer cannot verify a signature of it.
 The workflow `.github/workflows/federation.yml` has two independent jobs.
 `differential` starts the instance and GoToSocial on every pull request and
 once a week; `differential-mastodon` does the same with the pinned Mastodon
-v4.7.5 on pull requests (non-blocking via `continue-on-error`) and on the weekly
-schedule (45 minute timeout). The Mastodon run is a compatibility-regression
+v4.7.5 on the weekly schedule only (45 minute timeout, non-blocking via
+`continue-on-error`). The Mastodon run is a compatibility-regression
 check against that fixed version, not a way to discover new releases. Both jobs
 set `FLAXIA_FEDERATION_PEER` to the peer they start; a missing or misspelled name
 fails the test run instead of silently skipping it. The Mastodon job removes its

@@ -71,6 +71,8 @@ const groups = {
     // SSR boot data (hydration gate removal).
     'ssr-boot-client',
     'ssr-boot-injection',
+    // D1 migration replay safety (no dev server required).
+    'migration-idempotency',
   ],
   'auth-vault': [
     'auth',
@@ -215,6 +217,7 @@ const groups = {
   ],
   activitypub: [
     'activitypub-ap-gaps',
+    'activitypub-public-alias',
     'ap-dlq-privacy',
     'activitypub-inbound-visibility',
     'federation-activity-shape',

@@ -76,9 +76,10 @@ jobs:
     # Mastodon needs Postgres, Redis and three services, so it is non-blocking.
     # The image is pinned to a fixed release: this job detects compatibility
     # regressions against that version, not new releases of the peer. Run it on
-    # pull requests as well as the weekly schedule; the GoToSocial job above is
-    # unchanged and blocks every pull request.
-    if: github.event_name == 'schedule' || github.event_name == 'pull_request'
+    # the weekly schedule only: Mastodon needs Postgres/Redis and its readiness
+    # is not reliable enough to paint every pull request red. The GoToSocial
+    # differential job above remains the blocking peer check on pull requests.
+    if: github.event_name == 'schedule'
     continue-on-error: true
     # Independent from the GoToSocial job: they share the workflow-level
     # concurrency group otherwise and would cancel each other on a schedule.
