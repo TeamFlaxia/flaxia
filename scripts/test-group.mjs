@@ -273,6 +273,7 @@ const groups = {
     'native-fetch',
     'federated-ui',
     'profile-route-redirects',
+    'remote-profile-p3',
     'remote-profile-ssr',
     'remote-profile-ui',
     'ssr',

@@ -10,7 +10,7 @@
   "functions/api/routes/posts/replies.ts": 734,
   "functions/api/routes/tests.ts": 554,
   "functions/api/routes/vault.ts": 808,
-  "functions/lib/activitypub/ap-pool.ts": 568,
+  "functions/lib/activitypub/ap-pool.ts": 576,
   "functions/lib/activitypub/handlers.ts": 1072,
   "functions/lib/auth.ts": 639,
   "functions/lib/crowd.ts": 1563,

@@ -438,7 +438,9 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
       id: `${remote.origin}/activities/create-for-delete-${Date.now()}`,
       type: 'Create',
       actor: remote.actor.actorUrl,
-      to: [PUBLIC_COLLECTION],
+      // A shared inbox needs a local addressee to route to, and the guest feed
+      // needs the Public collection to treat the Note as public.
+      to: [`${BASE}/api/actors/${account.username}`, PUBLIC_COLLECTION],
       object: { id: noteId, type: 'Note', attributedTo: remote.actor.actorUrl, content: text },
     });
     assert.equal(created.status, 202);
@@ -452,7 +454,7 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
       id: `${remote.origin}/activities/delete-${Date.now()}`,
       type: 'Delete',
       actor: remote.actor.actorUrl,
-      to: [PUBLIC_COLLECTION],
+      to: [`${BASE}/api/actors/${account.username}`, PUBLIC_COLLECTION],
       object: { id: noteId, type: 'Tombstone' },
     });
     assert.equal(removed.status, 202);
