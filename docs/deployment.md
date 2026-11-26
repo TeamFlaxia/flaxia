@@ -326,6 +326,36 @@ each message in `ap_dlq` and acknowledges it. It has one bounded retry; a
 persistence failure (including a not-yet-migrated database) is logged and the
 message is acked instead of looping forever.
 
+### Privacy and retention
+
+A quarantined `Create` can contain a followers-only or direct post. Before
+persistence, the worker **redacts the stored copy** of any `Create` whose
+`to`/`cc` (on the activity or its object) does not address
+`https://www.w3.org/ns/activitystreams#Public`: it removes `content`,
+`contentMap`, `to` and `cc` from the activity and its object, keeping the
+activity `id`, `type`, `actor`, the object `id`/`type`, the queue envelope
+(`type`, `inboxUrl`/`username`, `senderUsername`/`actorId`) and the error
+reason. Public activities keep their payload verbatim. The original queue
+message is never changed, and redaction never affects acknowledgement or
+retry behaviour.
+
+D1 is not an indefinite archive. Migration `0151_ap_dlq_retention.sql` adds a
+covering index on `(received_at, id)`, and the dedicated `30 4 * * *` cron in
+`wrangler.worker.toml` deletes rows older than 14 days:
+
+```sql
+DELETE FROM ap_dlq WHERE received_at < ?; -- ISO-8601 cutoff: now - 14 days
+```
+
+The cutoff is computed per run from `AP_DLQ_RETENTION_DAYS` in
+`functions/queue-worker.ts`; a failed prune is logged and does not block the
+other scheduled jobs. To prune manually with a specific cutoff:
+
+```bash
+npx wrangler d1 execute flaxia --remote \
+  --command "DELETE FROM ap_dlq WHERE received_at < '2026-01-15T00:00:00.000Z'"
+```
+
 Inspect what was quarantined with D1:
 
 ```bash
@@ -345,7 +375,9 @@ well: that catches the failures *before* they age out of the queue, while the
 2. Re-publish the original queue message to `activitypub-delivery`. The
    `payload` column is the JSON body of the original message (`type`,
    `inboxUrl`/`username`, `activity`, `senderUsername`/`actorId`), so the
-   redrive goes through the normal delivery path:
+   redrive goes through the normal delivery path. A non-public `Create` was
+   stored with its private body fields removed — reconstruct those from an
+   authoritative source before replaying, never from the redacted row:
 
    ```bash
    npx wrangler d1 execute flaxia --remote \

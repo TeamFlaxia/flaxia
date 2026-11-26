@@ -1,7 +1,11 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { backfillGameTitles } from './lib/game-title-backfill.ts';
+import { PUBLIC_COLLECTION } from './lib/activitypub/context.ts';
 import { parsePublicHttpUrl } from './lib/url-guard.ts';
+
+/** How long a quarantined message may stay in D1 before the daily prune. */
+export const AP_DLQ_RETENTION_DAYS = 14;
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -78,6 +82,19 @@ export default {
         );
       } catch (error) {
         console.error('Popularity pool discovery failed:', (error as Error).message);
+      }
+      return;
+    }
+
+    // Dedicated daily branch: private dead letters must not accumulate in D1
+    // forever. A failure is logged, never retried by the scheduler.
+    if (event.cron === '30 4 * * *') {
+      try {
+        const cutoff = new Date(Date.now() - AP_DLQ_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        const pruned = await pruneDeadLetters(env.DB, cutoff);
+        if (pruned > 0) console.log(`Pruned ${pruned} dead letters older than ${cutoff}`);
+      } catch (error) {
+        console.error('Dead-letter retention failed:', (error as Error).message);
       }
       return;
     }
@@ -221,20 +238,104 @@ function deadLetterFields(body: unknown): { payload: string; error: string | nul
   return { payload: serializeDeadLetterValue(body), error: null };
 }
 
+type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** `to`/`cc` can be a string, an array or an object with an `id`. */
+function addressesPublic(audience: unknown): boolean {
+  if (typeof audience === 'string') return audience === PUBLIC_COLLECTION;
+  if (Array.isArray(audience)) return audience.some(addressesPublic);
+  if (isJsonRecord(audience)) return audience.id === PUBLIC_COLLECTION;
+  return false;
+}
+
+/**
+ * Drop private body fields from a non-public Create before it reaches D1.
+ *
+ * Structural fields (id/type/actor/object id) and the surrounding queue
+ * message are preserved so operators can still identify the failed delivery.
+ * An activity addressed to the Public collection keeps its content: that
+ * material is already published and useful when redriving a poison message.
+ */
+function redactPrivateActivity(record: JsonRecord): boolean {
+  const activity = isJsonRecord(record.activity) ? record.activity : record;
+  if (activity.type !== 'Create') return false;
+
+  const object = activity.object;
+  if (
+    addressesPublic(activity.to) ||
+    addressesPublic(activity.cc) ||
+    (isJsonRecord(object) && (addressesPublic(object.to) || addressesPublic(object.cc)))
+  ) {
+    return false;
+  }
+
+  let changed = false;
+  for (const key of ['to', 'cc', 'content', 'contentMap']) {
+    if (key in activity) {
+      delete activity[key];
+      changed = true;
+    }
+  }
+  if (isJsonRecord(object)) {
+    for (const key of ['content', 'contentMap', 'to', 'cc']) {
+      if (key in object) {
+        delete object[key];
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
+/** Redact only the stored copy; the original queue message is never mutated. */
+function redactDeadLetterPayload(payload: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+  if (!isJsonRecord(parsed)) return payload;
+
+  // The DLQ envelope is {"payload": "<original message>", "error": "..."}.
+  if (typeof parsed.payload === 'string') {
+    const inner = redactDeadLetterPayload(parsed.payload);
+    if (inner === parsed.payload) return payload;
+    parsed.payload = inner;
+    return JSON.stringify(parsed);
+  }
+
+  if (!redactPrivateActivity(parsed)) return payload;
+  return JSON.stringify(parsed);
+}
+
+/** Remove dead letters older than `cutoffIso`; returns the number of rows. */
+export async function pruneDeadLetters(db: D1Database, cutoffIso: string): Promise<number> {
+  const result = await db.prepare('DELETE FROM ap_dlq WHERE received_at < ?').bind(cutoffIso).run();
+  return result.meta?.changes ?? 0;
+}
+
 /**
  * Persist dead letters and acknowledge every message.
  *
  * The queue keeps a dead letter only for its retention window (four days by
- * default). D1 is the durable copy. A missing table or a database outage must
- * not turn the DLQ consumer into an infinite retry loop, so failures are
- * logged and the message is acked either way.
+ * default). D1 is the durable copy, but private (followers-only/direct) Create
+ * bodies are redacted first and a daily cron enforces a 14-day ceiling. A
+ * missing table or a database outage must not turn the DLQ consumer into an
+ * infinite retry loop, so failures are logged and the message is acked either
+ * way.
  */
 export async function storeDeadLetters(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   for (const message of batch.messages) {
     try {
       const { payload, error } = deadLetterFields(message.body);
+      const storedPayload = redactDeadLetterPayload(payload);
       await env.DB.prepare('INSERT INTO ap_dlq (id, queue, payload, error, received_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(message.id, batch.queue, payload, error, new Date().toISOString())
+        .bind(message.id, batch.queue, storedPayload, error, new Date().toISOString())
         .run();
       message.ack();
     } catch (cause) {
