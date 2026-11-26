@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
-import { handlePersonalInbox, handleSharedInbox, type InboxEnv } from '../functions/lib/activitypub/inbox.ts';
+import {
+  handlePersonalInbox,
+  handleSharedInbox,
+  type InboxEnv,
+  MAX_INBOX_BODY_BYTES,
+} from '../functions/lib/activitypub/inbox.ts';
 import { signRequest } from '../functions/lib/activitypub/signature.ts';
 import { createTestDatabase, seedLocalUser, type TestDatabase } from './helpers/d1.ts';
 
@@ -37,9 +42,20 @@ function cacheStub(): CacheStub {
 let privateKeyPem = '';
 let publicKeyPem = '';
 
-function stubRemoteActor(): () => void {
+interface FetchCall {
+  url: string;
+  headers: Headers;
+}
+
+function stubRemoteActor(calls: FetchCall[] = []): () => void {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init !== 'undefined' || input instanceof Request) {
+      calls.push({
+        url: String(input),
+        headers: new Headers(input instanceof Request ? input.headers : init?.headers),
+      });
+    }
     if (!String(input).startsWith(REMOTE)) return new Response('not found', { status: 404 });
     return new Response(
       JSON.stringify({
@@ -74,11 +90,11 @@ describe('ActivityPub inbox', () => {
     db.close();
   });
 
-  function env(): InboxEnv {
+  function env(cache: CacheStub = cacheStub()): InboxEnv {
     return {
       DB: db as unknown as InboxEnv['DB'],
       BASE_URL: BASE,
-      CACHE: cacheStub() as unknown as InboxEnv['CACHE'],
+      CACHE: cache as unknown as InboxEnv['CACHE'],
       AP_DELIVERY_QUEUE: {
         async send(message: QueueMessage) {
           queue.push(message);
@@ -230,6 +246,66 @@ describe('ActivityPub inbox', () => {
       const response = await handleSharedInbox(env(), request);
       assert.equal(response.status, 202);
       assert.equal(queue.length, 0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('rejects an oversized declared Content-Length before reading the body', async () => {
+    const request = new Request(`${BASE}/api/inbox`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/activity+json', 'Content-Length': '999999999' },
+      body: '{}',
+    });
+    const response = await handleSharedInbox(env(), request);
+    assert.equal(response.status, 413);
+    assert.equal(((await response.json()) as { error: string }).error, 'Inbox body too large');
+  });
+
+  it('rejects an oversized actual body, including a multibyte one', async () => {
+    for (const padding of ['x'.repeat(MAX_INBOX_BODY_BYTES), 'あ'.repeat(MAX_INBOX_BODY_BYTES)]) {
+      const body = JSON.stringify({ type: 'Create', actor: REMOTE_ACTOR, padding });
+      const request = new Request(`${BASE}/api/inbox`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/activity+json' },
+        body,
+      });
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 413, 'both ASCII and multibyte bodies must be bounded');
+    }
+  });
+
+  it('rate limits a sender whose KV window is exhausted', async () => {
+    const cache = cacheStub();
+    const window = Math.floor(Date.now() / 1000 / 60);
+    await cache.put(`rl:ap:inbox:unknown:${window}`, '60');
+    const request = new Request(`${BASE}/api/inbox`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/activity+json' },
+      body: '{}',
+    });
+    const response = await handleSharedInbox(env(cache), request);
+    assert.equal(response.status, 429);
+    assert.equal(((await response.json()) as { error: string }).error, 'Rate limit exceeded');
+  });
+
+  it('signs the actor-key fetch with Date and Signature headers', async () => {
+    const calls: FetchCall[] = [];
+    const restore = stubRemoteActor(calls);
+    try {
+      const request = await signedRequest({
+        id: `${REMOTE}/activities/inbox-signed-fetch`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+        object: `${BASE}/api/actors/alice`,
+      });
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 202);
+      const actorFetch = calls.find((call) => call.url === REMOTE_ACTOR);
+      assert.ok(actorFetch, 'the actor document must be fetched to verify the signature');
+      assert.match(actorFetch.headers.get('date') ?? '', /GMT$/);
+      assert.match(actorFetch.headers.get('signature') ?? '', /keyId="[^"]+#main-key"/);
     } finally {
       restore();
     }

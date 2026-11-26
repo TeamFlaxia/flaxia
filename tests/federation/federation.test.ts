@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { BASE_URL, seedUserAndLogin } from '../helpers/setup.ts';
-import { actorShape, diffShapes, formatDifferences, noteShape, webfingerShape } from './diff.ts';
+import { activityShape, actorShape, diffShapes, formatDifferences, noteShape, webfingerShape } from './diff.ts';
 import { createPeer, type FederationPeer } from './peer.ts';
 import { RemoteInstance } from './remote.ts';
 
@@ -37,7 +37,11 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
   let account: { username: string; password: string; email: string; cookie: string };
 
   before(async () => {
+    // A missing or misspelled peer name must fail loudly instead of silently
+    // skipping the whole suite and reporting a green CI run.
+    assert.ok(PEER_KIND, 'FLAXIA_FEDERATION_PEER must name the peer under test');
     peer = createPeer(PEER_KIND);
+    assert.equal(peer.name, PEER_KIND, `the peer "${PEER_KIND}" must implement FederationPeer`);
     remote = new RemoteInstance();
     await remote.start();
     await peer.start();
@@ -74,6 +78,31 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
     const body = (await response.json()) as { posts?: Array<{ id: string; text: string }> };
     return body.posts ?? [];
   }
+
+  async function createPost(text: string): Promise<string> {
+    const response = await api('/api/posts/commit', { method: 'POST', body: JSON.stringify({ text }) });
+    if (!response.ok) throw new Error(`the post failed: ${response.status} ${await response.text()}`);
+    const created = (await response.json()) as { post?: { id?: string } };
+    const id = created.post?.id ?? '';
+    assert.ok(id, 'the committed post must have an id');
+    return id;
+  }
+
+  async function postView(id: string): Promise<{ reload_count: number; hidden: number; status: string }> {
+    const response = await api(`/api/posts/${id}`);
+    return (await response.json()) as { reload_count: number; hidden: number; status: string };
+  }
+
+  async function notifications(): Promise<Array<{ type: string; post_id: string }>> {
+    const response = await api('/api/notifications');
+    const body = (await response.json()) as { notifications?: Array<{ type: string; post_id: string }> };
+    return body.notifications ?? [];
+  }
+
+  it('names the peer under test', () => {
+    assert.ok(PEER_KIND, 'FLAXIA_FEDERATION_PEER must be set to run the federation suite');
+    assert.equal(peer.name, PEER_KIND);
+  });
 
   it('answers WebFinger with the same shape as the peer', async () => {
     const ours = await fetch(`${BASE}/api/.well-known/webfinger?resource=acct:${account.username}@${PEER_DOMAIN}`);
@@ -257,5 +286,167 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
 
     const differences = diffShapes(noteShape(ourDocument), noteShape(peerDocument));
     assert.deepEqual(differences, [], `the notes differ:\n${formatDifferences(differences)}`);
+  });
+
+  it('records a Like and removes it again on Undo-Like', async () => {
+    const postId = await createPost(`a post to like ${Date.now()}`);
+    const note = `${BASE}/api/notes/${postId}`;
+    const like = {
+      id: `${remote.origin}/activities/like-${Date.now()}`,
+      type: 'Like',
+      actor: remote.actor.actorUrl,
+      object: note,
+      to: [`${BASE}/api/actors/${account.username}`],
+    };
+    const delivered = await remote.deliver(`${BASE}/api/inbox`, like);
+    assert.equal(delivered.status, 202);
+
+    const liked = await waitFor(
+      async () => (await notifications()).some((item) => item.type === 'ap_like' && item.post_id === postId),
+      30_000,
+    );
+    assert.ok(liked, 'the Like of a local post must notify its author');
+
+    const undo = {
+      id: `${remote.origin}/activities/undo-like-${Date.now()}`,
+      type: 'Undo',
+      actor: remote.actor.actorUrl,
+      object: like,
+      to: [`${BASE}/api/actors/${account.username}`],
+    };
+    const undone = await remote.deliver(`${BASE}/api/inbox`, undo);
+    assert.equal(undone.status, 202);
+
+    // The instance has no public view of remote like rows. A fresh Like after
+    // the Undo is the observable proof that the row was actually removed: an
+    // undelivered Undo would make the second Like a no-op.
+    const before = (await notifications()).filter((item) => item.type === 'ap_like' && item.post_id === postId).length;
+    await remote.deliver(`${BASE}/api/inbox`, { ...like, id: `${like.id}-again` });
+    const reLiked = await waitFor(
+      async () =>
+        (await notifications()).filter((item) => item.type === 'ap_like' && item.post_id === postId).length > before,
+      30_000,
+    );
+    assert.ok(reLiked, 'Undo-Like must remove the like so a new Like can be recorded');
+  });
+
+  it('records an Announce and removes it again on Undo-Announce', async () => {
+    const postId = await createPost(`a post to announce ${Date.now()}`);
+    const note = `${BASE}/api/notes/${postId}`;
+    const announce = {
+      id: `${remote.origin}/activities/announce-${Date.now()}`,
+      type: 'Announce',
+      actor: remote.actor.actorUrl,
+      object: note,
+      to: [`${BASE}/api/actors/${account.username}`],
+    };
+    const delivered = await remote.deliver(`${BASE}/api/inbox`, announce);
+    assert.equal(delivered.status, 202);
+
+    const announced = await waitFor(async () => (await postView(postId)).reload_count >= 1, 30_000);
+    assert.ok(announced, 'the Announce must count as a reload of the local post');
+
+    const undo = {
+      id: `${remote.origin}/activities/undo-announce-${Date.now()}`,
+      type: 'Undo',
+      actor: remote.actor.actorUrl,
+      object: announce,
+      to: [`${BASE}/api/actors/${account.username}`],
+    };
+    const undone = await remote.deliver(`${BASE}/api/inbox`, undo);
+    assert.equal(undone.status, 202);
+    const removed = await waitFor(async () => (await postView(postId)).reload_count === 0, 30_000);
+    assert.ok(removed, 'Undo-Announce must undo the reload count');
+  });
+
+  it('delivers a Delete of a local post as a Tombstone', async () => {
+    // The remote instance must follow the author to receive the Delete.
+    await remote.primeSenderKey(`${BASE}/api/actors/${account.username}`);
+    const follow = await remote.deliver(`${BASE}/api/inbox`, {
+      id: `${remote.origin}/activities/follow-for-delete-${Date.now()}`,
+      type: 'Follow',
+      actor: remote.actor.actorUrl,
+      to: [`${BASE}/api/actors/${account.username}`],
+      object: `${BASE}/api/actors/${account.username}`,
+    });
+    assert.equal(follow.status, 202);
+
+    const postId = await createPost(`a post to delete ${Date.now()}`);
+    const deleted = await api(`/api/posts/${postId}`, { method: 'DELETE' });
+    assert.ok(deleted.ok, `the delete failed: ${await deleted.text()}`);
+
+    const arrived = await waitFor(
+      async () =>
+        remote.deliveries.some(
+          (delivery) =>
+            delivery.activity.type === 'Delete' && JSON.stringify(delivery.activity.object).includes(postId),
+        ),
+      60_000,
+    );
+    assert.ok(arrived, 'the remote instance did not receive the Delete');
+    const delivery = [...remote.deliveries]
+      .reverse()
+      .find((entry) => entry.activity.type === 'Delete' && JSON.stringify(entry.activity.object).includes(postId));
+    assert.ok(delivery);
+    assert.equal(delivery.signatureValid, true);
+    const object = delivery.activity.object as Record<string, unknown>;
+    assert.equal(object.type, 'Tombstone');
+    assert.equal(object.formerType, 'Note');
+
+    const expected = {
+      type: 'Delete',
+      hasId: true,
+      hasActor: true,
+      hasObject: true,
+      objectIsString: false,
+      objectType: 'Tombstone',
+      hasTo: true,
+      hasCc: true,
+      addressedToPublic: true,
+      contextIsArray: false,
+      undoneType: null,
+      undoneObjectIsString: false,
+    };
+    const differences = diffShapes(activityShape(delivery.activity), expected);
+    assert.deepEqual(differences, [], `the Delete activity differs:\n${formatDifferences(differences)}`);
+  });
+
+  it('hides a remote post when its author deletes it', async () => {
+    // The local account follows the remote instance, so it accepts its notes.
+    const followed = await api('/api/remote-follow', {
+      method: 'POST',
+      body: JSON.stringify({ target: remote.handle }),
+    });
+    if (!followed.ok) {
+      // A previous scenario may already have established the relation.
+      assert.equal(followed.status, 409, `the follow failed: ${await followed.text()}`);
+    }
+
+    const text = `a remote post to delete ${Date.now()}`;
+    const noteId = `${remote.origin}/notes/delete-${Date.now()}`;
+    const created = await remote.deliver(`${BASE}/api/inbox`, {
+      id: `${remote.origin}/activities/create-for-delete-${Date.now()}`,
+      type: 'Create',
+      actor: remote.actor.actorUrl,
+      to: [`${BASE}/api/actors/${account.username}`],
+      object: { id: noteId, type: 'Note', attributedTo: remote.actor.actorUrl, content: text },
+    });
+    assert.equal(created.status, 202);
+
+    const received = await waitFor(async () => (await posts()).some((post) => post.text.includes(text)), 60_000);
+    assert.ok(received, 'the remote note did not arrive');
+    const postId = (await posts()).find((post) => post.text.includes(text))?.id ?? '';
+    assert.ok(postId);
+
+    const removed = await remote.deliver(`${BASE}/api/inbox`, {
+      id: `${remote.origin}/activities/delete-${Date.now()}`,
+      type: 'Delete',
+      actor: remote.actor.actorUrl,
+      to: [`${BASE}/api/actors/${account.username}`],
+      object: { id: noteId, type: 'Tombstone' },
+    });
+    assert.equal(removed.status, 202);
+    const hidden = await waitFor(async () => (await api(`/api/posts/${postId}`)).status === 410, 30_000);
+    assert.ok(hidden, 'a post deleted by its author must no longer be served');
   });
 });

@@ -12,8 +12,13 @@ instance in secure mode that answers nothing but a signed request.
 
 | Peer | Use | Needs |
 |---|---|---|
-| GoToSocial 0.22.2 | CI and local runs | one container, SQLite |
-| Mastodon 4.7.5 | local runs | Postgres, Redis, three processes |
+| GoToSocial 0.22.2 | every pull request, weekly schedule and local runs | one container, SQLite |
+| Mastodon 4.7.5 | weekly schedule and local runs | Postgres, Redis, three processes (docker compose) |
+
+Mastodon is the second peer because it is the implementation most instances
+use. Its job is independent from the GoToSocial job and runs only on the
+weekly schedule: a heavyweight compose stack must not slow down pull requests,
+but a new Mastodon release still has to be checked regularly.
 
 Both peers are started with `network_mode: host`, so they reach the instance
 under test on `localhost` and the other way round.
@@ -53,6 +58,19 @@ FLAXIA_FEDERATION_PEER=gotosocial npm run test:federation
 | Note | A note of the peer reaches the timeline of the instance |
 | Signature | Every delivered activity carries a valid signature and digest |
 | Note document | Both publish a note with the same shape |
+| Like | A remote Like notifies the author; Undo-Like removes it |
+| Announce | A remote Announce counts as a reload; Undo-Announce reverses it |
+| Delete (outbound) | A deleted local post is delivered as a Tombstone with `formerType` |
+| Delete (inbound) | A deleted remote post is hidden on the instance |
+
+The Like, Announce and Delete scenarios are driven by the remote instance of
+the test (`tests/federation/remote.ts`), which signs its deliveries. The
+activities the instance sends back are recorded and compared with
+`activityShape()`; differences in the inner object of an `Undo` are ignored
+with `diffShapes(..., { ignore: ['Undo.object'] })`, because implementations
+express the retracted activity differently. The peer client also exposes
+`favourite`, `unfavourite`, `reblog`, `unreblog` and `deleteStatus` for local
+Mastodon-style checks.
 
 The comparison reduces a document to the properties a peer reads, because
 the documents of two instances never look the same: the ids, the hosts and
@@ -76,7 +94,12 @@ them the peer cannot verify a signature of it.
 
 ## In the CI
 
-The workflow `.github/workflows/federation.yml` starts the instance, starts
-the peer and runs the comparison. It runs on every pull request and once a
-week, because a new release of the peer may change the behaviour of the
-federation.
+The workflow `.github/workflows/federation.yml` has two independent jobs.
+`differential` starts the instance and GoToSocial on every pull request and
+once a week; `differential-mastodon` does the same with Mastodon **only on the
+weekly schedule** (45 minute timeout). A weekly run matters because a new
+release of a peer may change the behaviour of the federation. Both jobs set
+`FLAXIA_FEDERATION_PEER` to the peer they start; a missing or misspelled name
+fails the suite instead of silently skipping it. The Mastodon job removes its
+compose containers and volumes with `if: always()` cleanup, so a failed test
+cannot leave a dirty runner.

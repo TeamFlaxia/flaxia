@@ -71,3 +71,70 @@ jobs:
       - name: Show the log of the instance
         if: always()
         run: tail -n 200 /tmp/federation-app.log
+
+  differential-mastodon:
+    # Mastodon needs Postgres, Redis and three services: keep it off pull
+    # requests, but run it weekly against a new release of the peer. The
+    # GoToSocial job above is unchanged and still covers every pull request.
+    if: github.event_name == 'schedule'
+    # Independent from the GoToSocial job: they share the workflow-level
+    # concurrency group otherwise and would cancel each other on a schedule.
+    concurrency:
+      group: ${{ github.workflow }}-mastodon-${{ github.ref }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Apply migrations
+        run: npm run migrate:local
+      - name: Start the instance under test
+        env:
+          TEST_PEER: mastodon
+        run: |
+          set -o pipefail
+          npx wrangler pages dev .svelte-kit/cloudflare \
+            --binding ADMIN_USERNAMES=remydrescarlet \
+            --d1=DB_TEST \
+            --port 8788 \
+            --inspector-port 9231 \
+            --binding BASE_URL=http://localhost:8788 \
+            --binding ENVIRONMENT=test \
+            --binding AUTH_AUTHORITY_MODE=off \
+            --binding AP_DIRECT_DELIVERY=1 \
+            --binding AP_ALLOWED_PRIVATE_PEERS=localhost,127.0.0.1 \
+            --binding CROWD_ORCHESTRATOR_URL=http://127.0.0.1:9 \
+            --binding CROWD_API_KEY=test-api-key \
+            --binding CROWD_WEBHOOK_SECRET=test-callback-secret \
+            --binding CROWD_WEBHOOK_SIGNING_SECRET=test-webhook-signing-secret \
+            > /tmp/federation-mastodon-app.log 2>&1 &
+          for i in $(seq 1 120); do
+            if curl -fsS http://localhost:8788/home > /dev/null 2>&1; then
+              echo "The instance is ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8788/home > /dev/null
+      - name: Compare the federation with Mastodon
+        env:
+          TEST_PEER: mastodon
+          FLAXIA_FEDERATION_PEER: mastodon
+          FLAXIA_FEDERATION_COMPOSE_PROJECT: flaxia-federation-mastodon-ci
+        run: node --test --experimental-strip-types tests/federation/federation.test.ts
+      - name: Show the log of the instance
+        if: always()
+        run: tail -n 200 /tmp/federation-mastodon-app.log
+      - name: Remove the Mastodon containers and volumes
+        if: always()
+        run: |
+          docker compose \
+            --project-name flaxia-federation-mastodon-ci \
+            --file tests/federation/mastodon/compose.yaml \
+            down --volumes --remove-orphans || true

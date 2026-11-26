@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { backfillGameTitles } from './lib/game-title-backfill.ts';
-import { parsePublicHttpUrl } from './lib/url-guard';
+import { parsePublicHttpUrl } from './lib/url-guard.ts';
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -18,6 +18,9 @@ interface InboxMessage {
 }
 
 type QueueMessage = DeliveryMessage | InboxMessage;
+
+/** The consumer that drains quarantined messages into durable storage. */
+export const AP_DLQ_QUEUE = 'activitypub-delivery-dlq';
 
 interface Env {
   DB: D1Database;
@@ -133,6 +136,14 @@ export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     console.log(`Processing batch of ${batch.messages.length} messages`);
 
+    // A dead letter is terminal: persisting it is the only work left. It must
+    // never be retried like a delivery, otherwise a broken payload would loop
+    // between the queue and the worker forever.
+    if (batch.queue === AP_DLQ_QUEUE) {
+      await storeDeadLetters(batch as unknown as MessageBatch<unknown>, env);
+      return;
+    }
+
     for (const message of batch.messages) {
       try {
         console.log(`Processing message type: ${message.body.type}`);
@@ -159,6 +170,65 @@ export default {
     }
   },
 };
+
+function serializeDeadLetterValue(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '';
+  } catch {
+    return String(value);
+  }
+}
+
+/** The original payload and the failure reason of a quarantined message. */
+function deadLetterFields(body: unknown): { payload: string; error: string | null } {
+  if (typeof body === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'payload' in parsed) {
+        const envelope = parsed as { payload?: unknown; error?: unknown };
+        return {
+          payload: typeof envelope.payload === 'string' ? envelope.payload : serializeDeadLetterValue(envelope.payload),
+          error:
+            envelope.error === undefined
+              ? null
+              : typeof envelope.error === 'string'
+                ? envelope.error
+                : serializeDeadLetterValue(envelope.error),
+        };
+      }
+    } catch {
+      // An arbitrary string is a perfectly valid queue payload: keep it as-is.
+    }
+    return { payload: body, error: null };
+  }
+  return { payload: serializeDeadLetterValue(body), error: null };
+}
+
+/**
+ * Persist dead letters and acknowledge every message.
+ *
+ * The queue keeps a dead letter only for its retention window (four days by
+ * default). D1 is the durable copy. A missing table or a database outage must
+ * not turn the DLQ consumer into an infinite retry loop, so failures are
+ * logged and the message is acked either way.
+ */
+export async function storeDeadLetters(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+  for (const message of batch.messages) {
+    try {
+      const { payload, error } = deadLetterFields(message.body);
+      await env.DB.prepare('INSERT INTO ap_dlq (id, queue, payload, error, received_at) VALUES (?, ?, ?, ?, ?)')
+        .bind(message.id, batch.queue, payload, error, new Date().toISOString())
+        .run();
+      message.ack();
+    } catch (cause) {
+      console.error('Could not persist an ActivityPub dead letter (acknowledging to avoid a retry loop):', {
+        messageId: message.id,
+        error: (cause as Error).message,
+      });
+      message.ack();
+    }
+  }
+}
 
 async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { inboxUrl, activity, senderUsername } = msg;

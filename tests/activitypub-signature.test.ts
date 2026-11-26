@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
-import { isPrivatePeerAllowed, resolveActorPublicKey } from '../functions/lib/activitypub/fetch.ts';
+import {
+  fetchFederationDocument,
+  isPrivatePeerAllowed,
+  resolveActorPublicKey,
+  USER_AGENT,
+} from '../functions/lib/activitypub/fetch.ts';
 import {
   buildSigningString,
   parseSignatureHeader,
@@ -348,6 +353,46 @@ describe('ActivityPub key resolution', () => {
       assert.ok(!requested.some((url) => url.startsWith('https://evil.example')));
       assert.ok(requested.every((url) => url.startsWith('https://remote.example')));
       assert.equal(resolved, '-----BEGIN PUBLIC KEY-----evil');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('ActivityPub authorized fetch', () => {
+  it('signs a GET of a remote document with Date and Signature', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/activity+json' },
+      });
+    }) as typeof fetch;
+    try {
+      const url = 'https://remote.example/users/alice';
+      const response = await fetchFederationDocument(
+        url,
+        {},
+        {
+          privateKeyPem,
+          keyId: 'https://remote.example/users/alice#main-key',
+        },
+      );
+      assert.equal(response?.status, 200);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, url);
+      const headers = new Headers(calls[0].init.headers);
+      assert.equal(headers.get('user-agent'), USER_AGENT);
+      assert.match(headers.get('date') ?? '', /GMT$/);
+      assert.match(headers.get('signature') ?? '', /headers="\(request-target\) host date"/);
+      assert.equal(calls[0].init.method, 'GET');
+
+      // The signature covers the real request, not a decorative header.
+      const request = new Request(url, { method: 'GET', headers });
+      assert.equal(await verifyHttpSignature(request, publicKeyPem, { expectedHost: 'remote.example' }), true);
     } finally {
       globalThis.fetch = originalFetch;
     }

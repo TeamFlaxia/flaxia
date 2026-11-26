@@ -13,10 +13,23 @@ export async function ensureActivityPubDlq(env, request = fetch) {
     if (!response.ok || !body.success) throw new Error(`Cloudflare queue request failed (${response.status})`);
     return body.result;
   }
+  const exists = (queues) => Array.isArray(queues) && queues.some((queue) => queue.queue_name === queueName);
   const existing = await call(`${endpoint}?name=${queueName}`);
   if (!Array.isArray(existing)) throw new Error('Invalid Cloudflare queue list');
-  if (existing.some((queue) => queue.queue_name === queueName)) return;
+  if (exists(existing)) {
+    console.log(`ActivityPub dead-letter queue "${queueName}" already exists`);
+    return;
+  }
   await call(endpoint, { method: 'POST', body: JSON.stringify({ queue_name: queueName }) });
+
+  // Creating a queue is not enough: deploys bind a consumer to it, and a
+  // missing queue would make the whole deployment fail. Verify the new queue
+  // is actually visible before reporting success.
+  const created = await call(`${endpoint}?name=${queueName}`);
+  if (!exists(created)) {
+    throw new Error(`Created queue "${queueName}" but it is not visible in the Cloudflare queue list`);
+  }
+  console.log(`ActivityPub dead-letter queue "${queueName}" exists and is ready`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

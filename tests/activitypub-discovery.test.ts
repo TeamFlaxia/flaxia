@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
-import { BASE_URL, registerUser } from './helpers/setup.ts';
+import { before, describe, it } from 'node:test';
+import { BASE_URL, registerUser, seedUserAndLogin } from './helpers/setup.ts';
 
 const USER = { email: 'apdiscovery@test.com', password: 'password123', username: 'apdiscovery', display_name: 'AP' };
 
@@ -133,5 +133,91 @@ describe('ActivityPub discovery endpoints', () => {
       body: 'hello',
     });
     assert.equal(response.status, 400);
+  });
+
+  describe('outbox pagination', () => {
+    let user: Awaited<ReturnType<typeof seedUserAndLogin>>;
+    let outbox: string;
+    let postId = '';
+    const text = `outbox note ${Date.now()}`;
+
+    before(async () => {
+      user = await seedUserAndLogin(`apoutbox${Date.now().toString(36).slice(-5)}`);
+      outbox = `${BASE_URL}/api/actors/${user.username}/outbox`;
+      const created = await fetch(`${BASE_URL}/api/posts/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: user.cookie },
+        body: JSON.stringify({ text }),
+      });
+      if (!created.ok) throw new Error(`the post failed: ${created.status} ${await created.text()}`);
+      const body = (await created.json()) as { post?: { id?: string } };
+      postId = body.post?.id ?? '';
+      assert.ok(postId, 'the committed post has an id');
+    });
+
+    it('serves the collection root with a total but no items', async () => {
+      const response = await fetch(outbox, { headers: { Accept: 'application/activity+json' } });
+      assert.equal(response.status, 200);
+      const document = (await response.json()) as {
+        type: string;
+        id: string;
+        totalItems: number;
+        orderedItems?: unknown[];
+      };
+      assert.equal(document.type, 'OrderedCollection');
+      assert.equal(document.id, outbox);
+      assert.ok(document.totalItems >= 1);
+      assert.equal(document.orderedItems, undefined);
+    });
+
+    it('serves ?page=1 as an OrderedCollectionPage with the Create activity', async () => {
+      const response = await fetch(`${outbox}?page=1`, { headers: { Accept: 'application/activity+json' } });
+      assert.equal(response.status, 200);
+      const document = (await response.json()) as {
+        type: string;
+        id: string;
+        partOf: string;
+        totalItems: number;
+        orderedItems: Array<{
+          type: string;
+          id: string;
+          actor: string;
+          object: { type: string; attributedTo: string; content: string };
+        }>;
+      };
+      assert.equal(document.type, 'OrderedCollectionPage');
+      assert.equal(document.id, `${outbox}?page=1`);
+      assert.equal(document.partOf, outbox);
+      const create = document.orderedItems.find((item) => item.type === 'Create');
+      assert.ok(create, 'the published note must appear in the outbox');
+      assert.equal(create.actor, `${BASE_URL}/api/actors/${user.username}`);
+      assert.equal(create.object.type, 'Note');
+      assert.equal(create.object.attributedTo, `${BASE_URL}/api/actors/${user.username}`);
+      assert.ok(create.object.content.includes(text));
+    });
+
+    it('falls back to page 1 for a non-numeric page', async () => {
+      const response = await fetch(`${outbox}?page=abc`, { headers: { Accept: 'application/activity+json' } });
+      assert.equal(response.status, 200);
+      const document = (await response.json()) as { type: string; id: string; prev?: string };
+      assert.equal(document.type, 'OrderedCollectionPage');
+      assert.equal(document.id, `${outbox}?page=1`);
+      assert.equal(document.prev, undefined);
+    });
+
+    it('excludes a deleted (hidden) post from the page', async () => {
+      const deleted = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+        method: 'DELETE',
+        headers: { Cookie: user.cookie },
+      });
+      assert.ok(deleted.ok, `the delete failed: ${await deleted.text()}`);
+
+      const response = await fetch(`${outbox}?page=1`, { headers: { Accept: 'application/activity+json' } });
+      const document = (await response.json()) as {
+        totalItems: number;
+        orderedItems: Array<{ object?: { content?: string } }>;
+      };
+      assert.ok(!document.orderedItems.some((item) => item.object?.content?.includes(text)));
+    });
   });
 });

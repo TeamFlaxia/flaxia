@@ -17,6 +17,9 @@ export interface PeerStatus {
   id: string;
   content: string;
   url: string;
+  /** State of the status for the authenticated peer account. */
+  favourited?: boolean;
+  reblogged?: boolean;
 }
 
 export interface FederationPeer {
@@ -28,6 +31,16 @@ export interface FederationPeer {
   account(): Promise<PeerAccount>;
   /** Post a note and return it. */
   post(text: string): Promise<PeerStatus>;
+  /** Read a status by id. */
+  status(statusId: string): Promise<PeerStatus>;
+  /** Favourite / unfavourite a status (Like and Undo-Like on the wire). */
+  favourite(statusId: string): Promise<PeerStatus>;
+  unfavourite(statusId: string): Promise<PeerStatus>;
+  /** Reblog / unreblog a status (Announce and Undo-Announce on the wire). */
+  reblog(statusId: string): Promise<PeerStatus>;
+  unreblog(statusId: string): Promise<PeerStatus>;
+  /** Delete a status (Delete on the wire). */
+  deleteStatus(statusId: string): Promise<void>;
   /** The statuses the peer received (home timeline). */
   timeline(): Promise<PeerStatus[]>;
   /** Follow an account by its id. */
@@ -224,6 +237,18 @@ export async function loginWithPassword(origin: string, username: string, passwo
   return token.access_token;
 }
 
+type StatusJson = { id: string; content: string; url: string; favourited?: boolean; reblogged?: boolean };
+
+function asPeerStatus(status: StatusJson): PeerStatus {
+  return {
+    id: status.id,
+    content: status.content,
+    url: status.url,
+    favourited: status.favourited,
+    reblogged: status.reblogged,
+  };
+}
+
 /** A client of the Mastodon compatible API of a peer. */
 export class PeerClient {
   private readonly origin: string;
@@ -268,13 +293,7 @@ export class PeerClient {
     };
   }
 
-  /**
-   * Change the settings of the account of the peer.
-   *
-   * An account that is created by the admin tool of GoToSocial asks for the
-   * approval of every follow request, which would keep the federation test
-   * from running.
-   */
+  /** Change the settings of the account of the peer. */
   async updateAccount(settings: Record<string, unknown>): Promise<void> {
     await this.request('/api/v1/accounts/update_credentials', {
       method: 'PATCH',
@@ -283,16 +302,60 @@ export class PeerClient {
   }
 
   async post(text: string): Promise<PeerStatus> {
-    const status = await this.request<{ id: string; content: string; url: string }>('/api/v1/statuses', {
+    const status = await this.request<StatusJson>('/api/v1/statuses', {
       method: 'POST',
       body: JSON.stringify({ status: text }),
     });
-    return { id: status.id, content: status.content, url: status.url };
+    return asPeerStatus(status);
+  }
+
+  async status(statusId: string): Promise<PeerStatus> {
+    return asPeerStatus(await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}`));
+  }
+
+  async favourite(statusId: string): Promise<PeerStatus> {
+    return asPeerStatus(
+      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/favourite`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    );
+  }
+
+  async unfavourite(statusId: string): Promise<PeerStatus> {
+    return asPeerStatus(
+      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/unfavourite`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    );
+  }
+
+  async reblog(statusId: string): Promise<PeerStatus> {
+    return asPeerStatus(
+      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/reblog`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    );
+  }
+
+  async unreblog(statusId: string): Promise<PeerStatus> {
+    return asPeerStatus(
+      await this.request<StatusJson>(`/api/v1/statuses/${encodeURIComponent(statusId)}/unreblog`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    );
+  }
+
+  async deleteStatus(statusId: string): Promise<void> {
+    await this.request(`/api/v1/statuses/${encodeURIComponent(statusId)}`, { method: 'DELETE' });
   }
 
   async timeline(): Promise<PeerStatus[]> {
-    const statuses = await this.request<Array<{ id: string; content: string; url: string }>>('/api/v1/timelines/home');
-    return statuses.map((status) => ({ id: status.id, content: status.content, url: status.url }));
+    const statuses = await this.request<StatusJson[]>('/api/v1/timelines/home');
+    return statuses.map(asPeerStatus);
   }
 
   /** Look an account up by its handle, for example `alice@example.org`. */
@@ -431,14 +494,35 @@ export class GoToSocialPeer implements FederationPeer {
    * from running.
    */
   async updateAccount(settings: Record<string, unknown>): Promise<void> {
-    await this.request('/api/v1/accounts/update_credentials', {
-      method: 'PATCH',
-      body: JSON.stringify(settings),
-    });
+    await this.requireClient().updateAccount(settings);
   }
 
   async post(text: string): Promise<PeerStatus> {
     return this.requireClient().post(text);
+  }
+
+  async status(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().status(statusId);
+  }
+
+  async favourite(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().favourite(statusId);
+  }
+
+  async unfavourite(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().unfavourite(statusId);
+  }
+
+  async reblog(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().reblog(statusId);
+  }
+
+  async unreblog(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().unreblog(statusId);
+  }
+
+  async deleteStatus(statusId: string): Promise<void> {
+    await this.requireClient().deleteStatus(statusId);
   }
 
   async timeline(): Promise<PeerStatus[]> {
@@ -478,7 +562,9 @@ export class MastodonPeer implements FederationPeer {
 
   constructor(options: { port?: number; username?: string; password?: string } = {}) {
     this.origin = `http://localhost:${options.port ?? 8080}`;
-    this.project = `flaxia-federation-mastodon-${process.pid}`;
+    // CI sets a stable name so its `if: always()` cleanup can remove the
+    // containers and volumes even when the test process has already exited.
+    this.project = process.env.FLAXIA_FEDERATION_COMPOSE_PROJECT ?? `flaxia-federation-mastodon-${process.pid}`;
     this.username = options.username ?? 'peer';
     this.password = options.password ?? 'peer-password-1234';
   }
@@ -546,14 +632,35 @@ export class MastodonPeer implements FederationPeer {
    * from running.
    */
   async updateAccount(settings: Record<string, unknown>): Promise<void> {
-    await this.request('/api/v1/accounts/update_credentials', {
-      method: 'PATCH',
-      body: JSON.stringify(settings),
-    });
+    await this.requireClient().updateAccount(settings);
   }
 
   async post(text: string): Promise<PeerStatus> {
     return this.requireClient().post(text);
+  }
+
+  async status(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().status(statusId);
+  }
+
+  async favourite(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().favourite(statusId);
+  }
+
+  async unfavourite(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().unfavourite(statusId);
+  }
+
+  async reblog(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().reblog(statusId);
+  }
+
+  async unreblog(statusId: string): Promise<PeerStatus> {
+    return this.requireClient().unreblog(statusId);
+  }
+
+  async deleteStatus(statusId: string): Promise<void> {
+    await this.requireClient().deleteStatus(statusId);
   }
 
   async timeline(): Promise<PeerStatus[]> {
