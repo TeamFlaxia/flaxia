@@ -9,7 +9,7 @@ import { runInBackground } from '../../../lib/scan/index';
 import { enrichPostsForFeed } from '../../feed-enrichment';
 import { requireAuth, resolveMentions, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { colorEntitlementError, isValidPostId } from './helpers.ts';
+import { colorEntitlementError, isValidPostId, visibilityFilter } from './helpers.ts';
 
 export const replies = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -22,16 +22,18 @@ replies.get('/posts/:id/replies', async (c) => {
     // Reuse the user authMiddleware already resolved; session is optional here.
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId = user?.id ?? null;
+    const visibility = visibilityFilter(currentUserId);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Verify parent post exists and is published
+    // Verify parent post exists, is published, and is visible to this viewer
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reload_count, 0) as reload_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reload_count, 0) as reload_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+        visibility.sql,
     )
-      .bind(postId)
+      .bind(postId, ...visibility.params)
       .first();
 
     if (!parentPost) {
@@ -43,9 +45,9 @@ replies.get('/posts/:id/replies', async (c) => {
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} ${visibility.sql}
        ORDER BY p.created_at ASC LIMIT ?`;
-    const params: Array<unknown> = [postId, limit];
+    const params: Array<unknown> = [postId, ...visibility.params, limit];
 
     if (cursor) {
       query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
@@ -53,9 +55,9 @@ replies.get('/posts/:id/replies', async (c) => {
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} AND p.created_at < ?
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} ${visibility.sql} AND p.created_at < ?
        ORDER BY p.created_at ASC LIMIT ?`;
-      params.splice(1, 0, cursor);
+      params.splice(1 + visibility.params.length, 0, cursor);
     }
 
     const result = await c.env.DB.prepare(query)
@@ -114,15 +116,17 @@ replies.get('/posts/:id/thread', async (c) => {
 
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId = user?.id ?? null;
+    const visibility = visibilityFilter(currentUserId);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
     }
 
     const post = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, thumbnail_key, game_description, game_title, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, thumbnail_key, game_description, game_title, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+        visibility.sql,
     )
-      .bind(postId)
+      .bind(postId, ...visibility.params)
       .first();
 
     if (!post) {
@@ -137,9 +141,9 @@ replies.get('/posts/:id/thread', async (c) => {
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
+       WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 ${visibility.sql}`,
     )
-      .bind(rootId)
+      .bind(rootId, ...visibility.params)
       .first();
 
     if (!rootPost) {
@@ -152,10 +156,10 @@ replies.get('/posts/:id/thread', async (c) => {
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ? ${EXACT_DUPLICATE_FILTER}
+       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ? ${EXACT_DUPLICATE_FILTER} ${visibility.sql}
        ORDER BY p.created_at ASC LIMIT 200`,
     )
-      .bind(rootId, rootId)
+      .bind(rootId, rootId, ...visibility.params)
       .all();
 
     if (!repliesResult.success) {
@@ -240,11 +244,13 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Validate parent post exists and is published
+    // Validate parent post exists, is published, and is visible to the author
+    const visibility = visibilityFilter(c.get('user')?.id);
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+        visibility.sql,
     )
-      .bind(postId)
+      .bind(postId, ...visibility.params)
       .first();
 
     if (!parentPost) {
@@ -370,11 +376,13 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Validate parent still exists and is published
+    // Validate parent still exists, is published, and is visible to the author
+    const visibility = visibilityFilter(c.get('user')?.id);
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+        visibility.sql,
     )
-      .bind(postId)
+      .bind(postId, ...visibility.params)
       .first()) as {
       id: string;
       user_id: string;

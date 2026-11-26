@@ -964,3 +964,36 @@
 .post-composer .composer-footer {
   height: 32px;
 }
+
+/* Post visibility selector. Kept compact so the composer height stays stable. */
+.composer-visibility-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 4px 0 2px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text-secondary, currentColor));
+}
+
+.composer-visibility-label {
+  font-weight: 600;
+}
+
+.composer-visibility-select {
+  min-height: 26px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+.composer-visibility-hint {
+  opacity: 0.75;
+}
+
+.post-composer:not(:focus-within) .composer-visibility-hint {
+  display: none;
+}

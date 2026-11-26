@@ -9,7 +9,7 @@ import { clampLimit } from '../../../lib/pagination';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { requireAuth } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { ensureReactionsTable } from './helpers.ts';
+import { ensureReactionsTable, visibilityFilter } from './helpers.ts';
 
 export const engagement = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -246,6 +246,7 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
     const cursor = c.req.query('cursor');
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
+    const visibility = visibilityFilter(userId);
 
     let query: string;
     const params: Array<unknown> = [userId];
@@ -260,11 +261,11 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ? ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     } else {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -274,11 +275,11 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0
+        WHERE p.status = 'published' AND p.hidden = 0 ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     }
 
     const result = await c.env.DB.prepare(query)
@@ -324,6 +325,7 @@ engagement.get('/freshs', requireAuth, async (c) => {
     const cursor = c.req.query('cursor');
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
+    const visibility = visibilityFilter(userId);
 
     let query: string;
     const params: Array<unknown> = [userId];
@@ -338,11 +340,11 @@ engagement.get('/freshs', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ? ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     } else {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -352,11 +354,11 @@ engagement.get('/freshs', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0
+        WHERE p.status = 'published' AND p.hidden = 0 ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     }
 
     const result = await c.env.DB.prepare(query)

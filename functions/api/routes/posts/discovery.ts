@@ -5,7 +5,7 @@ import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
 import { checkRateLimit, getClientIp } from '../../../lib/rate-limit';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { enrichFeedPosts, RECOMMENDED_SELECT } from './helpers.ts';
+import { enrichFeedPosts, RECOMMENDED_SELECT, visibilityFilter } from './helpers.ts';
 
 export const discovery = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -16,6 +16,7 @@ discovery.get('/posts/:id/similar', async (c) => {
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const currentUserId = c.get('user')?.id;
+    const visibility = visibilityFilter(currentUserId);
 
     // Get the post's embedding
     const embedRow = await c.env.DB.prepare('SELECT embedding, dimensions FROM post_embeddings WHERE post_id = ?')
@@ -73,9 +74,9 @@ discovery.get('/posts/:id/similar', async (c) => {
 
     const postsResult = await c.env.DB.prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}`,
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} ${visibility.sql}`,
     )
-      .bind(...similarIds)
+      .bind(...similarIds, ...visibility.params)
       .all();
     const posts = postsResult.results || [];
 

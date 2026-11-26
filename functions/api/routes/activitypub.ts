@@ -11,6 +11,29 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const COLLECTION_PAGE_SIZE = 20;
 
+/** Audiences that may be resolved by an unauthenticated ActivityPub GET. */
+const PUBLIC_AUDIENCES = "'public', 'unlisted'";
+
+/** Stored `posts.mentions` is JSON; old rows only carry username/user_id. */
+function parseNoteMentions(raw: string | null): Array<{ username: string; url?: string; domain?: string }> {
+  if (!raw) return [];
+  try {
+    const rows = JSON.parse(raw) as Array<{ username?: unknown; url?: unknown; domain?: unknown }>;
+    const mentions: Array<{ username: string; url?: string; domain?: string }> = [];
+    for (const row of rows) {
+      if (typeof row?.username !== 'string' || !row.username) continue;
+      mentions.push({
+        username: row.username,
+        ...(typeof row.domain === 'string' && row.domain ? { domain: row.domain } : {}),
+        ...(typeof row.url === 'string' && row.url ? { url: row.url } : {}),
+      });
+    }
+    return mentions;
+  } catch {
+    return [];
+  }
+}
+
 function jsonLd(contentType: string, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -371,7 +394,8 @@ app.get('/api/actors/:username/outbox', async (c) => {
   const totalItems =
     (
       await c.env.DB.prepare(
-        "SELECT COUNT(*) as total FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
+        `SELECT COUNT(*) as total FROM posts
+         WHERE user_id = ? AND status = 'published' AND hidden = 0 AND visibility IN (${PUBLIC_AUDIENCES})`,
       )
         .bind(user.id)
         .first<{ total: number }>()
@@ -388,8 +412,8 @@ app.get('/api/actors/:username/outbox', async (c) => {
   const current = pageNumber(page);
   const offset = (current - 1) * COLLECTION_PAGE_SIZE;
   const posts = await c.env.DB.prepare(
-    `SELECT id, text, created_at, gif_key, payload_key, swf_key FROM posts
-     WHERE user_id = ? AND status = 'published' AND hidden = 0
+    `SELECT id, text, created_at, mentions, visibility, gif_key, payload_key, swf_key FROM posts
+     WHERE user_id = ? AND status = 'published' AND hidden = 0 AND visibility IN (${PUBLIC_AUDIENCES})
      ORDER BY created_at DESC LIMIT ? OFFSET ?`,
   )
     .bind(user.id, COLLECTION_PAGE_SIZE, offset)
@@ -397,6 +421,8 @@ app.get('/api/actors/:username/outbox', async (c) => {
       id: string;
       text: string;
       created_at: string;
+      mentions: string | null;
+      visibility: string | null;
       gif_key: string | null;
       payload_key: string | null;
       swf_key: string | null;
@@ -409,7 +435,8 @@ app.get('/api/actors/:username/outbox', async (c) => {
           id: post.id,
           text: post.text,
           created_at: post.created_at,
-          visibility: 'public',
+          visibility: post.visibility === 'unlisted' ? 'unlisted' : 'public',
+          mentions: parseNoteMentions(post.mentions),
           attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
         },
         { id: user.id, username: user.username, display_name: user.display_name },
@@ -444,8 +471,10 @@ app.get('/api/notes/:noteId', async (c) => {
   if (!noteId) return c.json({ error: 'Note ID required' }, 400);
 
   const post = await c.env.DB.prepare(
-    `SELECT p.id, p.text, p.created_at, p.user_id, p.username, p.gif_key, p.payload_key, p.swf_key FROM posts p
+    `SELECT p.id, p.text, p.created_at, p.user_id, p.username, p.mentions, p.visibility,
+            p.gif_key, p.payload_key, p.swf_key FROM posts p
      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+       AND p.visibility IN (${PUBLIC_AUDIENCES})
        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)`,
   )
     .bind(noteId)
@@ -455,6 +484,8 @@ app.get('/api/notes/:noteId', async (c) => {
       created_at: string;
       user_id: string;
       username: string;
+      mentions: string | null;
+      visibility: string | null;
       gif_key: string | null;
       payload_key: string | null;
       swf_key: string | null;
@@ -474,7 +505,8 @@ app.get('/api/notes/:noteId', async (c) => {
       id: post.id,
       text: post.text,
       created_at: post.created_at,
-      visibility: 'public',
+      visibility: post.visibility === 'unlisted' ? 'unlisted' : 'public',
+      mentions: parseNoteMentions(post.mentions),
       attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
     },
     { id: user.id, username: user.username, display_name: user.display_name },

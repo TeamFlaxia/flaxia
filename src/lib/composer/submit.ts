@@ -1,7 +1,7 @@
 // Post submission pipeline extracted from the legacy DOM controller so the
 // Svelte composer can reuse the exact request/response handling.
 import { attachmentMimeType, getMimeType } from '../../../shared/file-extensions.ts';
-import type { Post } from '../../../shared/types/post.ts';
+import type { Post, PostVisibility } from '../../../shared/types/post.ts';
 import { uploadFileBody } from '../upload.ts';
 import type { PollData } from './logic.ts';
 
@@ -90,6 +90,7 @@ export interface SubmitInput {
   selectedThumbnail: File | null;
   poll: PollData | null;
   quotedPostId?: string;
+  visibility?: PostVisibility;
 }
 
 export async function submitPost(input: SubmitInput): Promise<Post> {
@@ -118,6 +119,7 @@ export async function submitPost(input: SubmitInput): Promise<Post> {
   if (input.selectedThumbnail) {
     const form = new FormData();
     form.append('text', input.text);
+    form.append('visibility', input.visibility ?? 'public');
     if (postId) form.append('postId', postId);
     if (gifKey) form.append('gifKey', gifKey);
     if (zipKey) form.append('payloadKey', zipKey);
@@ -142,6 +144,7 @@ export async function submitPost(input: SubmitInput): Promise<Post> {
       attachments,
       text: input.text,
       hashtags: extractHashtags(input.text),
+      visibility: input.visibility ?? 'public',
       poll: input.poll || undefined,
       quotedPostId: input.quotedPostId,
     }),

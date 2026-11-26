@@ -1,7 +1,9 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { deliverToFollowers } from '../../../lib/activitypub/delivery';
+import type { PostVisibility } from '../../../../shared/types/post.ts';
+import { deliverToFollowers, deliverToInbox, resolveActorInbox } from '../../../lib/activitypub/delivery';
 import { buildCreateActivity, buildNoteObject, loadNoteAttachments } from '../../../lib/activitypub/note';
+import { extractMentionHandles } from '../../../lib/activitypub/text.ts';
 import {
   type AttachmentInput,
   type AttachmentKind,
@@ -30,6 +32,14 @@ import { extractGameDescription } from '../post-versions';
 import { colorEntitlementError, isOwnedMediaKey, isValidPostId, resolveAttachmentLimit } from './helpers.ts';
 
 export const composer = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+const VISIBILITIES = new Set<PostVisibility>(['public', 'unlisted', 'private', 'direct']);
+
+/** Reject unknown values instead of silently falling back to public. */
+function parseVisibility(value: unknown): PostVisibility | null {
+  if (value === undefined || value === null || value === '') return 'public';
+  return typeof value === 'string' && VISIBILITIES.has(value as PostVisibility) ? (value as PostVisibility) : null;
+}
 
 composer.post('/posts/:id/prepare-attachment', requireAuth, async (c) => {
   try {
@@ -198,8 +208,11 @@ composer.post('/posts/prepare', requireAuth, async (c) => {
     const body = (await c.req.json()) as {
       filename?: string;
       files?: Array<{ filename?: string; contentType?: string }>;
+      visibility?: string;
     };
     const { filename, files } = body;
+    const visibility = parseVisibility(body.visibility);
+    if (!visibility) return c.json({ error: 'Invalid visibility' }, 422);
 
     // Multi-media attachments (image/audio/video only, plan-dependent max, no html/swf/zip)
     if (Array.isArray(files)) {
@@ -230,10 +243,10 @@ composer.post('/posts/prepare', requireAuth, async (c) => {
       }
 
       const result = await c.env.DB.prepare(
-        `INSERT INTO posts (id, user_id, username, text, hashtags, engagement_hotness, status)
-         VALUES (?, ?, ?, ?, ?, 1.0, 'pending')`,
+        `INSERT INTO posts (id, user_id, username, text, hashtags, visibility, engagement_hotness, status)
+         VALUES (?, ?, ?, ?, ?, ?, 1.0, 'pending')`,
       )
-        .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]')
+        .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]', visibility)
         .run();
 
       if (!result.success) {
@@ -316,10 +329,10 @@ composer.post('/posts/prepare', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, ${keyColumn}, engagement_hotness, status)
-      VALUES (?, ?, ?, ?, ?, ?, 1.0, 'pending')
+      INSERT INTO posts (id, user_id, username, text, hashtags, ${keyColumn}, visibility, engagement_hotness, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 'pending')
     `)
-      .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]', storageKey)
+      .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]', storageKey, visibility)
       .run();
 
     if (!result.success) {
@@ -366,6 +379,8 @@ composer.post('/posts/commit', requireAuth, async (c) => {
     let thumbnailKey: string | undefined;
     let quotedPostId: string | undefined;
     let attachmentInputs: AttachmentInput[] | undefined;
+    let visibility: PostVisibility = 'public';
+    let visibilityInput: unknown = 'public';
 
     if (contentType?.includes('multipart/form-data')) {
       const formData = await c.req.formData();
@@ -383,6 +398,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
       }
       gifKey = (formData.get('gifKey') as string) || undefined;
       swfKey = (formData.get('swfKey') as string) || undefined;
+      visibilityInput = formData.get('visibility') ?? 'public';
       zipKey = (formData.get('payloadKey') as string) || undefined;
       quotedPostId = (formData.get('quotedPostId') as string) || undefined;
       const pollStr = formData.get('poll') as string;
@@ -429,6 +445,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
       postId = body.postId;
       gifKey = body.gifKey;
       swfKey = body.swfKey;
+      visibilityInput = body.visibility ?? 'public';
       text = body.text;
       requestHashtags = body.hashtags || [];
       pollData = body.poll;
@@ -441,6 +458,9 @@ composer.post('/posts/commit', requireAuth, async (c) => {
     if (postId !== undefined && postId !== null && postId !== '' && !isValidPostId(postId)) {
       return c.json({ error: 'Invalid post ID format' }, 422);
     }
+    const parsedVisibility = parseVisibility(visibilityInput);
+    if (!parsedVisibility) return c.json({ error: 'Invalid visibility' }, 422);
+    visibility = parsedVisibility;
 
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
@@ -510,17 +530,13 @@ composer.post('/posts/commit', requireAuth, async (c) => {
     }
     const hashtags = Array.from(hashtagSet);
 
-    // Extract mentions from text
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-    const mentionSet = new Set<string>();
-    let mentionMatch: RegExpExecArray | null;
-    while ((mentionMatch = mentionRegex.exec(text)) !== null) {
-      mentionSet.add(mentionMatch[1]);
-    }
-    const mentionedUsernames = Array.from(mentionSet);
+    // Extract mentions from text. Handles carry an optional remote domain so
+    // `@user@domain` resolves to that actor's URL instead of a local account.
+    const mentionedHandles = extractMentionHandles(text);
+    const mentionedUsernames = mentionedHandles.map((handle) => handle.username);
 
-    // Resolve mentions
-    const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, username);
+    // Resolve mentions (local users + WebFinger for remote handles).
+    const mentionsJson = await resolveMentions(c.env.DB, mentionedHandles, username, c.env);
 
     // Check if database is available
     if (!c.env.DB) {
@@ -560,8 +576,8 @@ composer.post('/posts/commit', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, quoted_post_id, engagement_hotness, status)
-      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published'
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, quoted_post_id, visibility, engagement_hotness, status)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published'
       WHERE ? = 0 OR EXISTS (
         SELECT 1 FROM posts prepared
         WHERE prepared.id = ? AND prepared.user_id = ? AND prepared.status IN ('pending', 'published')
@@ -575,6 +591,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
         swf_key = COALESCE(excluded.swf_key, posts.swf_key),
         thumbnail_key = COALESCE(excluded.thumbnail_key, posts.thumbnail_key),
         quoted_post_id = COALESCE(excluded.quoted_post_id, posts.quoted_post_id),
+        visibility = excluded.visibility,
         status = 'published'
       WHERE posts.status != 'reaping'
     `)
@@ -590,6 +607,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
         swfKey || null,
         thumbnailKey || null,
         quotedPostId || null,
+        visibility,
         Number(Boolean(gifKey || swfKey || payloadKey || thumbnailKey || attachments.length)),
         postId,
         userId,
@@ -742,7 +760,7 @@ composer.post('/posts/commit', requireAuth, async (c) => {
 
       if (user) {
         const post = (await c.env.DB.prepare(
-          'SELECT id, text, created_at, status, mentions, gif_key, payload_key, swf_key FROM posts WHERE id = ?',
+          'SELECT id, text, created_at, status, mentions, visibility, gif_key, payload_key, swf_key FROM posts WHERE id = ?',
         )
           .bind(postId)
           .first()) as {
@@ -751,28 +769,43 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           created_at: string;
           status: string;
           mentions: string | null;
+          visibility: PostVisibility | null;
           gif_key: string | null;
           payload_key: string | null;
           swf_key: string | null;
         } | null;
         if (post && post.status === 'published') {
           // Mentioned accounts are addressed directly; everyone else is via followers.
-          let mentions: Array<{ username: string; url: string }> = [];
+          const mentions: Array<{ username: string; url?: string; domain?: string }> = [];
+          const remoteMentions: string[] = [];
           try {
             if (post.mentions) {
-              const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
-              mentions = mentionData.map((m) => ({
-                username: m.username,
-                url: `${c.env.BASE_URL}/api/actors/${m.username}`,
-              }));
+              const mentionData = JSON.parse(post.mentions) as Array<{
+                username: string;
+                user_id?: string;
+                url?: string;
+                domain?: string;
+              }>;
+              for (const m of mentionData) {
+                if (!m?.username) continue;
+                mentions.push({
+                  username: m.username,
+                  ...(m.domain ? { domain: m.domain } : {}),
+                  ...(m.url ? { url: m.url } : { url: `${c.env.BASE_URL}/api/actors/${m.username}` }),
+                });
+                if (m.domain && m.url) remoteMentions.push(m.url);
+              }
             }
           } catch {}
+          const noteVisibility = VISIBILITIES.has(post.visibility as PostVisibility)
+            ? (post.visibility as PostVisibility)
+            : 'public';
           const note = buildNoteObject(
             {
               id: post.id,
               text: post.text,
               created_at: post.created_at,
-              visibility: 'public',
+              visibility: noteVisibility,
               mentions,
               attachments: await loadNoteAttachments(c.env.DB, post.id, c.env.BASE_URL, post),
             },
@@ -783,9 +816,27 @@ composer.post('/posts/commit', requireAuth, async (c) => {
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
           // One delivery per remote inbox (a shared inbox expects one activity).
-          // Federation is not needed to answer the publish request; keep it
-          // alive after the response instead of blocking the click.
-          waitUntil(c, () => deliverToFollowers(c.env, { userId, username, activity }), 'ActivityPub delivery failed');
+          // Direct posts must never fan out to all followers: only the mentioned
+          // actors receive them. Federation is not needed to answer the publish
+          // request, so keep it alive after the response.
+          if (noteVisibility === 'direct') {
+            waitUntil(
+              c,
+              async () => {
+                for (const actorUrl of new Set(remoteMentions)) {
+                  const inbox = await resolveActorInbox(c.env, actorUrl);
+                  if (inbox) await deliverToInbox(c.env, { inboxUrl: inbox, username, activity });
+                }
+              },
+              'ActivityPub direct delivery failed',
+            );
+          } else {
+            waitUntil(
+              c,
+              () => deliverToFollowers(c.env, { userId, username, activity }),
+              'ActivityPub delivery failed',
+            );
+          }
         }
       }
     } catch (e) {

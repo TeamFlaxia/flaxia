@@ -74,7 +74,17 @@ owned in `user_titles` before it can be equipped.
 | parent_id | TEXT | For replies, FK → posts(id) |
 | fresh_count | INTEGER | Denormalized like count |
 | reload_count | INTEGER | Denormalized reload (retweet) count |
+| visibility | TEXT | `public` (default) / `unlisted` / `private` (Followers only) / `direct`; added by migration 0147 |
 | created_at | TEXT | ISO 8601 |
+
+Visibility is a property of locally authored posts. `public` / `unlisted` are
+visible to everyone, `private` only to the author and local followers (`follows`),
+and `direct` only to the author and local users listed in the `mentions` JSON
+(`user_id`). Remote Notes (`actor_id IS NOT NULL`) stay public and are stored
+with the default value. Timeline, search, thread, and single-post reads apply
+the same predicate (see `visibilityFilter` in
+`functions/api/routes/posts/helpers.ts`); ActivityPub note/outbox endpoints
+never expose non-public posts.
 
 ### `post_attachments`
 Multiple image/audio/video/PDF files per post (max 4, or 32 for Flaxia+). Game payloads

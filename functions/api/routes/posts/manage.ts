@@ -22,7 +22,13 @@ import { refreshUserTrustSafe } from '../../../lib/trust';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { batchGetFreshAndBookmarkStatus, requireAuth, resolveMentions } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { autoRestoreIfEligible, colorEntitlementError, isOwnedMediaKey, resolveAttachmentLimit } from './helpers.ts';
+import {
+  autoRestoreIfEligible,
+  colorEntitlementError,
+  isOwnedMediaKey,
+  resolveAttachmentLimit,
+  visibilityFilter,
+} from './helpers.ts';
 
 export const manage = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -516,10 +522,12 @@ manage.get('/posts/:id', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    const visibility = visibilityFilter(c.get('user')?.id);
     const post = (await c.env.DB.prepare(
-      'SELECT p.*, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, u.frozen_at as author_frozen_at FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?',
+      'SELECT p.*, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, u.frozen_at as author_frozen_at FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? ' +
+        visibility.sql,
     )
-      .bind(postId)
+      .bind(postId, ...visibility.params)
       .first()) as Record<string, unknown> | null;
 
     if (!post) {
