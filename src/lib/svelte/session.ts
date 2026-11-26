@@ -7,9 +7,19 @@ export interface SessionUser {
   name_color?: string | null;
 }
 
-let current: SessionUser | null = null;
+/**
+ * SSR may inline the session snapshot into the page. Seeding the synchronous
+ * snapshot at module evaluation lets onMount adopt the real user (or an
+ * explicit guest) without an /api/me request. A missing key means "unknown",
+ * so the native/degraded path still loads the session as before.
+ */
+const hasBootSession = typeof window !== 'undefined' && '__FLAXIA_SESSION__' in window;
+const bootSession = hasBootSession
+  ? (window as unknown as { __FLAXIA_SESSION__: SessionUser | null }).__FLAXIA_SESSION__
+  : null;
+let current: SessionUser | null = hasBootSession ? (bootSession ?? null) : null;
 
-/** Synchronous session snapshot, populated by the root layout before routes mount. */
+/** Synchronous session snapshot, seeded from SSR boot data or by the root layout. */
 export function getSessionUser(): SessionUser | null {
   return current;
 }
@@ -20,6 +30,7 @@ export function clearSessionUser(): void {
 }
 
 export async function loadSessionUser(): Promise<SessionUser | null> {
+  if (hasBootSession) return current;
   const { getMe } = await import('../auth-cache.ts');
   const me = await getMe();
   current = (me?.user as SessionUser | undefined) ?? null;

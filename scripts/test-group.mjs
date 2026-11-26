@@ -66,6 +66,9 @@ const groups = {
     'auth-hot-path',
     'handle-fetch-cache',
     'optimistic-thread',
+    // SSR boot data (hydration gate removal).
+    'ssr-boot-client',
+    'ssr-boot-injection',
   ],
   'auth-vault': [
     'auth',

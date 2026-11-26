@@ -50,6 +50,27 @@ Client (browser / crawler / no-JS)
   (origin + `page.url.pathname`) so query strings and the local dev host never
   leak into crawler metadata.
 
+## Boot data transport
+
+SSR writes the first-paint locale, translations and session into an inert
+`<script type="application/json" id="__flaxia_boot__">` block, injected at the
+`<!--FLAXIA_BOOT_DATA-->` marker in `src/app.html`. A small statically hashed
+reader runs before the app bundle, parses that block and publishes
+`window.__FLAXIA_BOOT__`, `window.__FLAXIA_LOCALE__` and
+`window.__FLAXIA_SESSION__`. The JSON is never executed; the reader is covered
+by the generated CSP hash like other static inline scripts.
+
+i18n, session and `+layout` consume those globals instead of refetching
+`/locales/*.json` or `/api/me`, so the first interactive frame uses exactly the
+data that produced the SSR markup. The root universal load no longer awaits
+network when boot data exists: it returns the boot locale/session synchronously
+and fetches only when the globals are absent.
+
+- **Native fallback.** The native static build has no marker block, so the
+  globals stay undefined and the original path runs: `initI18n()` fetches
+  `/locales/*.json` and the session layer fetches `/api/me`. Nothing requires
+  the boot block to be present.
+
 ## Routes with SSR data
 
 | Route | Source | Notes |
@@ -84,7 +105,10 @@ adapter-cloudflare cannot express `:param` rules in `_routes.json`.
   the load source keeps SSR data on the web and gates only the native build.
 - `node tests/ssr-hydration.browser.mjs` (after rebuilding) seeds a post, loads
   `/home` with JavaScript enabled and asserts `.ssr-feed` and its text survive
-  hydration without mismatch warnings or page errors.
+  hydration without mismatch warnings or page errors. A second case sets
+  `flaxia_locale=ja` plus a signed-in session, stalls `/locales/*.json` and
+  `/api/me` for 5s, then checks the boot payload, a fast handover and post-card
+  click, and the signed-in (not guest) nav.
 - Disable JavaScript in the browser and reload: the feed, thread and profile are
   readable, and the "Loading Flaxia…" spinner no longer exists.
 
