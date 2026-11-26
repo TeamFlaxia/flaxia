@@ -86,7 +86,8 @@ export function activityShape(document: Record<string, unknown>): Record<string,
     hasTo: document.to !== undefined,
     hasCc: document.cc !== undefined,
     addressedToPublic: audience.includes(PUBLIC_COLLECTION),
-    contextIsArray: Array.isArray(document['@context']),
+    // `@context` may legally be a string or an array in JSON-LD. Implementations
+    // differ here, so this is deliberately not part of the compared shape.
     undoneType: document.type === 'Undo' ? (object?.type ?? null) : null,
     undoneObjectIsString: document.type === 'Undo' && typeof object?.object === 'string',
   };

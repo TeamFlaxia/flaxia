@@ -403,7 +403,6 @@ describeFederation(`federation with ${PEER_KIND || 'a peer'}`, () => {
       hasTo: true,
       hasCc: true,
       addressedToPublic: true,
-      contextIsArray: false,
       undoneType: null,
       undoneObjectIsString: false,
     };
