@@ -73,6 +73,7 @@
   "functions/lib/flaxia-direct-email.ts": ["Fetcher"],
   "functions/lib/game-loader-public.ts": ["D1Database", "KVNamespace", "R2Bucket", "c.env"],
   "functions/lib/game-metadata.ts": ["D1Database", "R2Bucket"],
+  "functions/lib/game-title-backfill.ts": ["D1Database", "KVNamespace", "R2Bucket"],
   "functions/lib/mail-service.ts": ["Fetcher"],
   "functions/lib/multiplayer-ticket.ts": ["KVNamespace"],
   "functions/lib/notify.ts": ["D1Database", "DurableObjectNamespace"],

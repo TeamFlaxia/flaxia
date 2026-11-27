@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { backfillGameTitles } from './lib/game-title-backfill.ts';
 import { parsePublicHttpUrl } from './lib/url-guard';
 
 interface DeliveryMessage {
@@ -67,6 +68,13 @@ export default {
         await drainCcIngestion(env);
       } catch (error) {
         console.error('Common Crawl ingestion failed:', (error as Error).message);
+      }
+      if (env.BUCKET) {
+        try {
+          await backfillGameTitles(env.DB, env.BUCKET, env.CACHE);
+        } catch (error) {
+          console.error('Game title backfill failed:', (error as Error).message);
+        }
       }
       return;
     }

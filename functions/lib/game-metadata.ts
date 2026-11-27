@@ -10,58 +10,66 @@ export async function extractGameDescription(
   payloadKey: string,
   postId: string,
 ): Promise<void> {
+  let title = '';
   try {
-    let html: string;
-    if (payloadKey.endsWith('.zip')) {
+    let html: string | null = null;
+    const lowerKey = payloadKey.toLowerCase();
+    if (lowerKey.endsWith('.zip')) {
       const result = await extractFileFromZip(bucket, payloadKey, 'index.html');
-      if (!result) return;
-      html = new TextDecoder('utf-8').decode(result.data);
-    } else if (payloadKey.endsWith('.html')) {
+      if (result) html = new TextDecoder('utf-8').decode(result.data);
+    } else if (lowerKey.endsWith('.html')) {
       const object = await bucket.get(payloadKey);
-      if (!object) return;
-      html = await object.text();
-    } else return;
+      if (object) html = await object.text();
+    }
 
-    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    // Strip tags before decoding so `&lt;3` is not mistaken for markup.
-    const rawTitle = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, ' ').trim() : '';
-    const title = cleanGameTitle(decodeHtmlEntities(rawTitle));
+    if (html) {
+      const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      // Strip tags before decoding so `&lt;3` is not mistaken for markup.
+      const rawTitle = titleMatch ? titleMatch[1].replace(/<[^>]*>/g, ' ').trim() : '';
+      title = cleanGameTitle(decodeHtmlEntities(rawTitle));
 
-    const contentMatch = (attrValue: string): string => {
-      const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
-        new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
-      ];
-      for (const pattern of patterns) {
-        const m = html.match(pattern);
-        if (m && m[1].trim()) return m[1].trim();
-      }
-      return '';
-    };
+      const contentMatch = (attrValue: string): string => {
+        const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const patterns = [
+          new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
+          new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
+          new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
+          new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
+        ];
+        for (const pattern of patterns) {
+          const m = html.match(pattern);
+          if (m && m[1].trim()) return m[1].trim();
+        }
+        return '';
+      };
 
-    const metaDesc =
-      contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
-    const gameDescription = metaDesc || rawTitle || '';
-    if (gameDescription) {
-      const cleaned = gameDescription
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (cleaned) {
-        await db
-          .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
-          .bind(cleaned.slice(0, 500), postId)
-          .run();
+      const metaDesc =
+        contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
+      const gameDescription = metaDesc || rawTitle || '';
+      if (gameDescription) {
+        const cleaned = gameDescription
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (cleaned) {
+          await db
+            .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
+            .bind(cleaned.slice(0, 500), postId)
+            .run();
+        }
       }
     }
-    // '' is the processed sentinel for "no HTML title": the resolver falls
-    // back to the post body, and the admin backfill never reselects this row.
-    // NULL remains only for games that have not been extracted yet.
-    await db.prepare('UPDATE posts SET game_title = ? WHERE id = ?').bind(title, postId).run();
   } catch (e) {
     console.error(`Failed to extract game description for post ${postId}:`, e);
+  } finally {
+    // '' is the processed sentinel for "no HTML title": the resolver falls
+    // back to the post body, and backfill never reselects this row. Writing it
+    // on every path (including missing R2 objects) is what makes backfill
+    // converge instead of retrying a broken archive forever.
+    try {
+      await db.prepare('UPDATE posts SET game_title = ? WHERE id = ?').bind(title, postId).run();
+    } catch (e) {
+      console.error(`Failed to store game title for post ${postId}:`, e);
+    }
   }
 }

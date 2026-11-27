@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { extractGameDescription } from '../functions/lib/game-metadata.ts';
+import { backfillGameTitles } from '../functions/lib/game-title-backfill.ts';
 import { arcadeGameTitle, cleanGameTitle } from '../shared/game-title.ts';
 
 const read = (path: string) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -78,6 +79,57 @@ test('direct HTML extraction stores the title and converges without one', async 
   sqlite.close();
 });
 
+test('cron backfill converges even when a payload is missing', async () => {
+  const sqlite = new DatabaseSync(':memory:');
+  sqlite.exec(`
+    CREATE TABLE posts (id TEXT PRIMARY KEY, payload_key TEXT, game_title TEXT, game_description TEXT,
+      status TEXT DEFAULT 'published', hidden INTEGER DEFAULT 0, parent_id TEXT, created_at TEXT);
+    INSERT INTO posts (id, payload_key, game_title, created_at) VALUES
+      ('ok', 'html/ok.html', NULL, '2026-01-01'),
+      ('broken', 'HTML/missing.html', NULL, '2026-01-02');
+  `);
+  const db = {
+    prepare(sql: string) {
+      let values: SQLInputValue[] = [];
+      return {
+        bind(...args: SQLInputValue[]) {
+          values = args;
+          return this;
+        },
+        async all() {
+          return { results: sqlite.prepare(sql).all(...values) };
+        },
+        async run() {
+          sqlite.prepare(sql).run(...values);
+          return { success: true };
+        },
+        async first() {
+          return sqlite.prepare(sql).get(...values) ?? null;
+        },
+      };
+    },
+  } as unknown as D1Database;
+  const bucket = {
+    get: async (key: string) =>
+      key === 'html/ok.html' ? { text: async () => '<title>Backfilled Game</title>' } : null,
+  } as unknown as R2Bucket;
+  const deleted: string[] = [];
+  const cache = { delete: async (key: string) => void deleted.push(key) } as unknown as KVNamespace;
+
+  const processed = await backfillGameTitles(db, bucket, cache);
+  assert.equal(processed, 2);
+  const rows = sqlite.prepare('SELECT id, game_title FROM posts ORDER BY id').all() as Array<{
+    id: string;
+    game_title: string | null;
+  }>;
+  assert.equal(rows.find((r) => r.id === 'ok')?.game_title, 'Backfilled Game');
+  assert.equal(rows.find((r) => r.id === 'broken')?.game_title, '', 'missing payloads are marked processed');
+  assert.ok(rows.every((r) => r.game_title !== null));
+  assert.equal(deleted.length, 14, 'all cached first pages are invalidated');
+  assert.equal(await backfillGameTitles(db, bucket, cache), 0, 'nothing is reselected after backfill');
+  sqlite.close();
+});
+
 test('publish, version-commit and thread reads persist/expose the HTML title', async () => {
   const extractor = await read('functions/lib/game-metadata.ts');
   assert.match(extractor, /UPDATE posts SET game_title = \?/, 'version/publish must persist the HTML title');
@@ -85,4 +137,8 @@ test('publish, version-commit and thread reads persist/expose the HTML title', a
   assert.match(replies, /p\.game_title/, 'thread API must expose game_title');
   const migration = await read('migrations/0147_game_html_title.sql');
   assert.match(migration, /ADD COLUMN game_title/, 'the column must exist in D1');
+  const worker = await read('functions/queue-worker.ts');
+  assert.match(worker, /backfillGameTitles\(env\.DB/, 'the cron must invoke the backfill');
+  const backfill = await read('functions/lib/game-title-backfill.ts');
+  assert.match(backfill, /game_title IS NULL/, 'existing games must be backfilled by cron');
 });
