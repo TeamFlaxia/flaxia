@@ -60,6 +60,7 @@ let errorMessage = $state<string | null>(null);
 let handle: StageExecutionHandle | null = null;
 let execVersion: string | null = null;
 let execPostId: string | null = null;
+let execPayloadKey: string | null = null;
 let executionToken = 0;
 let disposed = false;
 
@@ -84,13 +85,21 @@ function destroyExecution(): void {
   handle = null;
   execVersion = null;
   execPostId = null;
+  execPayloadKey = null;
   if (execHost) execHost.replaceChildren();
 }
 
 async function ensureExecution(postToRun: Post, version: string | null): Promise<void> {
   if (!execHost) return;
 
-  if (handle && execPostId === postToRun.id && execVersion === version && execHost.querySelector('iframe')) {
+  const payloadKey = postToRun.payload_key ?? null;
+  if (
+    handle &&
+    execPostId === postToRun.id &&
+    execVersion === version &&
+    execPayloadKey === payloadKey &&
+    execHost.querySelector('iframe')
+  ) {
     setMediaMuted(execHost, false);
     return;
   }
@@ -102,6 +111,7 @@ async function ensureExecution(postToRun: Post, version: string | null): Promise
   errorMessage = null;
   execVersion = version;
   execPostId = postToRun.id;
+  execPayloadKey = payloadKey;
 
   const token = executionToken;
   try {
@@ -126,6 +136,9 @@ async function ensureExecution(postToRun: Post, version: string | null): Promise
 
 $effect(() => {
   const postId = currentPost.id;
+  // A rolling game update mutates payload_key in place. Track it so a running
+  // stage is remounted against the new archive instead of the original zip.
+  const payloadKey = currentPost.payload_key ?? null;
   const shouldExecute = executing;
   const version = currentVersionId ?? null;
   if (!shouldExecute) {
@@ -137,6 +150,7 @@ $effect(() => {
     void ensureExecution(currentPost, version);
   });
   void postId;
+  void payloadKey;
 });
 
 $effect(() => {

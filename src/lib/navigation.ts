@@ -36,17 +36,6 @@ const PREFETCH_DELAY_MS = 100;
 const prefetchedThreads = new Set<string>();
 const pendingThreads = new Map<string, ReturnType<typeof setTimeout>>();
 
-if (typeof window !== 'undefined') {
-  // A post can change after its thread was prefetched (game version commit,
-  // edit, reply). Drop the warmed load data so the next visit fetches the
-  // current root instead of replaying the initial snapshot.
-  window.addEventListener('postUpdated', () => {
-    for (const timer of pendingThreads.values()) clearTimeout(timer);
-    pendingThreads.clear();
-    prefetchedThreads.clear();
-  });
-}
-
 /**
  * Warm a thread's load data and route code after a short hover intent delay.
  * `preloadData` fills SvelteKit's load cache (keyed by pathname + search), so

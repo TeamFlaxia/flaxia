@@ -7,7 +7,7 @@ import GameUpdateModalView from '../lib/svelte/GameUpdateModal.svelte';
 export interface GameUpdateModalProps {
   postId: string;
   sandboxOrigin: string;
-  onUpdated: () => void;
+  onUpdated: (versionId: string) => void;
 }
 
 export function openGameUpdateModal(props: GameUpdateModalProps): void {

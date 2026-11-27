@@ -1,9 +1,7 @@
 <script lang="ts">
 // biome-ignore-all lint/correctness/noUnusedImports: types and markup-only helpers
 // biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
-
 import { onMount } from 'svelte';
-import { invalidateAll } from '$app/navigation';
 import { maxUploadBytesForUser } from '../../../shared/upload-limits.ts';
 import { t } from '../i18n.ts';
 import { gameUpdateFileError } from '../modals/dialog-logic.ts';
@@ -14,7 +12,7 @@ import { getSessionUser } from './session.ts';
 interface Props {
   postId: string;
   sandboxOrigin?: string;
-  onUpdated: () => void;
+  onUpdated: (versionId: string) => void;
   onClose: () => void;
 }
 
@@ -82,14 +80,13 @@ async function submit(): Promise<void> {
       const err = (await commitResponse.json().catch(() => ({}))) as { error?: string };
       throw new Error(err.error || 'commit failed');
     }
+    const committed = (await commitResponse.json().catch(() => ({}))) as {
+      versionId?: string;
+      versionNumber?: number;
+    };
 
     setStatus(t('game.update_status_done'));
-    // A new release changes the canonical payloadKey and thumbnail. Clear the
-    // short-lived SSR/prefetch caches and tell other cards to refresh so
-    // Thread/Arcade do not keep showing the initial build.
-    window.dispatchEvent(new CustomEvent('postUpdated', { detail: { postId } }));
-    void invalidateAll();
-    onUpdated();
+    onUpdated(committed.versionId ?? prepare.versionId);
     controller?.close();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

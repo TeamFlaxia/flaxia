@@ -95,6 +95,9 @@ let editText = $state('');
 let saving = $state(false);
 let menuOpen = $state(false);
 let versionId: string | null = null;
+// The post prop is immutable, but a game can be updated in place. Keep the
+// payload key we last saw so the stage can be remounted with the new build.
+let currentPayloadKey = $state(props.post.payload_key ?? null);
 let stage: StageHandle | null = null;
 let stageMode = $state<PostCardMode>(props.initialMode ?? PostCardMode.PREVIEW);
 let replyComposer: { getElement: () => HTMLElement; focus: () => void; destroy: () => void } | null = null;
@@ -434,7 +437,11 @@ function toggleMenu(): void {
       onTogglePin: () => props.onTogglePin?.(props.post.id),
       onCounterNotice: () => openCounterNotice(props.post),
       onEdit: startEdit,
-      onUpdate: () => openGameUpdate(props.post, props.sandboxOrigin, () => playVersion(null)),
+      onUpdate: () =>
+        openGameUpdate(props.post, props.sandboxOrigin, (versionId) => {
+          currentPayloadKey = `versions/${props.post.id}/${versionId}.zip`;
+          playVersion(versionId);
+        }),
       onDelete: deletePost,
       onBlock: () => void blockUser(),
       onReport: () => openReport(props.post),
@@ -500,13 +507,22 @@ async function saveEdit(): Promise<void> {
   }
 }
 
+function stagePost(): Post {
+  return currentPayloadKey === (props.post.payload_key ?? null)
+    ? props.post
+    : { ...props.post, payload_key: currentPayloadKey ?? undefined };
+}
+
 function playVersion(id: string | null): void {
+  // No explicit version means "latest": leave the iframe request unversioned
+  // so the server resolves the active build (and its matching asset origin).
+  // A fresh commit passes its version id explicitly, which we pin.
   versionId = id;
   if (!stageHost) return;
   stageMode = PostCardMode.EXECUTING;
   stage?.destroy();
   stage = mountStage(stageHost, {
-    post: props.post,
+    post: stagePost(),
     mode: stageMode,
     sandboxOrigin: props.sandboxOrigin,
     versionId: id ?? undefined,
@@ -516,7 +532,10 @@ function playVersion(id: string | null): void {
 
 function handleStageModeChange(mode: PostCardMode): void {
   stageMode = mode;
-  stage?.update(props.post, mode, versionId ?? undefined);
+  // Exactly one update per mode change, so a payload-key change cannot start
+  // two iframe loads in the same tick. An unset version is authoritative on
+  // the server; only an id supplied by the caller is pinned.
+  stage?.update(stagePost(), mode, versionId ?? undefined);
 }
 
 export function updatePost(next: Partial<Post>): void {
@@ -541,6 +560,12 @@ export function updatePost(next: Partial<Post>): void {
     });
   } else if (next.hashtags !== undefined) {
     currentHashtags = parseHashtags(next.hashtags);
+  }
+  if (next.payload_key !== undefined && next.payload_key !== currentPayloadKey) {
+    currentPayloadKey = next.payload_key ?? null;
+    // Drop any pinned version so playback follows the new build.
+    versionId = null;
+    if (stageMode === PostCardMode.EXECUTING) void handleStageModeChange(PostCardMode.EXECUTING);
   }
   if (next.reply_count !== undefined) replyCount = next.reply_count;
   if (next.fresh_count !== undefined) freshCount = next.fresh_count;

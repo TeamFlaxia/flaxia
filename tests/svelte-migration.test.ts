@@ -322,8 +322,11 @@ test('docs manifest is written after the adapter finishes', async () => {
 test('feed game cards start playing when the preview is clicked', async () => {
   const card = await read('src/lib/svelte/PostCard.svelte');
   assert.match(card, /onModeChange: handleStageModeChange/);
-  assert.match(card, /stage\?\.update\(props\.post, mode/);
+  assert.match(card, /stage\?\.update\(stagePost\(\), mode/);
   assert.doesNotMatch(card, /onModeChange: \(\) => \{\}/);
+  // A fresh commit supplies its version id; normal playback stays unversioned.
+  assert.match(card, /openGameUpdate\(props\.post, props\.sandboxOrigin, \(versionId\) => \{/);
+  assert.match(card, /playVersion\(versionId\);/);
 });
 
 test('the mobile nav drawer closes on every client navigation', async () => {
@@ -378,7 +381,10 @@ test('post counters stay in sync across every mounted card', async () => {
 
 test('game updates reload the stage and logout clears the session snapshot', async () => {
   const card = await read('src/lib/svelte/PostCard.svelte');
-  assert.match(card, /openGameUpdate\(props\.post, props\.sandboxOrigin, \(\) => playVersion\(null\)\)/);
+  assert.match(
+    card,
+    /openGameUpdate\(props\.post, props\.sandboxOrigin, \(versionId\) => \{[\s\S]{0,200}?playVersion\(versionId\);/,
+  );
   const session = await read('src/lib/svelte/session.ts');
   assert.match(session, /export function clearSessionUser/);
   const cache = await read('src/lib/auth-cache.ts');

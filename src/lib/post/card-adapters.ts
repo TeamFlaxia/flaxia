@@ -115,7 +115,7 @@ export function openVersionHistory(
   openVersionHistoryModal({ postId: post.id, sandboxOrigin, currentVersionId, onPlay });
 }
 
-export function openGameUpdate(post: Post, sandboxOrigin: string, onUpdated: () => void): void {
+export function openGameUpdate(post: Post, sandboxOrigin: string, onUpdated: (versionId: string) => void): void {
   openGameUpdateModal({ postId: post.id, sandboxOrigin, onUpdated });
 }
 
