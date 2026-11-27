@@ -65,6 +65,7 @@ let tracker: ArcadeEventTracker | null = null;
 let gesture: ArcadeDragGesture | null = null;
 let viewportApi: ArcadeViewportApi | null = null;
 let bookmarkBusy = false;
+let freshBusy = false;
 let renderGeneration = 0;
 let renderAbort: AbortController | null = null;
 let swipeVelocity = 0;
@@ -92,6 +93,37 @@ function syncFeed(): void {
 function updateGame(next: Game): void {
   feed?.replaceGame(next);
   syncFeed();
+}
+
+/** Mirror PostCard's postUpdated detail so every surface reads the same keys. */
+interface PostUpdatedDetail {
+  postId: string;
+  isFreshed?: boolean;
+  freshCount?: number;
+  isBookmarked?: boolean;
+  bookmarkCount?: number;
+  replyCount?: number;
+}
+
+function broadcastPostUpdate(detail: PostUpdatedDetail): void {
+  window.dispatchEvent(
+    new CustomEvent('postUpdated', {
+      detail: {
+        postId: detail.postId,
+        isFreshed: detail.isFreshed,
+        freshCount: detail.freshCount,
+        isReloaded: undefined,
+        reloadCount: undefined,
+        isBookmarked: detail.isBookmarked,
+        bookmarkCount: detail.bookmarkCount,
+        replyCount: detail.replyCount,
+        reactions: undefined,
+        text: undefined,
+        hashtags: undefined,
+        mentions: undefined,
+      },
+    }),
+  );
 }
 
 async function start(): Promise<void> {
@@ -212,11 +244,12 @@ async function step(direction: 1 | -1, animated = true): Promise<void> {
 
 async function handleFresh(): Promise<void> {
   const current = game;
-  if (!current) return;
+  if (!current || freshBusy) return;
   if (!currentUser) {
     promptArcadeSignIn('fresh');
     return;
   }
+  freshBusy = true;
   const original = { ...current };
   const wasFreshed = Boolean(original.isFreshed);
   tracker?.push(current, 'fresh', index, swipeVelocity);
@@ -227,10 +260,15 @@ async function handleFresh(): Promise<void> {
   });
   try {
     const data = await toggleArcadeFresh(original.postId);
-    updateGame({ ...original, isFreshed: data.freshed, freshCount: data.fresh_count });
+    // The server may respond with either field name; is_freshed is canonical.
+    const isFreshed = data.is_freshed ?? data.freshed;
+    updateGame({ ...original, isFreshed, freshCount: data.fresh_count });
     markRecommendationProfileDirty();
+    broadcastPostUpdate({ postId: original.postId, isFreshed, freshCount: data.fresh_count });
   } catch {
     updateGame(original);
+  } finally {
+    freshBusy = false;
   }
 }
 
@@ -251,9 +289,12 @@ async function handleBookmark(): Promise<void> {
   });
   try {
     const data = await toggleArcadeBookmark(original.postId);
-    updateGame({ ...original, isBookmarked: data.bookmarked, bookmarkCount: data.bookmark_count });
+    // The server may respond with either field name; is_bookmarked is canonical.
+    const isBookmarked = data.is_bookmarked ?? data.bookmarked;
+    updateGame({ ...original, isBookmarked, bookmarkCount: data.bookmark_count });
     markRecommendationProfileDirty();
-    showToast(data.bookmarked ? t('arcade.bookmarked') : t('arcade.bookmark_removed'));
+    showToast(isBookmarked ? t('arcade.bookmarked') : t('arcade.bookmark_removed'));
+    broadcastPostUpdate({ postId: original.postId, isBookmarked, bookmarkCount: data.bookmark_count });
   } catch {
     updateGame(original);
     showToast(t('arcade.bookmark_failed'), true);
@@ -413,6 +454,38 @@ onMount(() => {
   document.addEventListener('fullscreenchange', handleFullscreenChange);
   document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
+  // Timeline cards broadcast postUpdated; keep the active Arcade game in sync.
+  // This listener only applies state — it never broadcasts, so no loop is formed.
+  const onPostUpdated = ((event: Event) => {
+    const detail = (event as CustomEvent<Record<string, unknown>>).detail;
+    const current = game;
+    if (!detail || !current || detail.postId !== current.postId) return;
+    const next: Game = { ...current };
+    let changed = false;
+    if (typeof detail.isFreshed === 'boolean') {
+      next.isFreshed = detail.isFreshed;
+      changed = true;
+    }
+    if (typeof detail.freshCount === 'number') {
+      next.freshCount = detail.freshCount;
+      changed = true;
+    }
+    if (typeof detail.isBookmarked === 'boolean') {
+      next.isBookmarked = detail.isBookmarked;
+      changed = true;
+    }
+    if (typeof detail.bookmarkCount === 'number') {
+      next.bookmarkCount = detail.bookmarkCount;
+      changed = true;
+    }
+    if (typeof detail.replyCount === 'number') {
+      next.replyCount = detail.replyCount;
+      changed = true;
+    }
+    if (changed) updateGame(next);
+  }) as EventListener;
+  window.addEventListener('postUpdated', onPostUpdated);
+
   if (!localStorage.getItem(TUTORIAL_SEEN_KEY)) tutorialOpen = true;
   void start();
 
@@ -430,6 +503,7 @@ onMount(() => {
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('fullscreenchange', handleFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    window.removeEventListener('postUpdated', onPostUpdated);
   };
 });
 </script>

@@ -1,6 +1,6 @@
 {
   "functions/api/routes/auth.ts": 877,
-  "functions/api/routes/games.ts": 740,
+  "functions/api/routes/games.ts": 786,
   "functions/api/routes/media.ts": 579,
   "functions/api/routes/posts/composer.ts": 904,
   "functions/api/routes/posts/engagement.ts": 765,

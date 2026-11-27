@@ -360,6 +360,7 @@ export function createOfflineGames(options: Options) {
           replyCount: post.reply_count,
           bookmarkCount: post.bookmark_count,
           impressions: post.impressions,
+          isFreshed: Boolean(post.is_freshed),
           isBookmarked: true,
           createdAt: post.created_at,
         }));

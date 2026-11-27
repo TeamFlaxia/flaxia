@@ -2,8 +2,19 @@
 // DOM; these modules own feed URL construction, ranking, paging merges, swipe
 // classification and interaction-event shaping.
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import type { Game } from '../src/types/game.js';
+
+const read = (path: string): Promise<string> => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+
+function section(source: string, start: string, end: string): string {
+  const from = source.indexOf(start);
+  assert.notEqual(from, -1, `missing ${start}`);
+  const to = source.indexOf(end, from + start.length);
+  assert.notEqual(to, -1, `missing ${end}`);
+  return source.slice(from, to);
+}
 
 const {
   buildInitialGamesUrl,
@@ -133,4 +144,39 @@ test('long dwells refresh the recommendation profile only when requested', () =>
   assert.equal(shouldRefreshProfile([{ dwellMs: 5000 }, { dwellMs: 4000 }]), false);
   assert.equal(shouldRefreshProfile([{ dwellMs: 1200 }, { dwellMs: 5001 }]), true);
   assert.equal(shouldRefreshProfile([]), false);
+});
+
+test('arcade page mirrors postUpdated events in both directions', async () => {
+  const page = await read('src/lib/svelte/arcade/ArcadePage.svelte');
+
+  // A timeline "fresh" reaches the active game, and the listener is torn down
+  // with the component so it cannot mutate a feed mounted afterwards.
+  assert.match(page, /window\.addEventListener\('postUpdated', onPostUpdated\)/);
+  assert.match(page, /window\.removeEventListener\('postUpdated', onPostUpdated\)/);
+  const listener = section(page, 'const onPostUpdated', "window.addEventListener('postUpdated', onPostUpdated)");
+  assert.match(listener, /detail\.postId !== current\.postId/);
+  assert.match(listener, /updateGame\(|replaceGame\(/);
+
+  // Arcade's own toggles publish the same detail keys as PostCard.
+  const broadcast = section(page, 'function broadcastPostUpdate', 'async function start');
+  assert.match(broadcast, /new CustomEvent\('postUpdated'/);
+  assert.match(broadcast, /postId: detail\.postId/);
+  assert.match(broadcast, /isFreshed: detail\.isFreshed/);
+  assert.match(broadcast, /freshCount: detail\.freshCount/);
+  assert.match(page, /broadcastPostUpdate\(\{ postId: original\.postId, isFreshed/);
+  assert.match(page, /broadcastPostUpdate\(\{ postId: original\.postId, isBookmarked/);
+});
+
+test('fresh toggle prefers the canonical is_freshed response field', async () => {
+  const page = await read('src/lib/svelte/arcade/ArcadePage.svelte');
+  const freshHandler = section(page, 'async function handleFresh', 'async function handleBookmark');
+  assert.match(freshHandler, /is_freshed\s*\?\?\s*data\.freshed/);
+});
+
+test('postUpdated sync adds no refetch or cache invalidation', async () => {
+  for (const file of ['src/lib/svelte/arcade/ArcadePage.svelte', 'src/lib/arcade/actions.ts']) {
+    const source = await read(file);
+    assert.doesNotMatch(source, /invalidateAll/);
+    assert.doesNotMatch(source, /CACHE\.delete/);
+  }
 });
