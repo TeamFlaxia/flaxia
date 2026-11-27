@@ -1709,3 +1709,108 @@
 .thread-back-button:active {
   background: var(--bg-active);
 }
+
+/* ------------------------------------------------------------
+    11. Pull-to-refresh — zero-height overlay; the sticky feed header
+    keeps its geometry and the list is never transformed. The pill is
+    parked below the header and sits under it in the stacking order, so it
+    never paints over the feed tabs; its offset tracks the full resisted
+    pull distance (capped at 96px by the gesture helper).
+    ------------------------------------------------------------ */
+.timeline {
+  position: relative;
+}
+
+.pull-refresh-indicator {
+  /* The header is 42px (44px on narrow screens) plus a 1px border; 48px
+     clears both without any layout shift - this is an absolute overlay. */
+  --pull-refresh-top: 48px;
+  position: absolute;
+  inset: var(--pull-refresh-top) 0 auto;
+  z-index: 9; /* below the sticky .timeline-header (effective 10) */
+  display: flex;
+  justify-content: center;
+  height: 0;
+  color: var(--text-muted);
+  pointer-events: none;
+  transform: translate3d(0, var(--pull-distance, 0px), 0);
+  transition: transform 120ms var(--ease-out);
+}
+
+.pull-refresh-indicator.armed,
+.pull-refresh-indicator.refreshing {
+  color: var(--accent-text);
+}
+
+/* Progress resets to 0 on release; the top offset keeps the pill visible
+   below the header while the refresh request is in flight. */
+.pull-refresh-indicator.refreshing {
+  transform: translate3d(0, 0, 0);
+}
+
+.pull-refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: calc(100% - 24px);
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-sm);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0.8;
+  transition:
+    opacity var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+.pull-refresh-indicator.armed .pull-refresh-pill,
+.pull-refresh-indicator.refreshing .pull-refresh-pill {
+  border-color: var(--border-strong);
+  opacity: 1;
+}
+
+/* Ring spinner: same quiet 2px hairline as .nav-loading-spinner. */
+.pull-refresh-spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.pull-refresh-indicator.refreshing .pull-refresh-spinner {
+  opacity: 1;
+  animation: pull-refresh-spin 800ms linear infinite;
+}
+
+.pull-refresh-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes pull-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pull-refresh-indicator,
+  .pull-refresh-pill {
+    transition: none;
+  }
+
+  .pull-refresh-indicator.refreshing .pull-refresh-spinner {
+    animation: none;
+  }
+}

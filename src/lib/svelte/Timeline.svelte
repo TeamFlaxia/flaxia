@@ -22,6 +22,7 @@ import {
 import { signalSsrHandover } from '../ssr-handover.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
+import { setupPullToRefresh } from '../timeline/pull-to-refresh.ts';
 import { getRecommendationProfile, type RecommendationProfile } from '../vault/recommendation-profile.ts';
 import Composer from './Composer.svelte';
 
@@ -53,6 +54,12 @@ let loading = $state(false);
 // First paint must reserve feed height; `loading` is false until the ad race
 // resolves, so the empty state would otherwise flash at height 0 (CLS).
 let loadedOnce = $state(false);
+// Pull-to-refresh never bypasses resetAndLoad(): the indicator only reports
+// gesture progress and mirrors the existing reload button's request path.
+let pullDistance = $state(0);
+let pullArmed = $state(false);
+let refreshing = $state(false);
+let disposePull: (() => void) | null = null;
 let hasMore = $state(true);
 let errorMessage = $state('');
 let hashtag = $state('');
@@ -74,6 +81,12 @@ const cardOptions = $derived<CardOptions>({
   onDelete: (postId: string) => {
     items = items.filter((item) => !isAd(item) && item.id !== postId);
   },
+});
+
+// loadInitial()'s finally block clears `loading` and sets `loadedOnce` only for
+// the current generation, so this settles once the reload has really finished.
+$effect(() => {
+  if (refreshing && !loading && loadedOnce) refreshing = false;
 });
 
 function saveDataFetchInit(): RequestInit {
@@ -295,6 +308,22 @@ function onKeydown(e: KeyboardEvent): void {
 }
 
 onMount(() => {
+  disposePull = setupPullToRefresh(root, {
+    onProgress: (distance, armed) => {
+      pullDistance = distance;
+      pullArmed = armed;
+    },
+    onRefresh: () => {
+      // A pull must not start a second resetAndLoad() while a mode switch or
+      // the reload button already has a request in flight (loading === true).
+      if (refreshing || loading) return;
+      refreshing = true;
+      pullArmed = false;
+      pullDistance = 0;
+      resetAndLoad();
+    },
+  });
+
   // Ads are optional: never hold the first feed request for a full second.
   void Promise.race([loadAdConfig(), new Promise<void>((resolve) => setTimeout(resolve, 200))]).then(
     () => void loadInitial(),
@@ -340,6 +369,7 @@ onDestroy(() => {
   generation++;
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
   disposePostCreated?.();
+  disposePull?.();
   observer?.disconnect();
   fabObserver?.disconnect();
   fabButton?.remove();
@@ -361,6 +391,29 @@ function updateFab(): void {
 </script>
 
 <div bind:this={root} class="timeline">
+  {#if pullDistance > 0 || refreshing}
+    <div
+      class="pull-refresh-indicator"
+      class:armed={pullArmed}
+      class:refreshing
+      style="--pull-distance: {pullDistance}px"
+      aria-hidden="true"
+    >
+      <div class="pull-refresh-pill">
+        <span class="pull-refresh-spinner"></span>
+        <span class="pull-refresh-label">
+          {#if refreshing}
+            {t('timeline.refreshing')}
+          {:else if pullArmed}
+            {t('timeline.release_to_refresh')}
+          {:else}
+            {t('timeline.pull_to_refresh')}
+          {/if}
+        </span>
+      </div>
+    </div>
+  {/if}
+
   <div class="timeline-header">
     <div class="feed-toggle">
       <button class="feed-toggle-btn" class:active={mode === 'foryou'} type="button" onclick={() => switchMode('foryou')}>{t('timeline.for_you')}</button>
