@@ -86,6 +86,7 @@ export type PostRow = {
   swf_key: string | null;
   thumbnail_key: string | null;
   game_description?: string | null;
+  game_title?: string | null;
   parent_id: string | null;
   root_id: string | null;
   depth: number;

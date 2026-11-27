@@ -38,10 +38,12 @@ test('thread SELECTs carry the game thumbnail and description', async () => {
   for (const [index, select] of selects.entries()) {
     assert.match(select, /p\.thumbnail_key/, `thread SELECT ${index} must select p.thumbnail_key`);
     assert.match(select, /p\.game_description/, `thread SELECT ${index} must select p.game_description`);
+    assert.match(select, /p\.game_title/, `thread SELECT ${index} must select p.game_title`);
   }
   const lookup = section.match(/SELECT[^`]*?FROM posts WHERE id = \?/)?.[0] ?? '';
   assert.match(lookup, /thumbnail_key/, 'the initial post lookup must select thumbnail_key');
   assert.match(lookup, /game_description/, 'the initial post lookup must select game_description');
+  assert.match(lookup, /game_title/, 'the initial post lookup must select game_title');
 });
 
 test('loadThread keeps game fields on root', async () => {

@@ -31,8 +31,8 @@ maintenance.post('/backfill-game-descriptions', requireAuth, requireAdmin, async
       SELECT id, payload_key
       FROM posts
       WHERE payload_key IS NOT NULL
-        AND (payload_key LIKE '%.zip')
-        AND (game_description IS NULL OR game_description = '')
+        AND (payload_key LIKE '%.zip' OR payload_key LIKE '%.html')
+        AND (game_description IS NULL OR game_description = '' OR game_title IS NULL)
       ORDER BY created_at DESC
       LIMIT ?
     `)

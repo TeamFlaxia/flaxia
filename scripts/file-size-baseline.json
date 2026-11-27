@@ -1,6 +1,6 @@
 {
   "functions/api/routes/auth.ts": 877,
-  "functions/api/routes/games.ts": 736,
+  "functions/api/routes/games.ts": 740,
   "functions/api/routes/media.ts": 579,
   "functions/api/routes/posts/composer.ts": 904,
   "functions/api/routes/posts/engagement.ts": 765,
@@ -13,7 +13,7 @@
   "functions/lib/auth.ts": 639,
   "functions/lib/crowd.ts": 1563,
   "functions/lib/flaxia-auth.ts": 678,
-  "functions/lib/render-html.ts": 746,
+  "functions/lib/render-html.ts": 747,
   "functions/lib/web-index.ts": 566,
   "functions/lib/wvfs-zip-server.ts": 1088
 }

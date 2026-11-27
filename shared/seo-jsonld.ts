@@ -9,6 +9,7 @@ import { stripPostColors } from './post-colors.ts';
 export interface SeoPost {
   text: string;
   game_description?: string | null;
+  game_title?: string | null;
   created_at: string;
 }
 

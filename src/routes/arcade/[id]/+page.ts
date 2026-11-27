@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { arcadeGameTitle } from '../../../../shared/game-title.ts';
 import { loadThread, type SsrGame } from '../../../lib/ssr-data.ts';
 import type { PageLoad } from './$types';
 
@@ -15,7 +15,7 @@ export const load: PageLoad = async ({ fetch, params, setHeaders }) => {
   const root = thread.root;
   const game: SsrGame | null = {
     postId: root.id,
-    title: stripPostColors(root.text).slice(0, 100) || `Game by @${root.username}`,
+    title: arcadeGameTitle(root.game_title, root.text, root.username),
     username: root.username,
     thumbnailKey: root.thumbnail_key ?? null,
     createdAt: root.created_at,

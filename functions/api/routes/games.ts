@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { stripPostColors } from '../../../shared/post-colors.ts';
+import { arcadeGameTitle } from '../../../shared/game-title.ts';
 import {
   type EncodedVector,
   encodeVector,
@@ -23,6 +23,7 @@ interface ArcadeCandidateRow {
   postId: string;
   user_id: string;
   text: string;
+  game_title: string | null;
   swf_key: string | null;
   payload_key: string | null;
   thumbnail_key: string | null;
@@ -167,7 +168,7 @@ games.get('/games', async (c) => {
         const placeholders = pageIds.map(() => '?').join(',');
         const { results: sliceData } = await c.env.DB.prepare(`
           SELECT
-            p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+            p.id as postId, p.user_id, p.text, p.game_title, p.swf_key, p.payload_key,
             p.thumbnail_key, p.fresh_count,
             COALESCE(p.reply_count, 0) as reply_count,
             COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -182,6 +183,7 @@ games.get('/games', async (c) => {
             postId: string;
             user_id: string;
             text: string;
+            game_title: string | null;
             swf_key: string | null;
             payload_key: string | null;
             thumbnail_key: string | null;
@@ -215,7 +217,7 @@ games.get('/games', async (c) => {
             const game: Record<string, unknown> = {
               id: row.postId,
               postId: row.postId,
-              title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
+              title: arcadeGameTitle(row.game_title, row.text, row.username),
               username: row.username,
               displayName: row.display_name || undefined,
               avatarKey: row.avatar_key || undefined,
@@ -266,7 +268,7 @@ games.get('/games', async (c) => {
 
       // Query candidate game posts
       const candidateQuery = `
-        SELECT p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+        SELECT p.id as postId, p.user_id, p.text, p.game_title, p.swf_key, p.payload_key,
                p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                COALESCE(p.bookmark_count, 0) as bookmark_count,
                p.impressions, p.created_at,
@@ -286,7 +288,7 @@ games.get('/games', async (c) => {
       // outside the window above or is a reply.
       if (initialId && !candidateRows.some((row) => row.postId === initialId)) {
         const initialRow = await c.env.DB.prepare(`
-          SELECT p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+          SELECT p.id as postId, p.user_id, p.text, p.game_title, p.swf_key, p.payload_key,
                  p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                  COALESCE(p.bookmark_count, 0) as bookmark_count,
                  p.impressions, p.created_at,
@@ -397,7 +399,7 @@ games.get('/games', async (c) => {
         return {
           id: row.postId,
           postId: row.postId,
-          title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
+          title: arcadeGameTitle(row.game_title, row.text, row.username),
           username: row.username,
           displayName: row.display_name || undefined,
           avatarKey: row.avatar_key || undefined,
@@ -435,6 +437,7 @@ games.get('/games', async (c) => {
         p.id as postId,
         p.user_id,
         p.text,
+        p.game_title,
         p.swf_key,
         p.payload_key,
         p.thumbnail_key,
@@ -479,6 +482,7 @@ games.get('/games', async (c) => {
         postId: string;
         user_id: string;
         text: string;
+        game_title: string | null;
         swf_key: string | null;
         payload_key: string | null;
         thumbnail_key: string | null;
@@ -507,7 +511,7 @@ games.get('/games', async (c) => {
       return {
         id: row.postId,
         postId: row.postId,
-        title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
+        title: arcadeGameTitle(row.game_title, row.text, row.username),
         username: row.username,
         displayName: row.display_name || undefined,
         avatarKey: row.avatar_key || undefined,

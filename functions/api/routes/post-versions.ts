@@ -1,60 +1,15 @@
 import { Hono } from 'hono';
 import { FREE_UPLOAD_MAX_BYTES, PLUS_UPLOAD_MAX_BYTES } from '../../../shared/upload-limits.ts';
 import { getUserPlan } from '../../lib/billing.ts';
-import { extractFileFromZip, extractZipToR2 } from '../../lib/wvfs-zip-server.ts';
+import { extractGameDescription } from '../../lib/game-metadata.ts';
+import { extractZipToR2 } from '../../lib/wvfs-zip-server.ts';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
+export { extractGameDescription };
+
 const postVersions = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-export async function extractGameDescription(
-  bucket: R2Bucket,
-  db: D1Database,
-  payloadKey: string,
-  postId: string,
-): Promise<void> {
-  try {
-    const result = await extractFileFromZip(bucket, payloadKey, 'index.html');
-    if (!result) return;
-    const decoder = new TextDecoder('utf-8');
-    const html = decoder.decode(result.data);
-    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : '';
-
-    const contentMatch = (attrValue: string): string => {
-      const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
-        new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
-      ];
-      for (const pattern of patterns) {
-        const m = html.match(pattern);
-        if (m && m[1].trim()) return m[1].trim();
-      }
-      return '';
-    };
-
-    const metaDesc =
-      contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
-    const gameDescription = metaDesc || title || '';
-    if (gameDescription) {
-      const cleaned = gameDescription
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (cleaned) {
-        await db
-          .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
-          .bind(cleaned.slice(0, 500), postId)
-          .run();
-      }
-    }
-  } catch (e) {
-    console.error(`Failed to extract game description for post ${postId}:`, e);
-  }
-}
 // GET /api/posts/:id/versions - list archived versions of a game (public)
 postVersions.get('/posts/:id/versions', async (c) => {
   try {

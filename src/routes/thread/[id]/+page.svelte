@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount } from 'svelte';
 import { page } from '$app/state';
+import { cleanGameTitle } from '../../../../shared/game-title.ts';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
 import { buildGameDescription, buildGameTitle } from '../../../lib/game-seo.ts';
 import { navigate } from '../../../lib/navigation.ts';
@@ -17,7 +18,9 @@ let { data }: PageProps = $props();
 
 const ssrPosts = $derived(data.root ? [data.root, ...data.replies] : []);
 const gamePost = $derived(Boolean(data.root?.payload_key || data.root?.swf_key));
-const postTitle = $derived(data.root ? buildGameTitle(stripPostColors(data.root.text)) : 'Flaxia');
+const postTitle = $derived(
+  data.root ? cleanGameTitle(data.root.game_title) || buildGameTitle(stripPostColors(data.root.text)) : 'Flaxia',
+);
 const description = $derived.by(() => {
   const root = data.root;
   if (!root) return 'A post on Flaxia';

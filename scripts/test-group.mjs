@@ -137,6 +137,7 @@ const groups = {
   ],
   'media-games': [
     'arcade-page',
+    'arcade-html-title',
     'media-stage-migration',
     'arcade-availability',
     'arcade-events',

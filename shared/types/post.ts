@@ -82,6 +82,7 @@ export interface Post {
   text: string;
   hashtags: string;
   mentions?: string;
+  game_title?: string | null; // HTML <title> extracted from the game archive
   gif_key?: string; // Stores all image formats (GIF, PNG, JPG), not just GIFs
   payload_key?: string; // Stores ZIP files for HTML execution
   swf_key?: string; // Stores SWF files for Flash execution

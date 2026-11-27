@@ -1,5 +1,6 @@
 <script lang="ts">
 import { page } from '$app/state';
+import { cleanGameTitle } from '../../../../shared/game-title.ts';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
 import { buildGameDescription, buildGameTitle } from '../../../lib/game-seo.ts';
 import {
@@ -21,7 +22,9 @@ let { data }: PageProps = $props();
 
 const ssrPosts = $derived(data.post ? [data.post, ...data.replies] : []);
 const plainText = $derived(data.post ? stripPostColors(data.post.text) : '');
-const gameTitle = $derived(plainText ? buildGameTitle(plainText) : data.game?.title || 'Game');
+const gameTitle = $derived(
+  cleanGameTitle(data.post?.game_title) || (plainText ? buildGameTitle(plainText) : data.game?.title || 'Game'),
+);
 const authorName = $derived(data.game?.username || data.post?.username || '');
 const metaTitle = $derived(`Flaxia Arcade - ${gameTitle}`);
 const description = $derived(
@@ -90,7 +93,7 @@ const jsonLd = $derived.by(() => {
   <ArcadeView gameId={page.params.id} />
   <SsrOnly>
     <section class="ssr-feed" aria-label="Game">
-      <h1>{data.game?.title || 'Game'}</h1>
+      <h1>{gameTitle}</h1>
       {#if data.game?.username}<p>@{data.game.username}</p>{/if}
     </section>
   </SsrOnly>

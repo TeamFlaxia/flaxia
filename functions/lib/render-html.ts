@@ -40,6 +40,7 @@ export interface PostRow {
   swf_key: string | null;
   thumbnail_key: string | null;
   game_description?: string | null;
+  game_title?: string | null;
   fresh_count: number;
   bookmark_count: number;
   reply_count: number;
