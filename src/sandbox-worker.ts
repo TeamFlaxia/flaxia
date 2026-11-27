@@ -140,6 +140,9 @@ async function serveWvfsFile(
 ): Promise<Response> {
   try {
     let versionId = requestedVersion;
+    // A post whose canonical payload is a versioned archive must never fall
+    // back to the initial upload: doing so makes Thread/Arcade show v1 forever.
+    let versionedPost = Boolean(requestedVersion);
 
     if (!c.env.BUCKET) {
       return c.json({ error: 'Storage not available' }, 500);
@@ -162,6 +165,7 @@ async function serveWvfsFile(
           if (versionMatch) {
             // Resolve to the version-specific lookup path.
             versionId = versionMatch[1];
+            versionedPost = true;
           } else {
             const obj = await c.env.BUCKET.head(postResult.payload_key);
             if (obj) {
@@ -211,6 +215,12 @@ async function serveWvfsFile(
       } catch {
         // proceed without ad lookup on DB failure
       }
+    }
+
+    if (!zipKey && versionedPost) {
+      // The current release could not be resolved. Serving the original
+      // archive here would silently roll the player back to v1.
+      return c.text('Not found', 404);
     }
 
     if (!zipKey) {

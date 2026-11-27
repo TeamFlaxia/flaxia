@@ -201,6 +201,21 @@ postVersions.post('/posts/:id/versions/commit', requireAuth, async (c) => {
       .bind(newKey, now, now, postId)
       .run();
 
+    // The games feed caches its first page in KV for 300s. Without this the
+    // Arcade/Thread cards keep the pre-update payloadKey and thumbnail long
+    // after the new release became current.
+    if (c.env.CACHE) {
+      try {
+        await Promise.all(
+          (['recent', 'trending'] as const).flatMap((kind) =>
+            [3, 10, 20, 30, 50, 120, 200].map((limit) => c.env.CACHE!.delete(`games:${kind}:${limit}:first`)),
+          ),
+        );
+      } catch (cacheError) {
+        console.warn('Failed to invalidate games cache after version commit:', cacheError);
+      }
+    }
+
     const execCtx = (c as unknown as { executionCtx?: { waitUntil: (p: Promise<unknown>) => void } }).executionCtx;
     if (execCtx?.waitUntil) {
       const bucket = c.env.BUCKET;

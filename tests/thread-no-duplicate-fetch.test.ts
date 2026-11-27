@@ -1,6 +1,6 @@
-// The thread route load already fetched root + replies. The interactive view
-// must render that data instead of immediately issuing a second identical API
-// request before any card can be clicked.
+// The thread route load paints root + replies immediately, but the interactive
+// view must revalidate that data on mount: it can come from a prefetch or a
+// short-lived cache and would otherwise show an old game version.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';

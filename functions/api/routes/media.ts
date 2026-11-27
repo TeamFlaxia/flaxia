@@ -4,7 +4,7 @@ import { createCloudflareServices } from '../../lib/adapters/cloudflare/index.ts
 import { isAdmin } from '../../lib/admin.ts';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { servePublicLoader } from '../../lib/game-loader-public.ts';
-import { resolveVersionPayloadKey } from '../../lib/game-version-key.ts';
+import { resolveLatestGamePayloadKey, resolveVersionPayloadKey } from '../../lib/game-version-key.ts';
 import { handleMediaUpload } from '../../lib/media-upload.ts';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { isKeyBlocked } from '../../lib/scan/db';
@@ -379,7 +379,8 @@ media.get('/zip/:postId', async (c) => {
     if (!resolved.ok) {
       return c.json({ error: resolved.status === 500 ? 'Database not available' : 'ZIP not found' }, resolved.status);
     }
-    const objectKey = resolved.key ?? `zip/${postId}.zip`;
+    // No ?v= means "play the current release", not "play the first upload".
+    const objectKey = resolved.key ?? (await resolveLatestGamePayloadKey(c.env.DB, postId)) ?? `zip/${postId}.zip`;
 
     if (!(await canAccessMediaKey(c, objectKey))) {
       return c.json({ error: 'ZIP not found' }, 404);

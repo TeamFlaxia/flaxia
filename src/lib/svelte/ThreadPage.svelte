@@ -159,17 +159,18 @@ async function loadThread(): Promise<void> {
   loading = true;
   errorMessage = '';
   let fetchedRoot: Post | null = null;
-  let threadReplies: Post[] = initialReplies;
+  // A deferred navigation only carried the root card, not its replies.
+  let threadReplies: Post[] = deferred ? [] : initialReplies;
   try {
-    // A deferred route already gave us a root to paint. Only replies still
-    // need the network; a normal visit keeps the route's blocking data.
-    if (!initialRoot || deferred) {
-      const response = await fetch(`/api/posts/${postId}/thread`);
-      if (!response.ok) throw new Error('Failed to load thread');
-      const data = (await response.json()) as { root?: Post; replies?: Post[] };
-      fetchedRoot = data.root ?? null;
-      threadReplies = Array.isArray(data.replies) ? data.replies : [];
-    }
+    // Always revalidate. Route data can be prefetched or served from a short
+    //-lived cache, so a game version committed after it was produced would
+    // otherwise keep the initial build on screen. The seeded root is still
+    // painted synchronously by onMount, so this does not add click latency.
+    const response = await fetch(`/api/posts/${postId}/thread`);
+    if (!response.ok) throw new Error('Failed to load thread');
+    const data = (await response.json()) as { root?: Post; replies?: Post[] };
+    fetchedRoot = data.root ?? null;
+    threadReplies = Array.isArray(data.replies) ? data.replies : [];
     const root = fetchedRoot ?? initialRoot;
     if (!root) {
       errorMessage = t('thread.load_failed');
@@ -177,7 +178,9 @@ async function loadThread(): Promise<void> {
     }
 
     // Reconcile the card we already mounted in place. Remounting here would
-    // restart any game iframe living inside the root post.
+    // restart any game iframe living inside the root post. Game playback
+    // itself stays current because the WVFS URL resolves posts.payload_key
+    // server-side.
     if (fetchedRoot && rootCard) {
       rootPost = fetchedRoot;
       rootCard.update(fetchedRoot);

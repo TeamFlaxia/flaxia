@@ -149,11 +149,12 @@ describe('Flaxia+ game uploads above 25MB', () => {
     });
     assert.equal(commit.status, 200, await commit.text());
 
-    // The ZIP endpoint must honour ?v= instead of always serving the original.
-    const original = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}`);
-    assert.equal(original.status, 200);
-    assert.equal(original.headers.get('content-length'), String(smallZip.byteLength));
-    assert.equal((await original.arrayBuffer()).byteLength, smallZip.byteLength);
+    // Without ?v= the ZIP endpoint must serve the current release, not the
+    // initial upload; ?v= still selects an archived build explicitly.
+    const currentZip = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}`);
+    assert.equal(currentZip.status, 200);
+    assert.equal(currentZip.headers.get('content-length'), String(bytes.byteLength));
+    assert.equal((await currentZip.arrayBuffer()).byteLength, bytes.byteLength);
 
     const versioned = await fetch(`${BASE_URL}/api/zip/${smallPrepared.postId}?v=${version.versionId}`);
     assert.equal(versioned.status, 200, await versioned.clone().text());
