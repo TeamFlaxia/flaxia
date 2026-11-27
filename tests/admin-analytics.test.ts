@@ -36,6 +36,7 @@ function fixture() {
       created_at TEXT,
       text TEXT,
       game_description TEXT,
+      game_title TEXT,
       payload_key TEXT,
       swf_key TEXT,
       status TEXT NOT NULL DEFAULT 'published',
