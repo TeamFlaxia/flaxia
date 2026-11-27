@@ -14,7 +14,11 @@ export async function load() {
   if (typeof window === 'undefined') return {};
   const bootWindow = window as typeof window & { __FLAXIA_BOOT__?: boolean };
   const canUseBoot = typeof import.meta.env === 'undefined' || import.meta.env.BUILD_TARGET !== 'native';
-  if (canUseBoot && bootWindow.__FLAXIA_BOOT__) {
+  // Locale alone sets __FLAXIA_BOOT__, but a failed/slow /api/me omits the
+  // session key. In that degraded case the singleton is still null, so the
+  // route components would mount as guests. Only skip the gate when a real
+  // session snapshot (signed-in user or explicit guest) was inlined.
+  if (canUseBoot && bootWindow.__FLAXIA_BOOT__ && '__FLAXIA_SESSION__' in bootWindow) {
     void bootShell().catch(() => {
       // onMount attaches its own handler; keep this starter quiet.
     });

@@ -38,6 +38,7 @@ const groups = {
     'svelte-migration',
     'svelte-shell',
     'tailwind-tokens',
+    'thread-session',
     'media-upload-ports',
     'mail-contract-wiring',
     'no-npm-publish',

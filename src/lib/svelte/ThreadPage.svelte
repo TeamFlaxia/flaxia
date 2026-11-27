@@ -16,6 +16,7 @@ import {
 } from '../thread/adapters.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import ShellLayout from './ShellLayout.svelte';
+import { getSessionUser } from './session.ts';
 
 interface Props {
   postId: string;
@@ -37,6 +38,14 @@ let {
   initialReplies = [],
   deferred = false,
 }: Props = $props();
+
+// Route pages adopt the session in their own onMount, which runs AFTER this
+// component's onMount. The imperative card/composer mounts below would capture
+// a null prop and treat a signed-in user as a guest, so read the authoritative
+// synchronous snapshot at mount time.
+function activeUser() {
+  return currentUser ?? getSessionUser() ?? null;
+}
 
 type Entry = { key: string; kind: 'tree'; node: PostNode } | { key: string; kind: 'flat'; post: Post; index?: number };
 
@@ -89,7 +98,7 @@ function mountEntries(): void {
         mountReplyNode(host, {
           node: entry.node,
           sandboxOrigin,
-          currentUser,
+          currentUser: activeUser(),
           postIndexMap: indexMap,
           onReplyCreated: (reply) => addReply(reply),
         }),
@@ -99,7 +108,7 @@ function mountEntries(): void {
         mountThreadPostCard(host, {
           post: entry.post,
           sandboxOrigin,
-          currentUser,
+          currentUser: activeUser(),
           index: entry.index,
           disableNavigation: true,
           onReplyCreated: (reply) => addReply(reply),
@@ -135,7 +144,7 @@ function mountRoot(root: Post, replyCount: number): void {
   rootCard = mountThreadPostCard(rootHost, {
     post: root,
     sandboxOrigin,
-    currentUser,
+    currentUser: activeUser(),
     disableReplyComposer: true,
   });
   rootCard.update({ reply_count: replyCount });
@@ -143,7 +152,7 @@ function mountRoot(root: Post, replyCount: number): void {
     rootComposer = mountReplyComposer(composerHost, {
       postId: root.id,
       sandboxOrigin,
-      currentUser,
+      currentUser: activeUser(),
       onReplyCreated: handleRootReply,
       onCancel: () => (composerOpen = false),
     });

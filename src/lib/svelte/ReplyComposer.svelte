@@ -15,6 +15,7 @@ import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import { showToast } from '../toast.ts';
 import { markRecommendationProfileDirty } from '../vault/recommendation-profile.ts';
+import { getSessionUser } from './session.ts';
 
 interface CurrentUser {
   username: string;
@@ -44,6 +45,13 @@ interface Props {
 
 let { postId, onReplyCreated, onCancel, prefillText = '', currentUser = null }: Props = $props();
 
+// Called only from deferred callbacks (onMount/$effect/handlers): reading the
+// client-only session during SSR render would break hydration.
+function activeUser(): CurrentUser | null {
+  return currentUser ?? getSessionUser();
+}
+let viewer = $state<CurrentUser | null>(null);
+
 let root: HTMLDivElement;
 let textarea: HTMLTextAreaElement;
 let fileInput: HTMLInputElement;
@@ -55,7 +63,7 @@ let text = $state(prefillText);
 let submitting = $state(false);
 let selectedFile = $state<File | null>(null);
 let dropActive = $state(false);
-const maxFileBytes = $derived(maxUploadBytesForUser(currentUser));
+const maxFileBytes = $derived(maxUploadBytesForUser(viewer));
 let suggestions = $state<Suggestion[]>([]);
 let activeSuggestion = $state(0);
 let mentionOpen = $state(false);
@@ -68,6 +76,7 @@ let previewHandle: AttachPreviewHandle | null = null;
 const char = $derived(charMeter(text.length));
 
 onMount(() => {
+  viewer = activeUser();
   attachIcons(root);
 });
 
@@ -77,10 +86,12 @@ onDestroy(() => {
 });
 
 $effect(() => {
-  if (!avatarEl || !currentUser) return;
-  avatarEl.textContent = currentUser.username.charAt(0).toUpperCase();
-  if (currentUser.avatar_key) {
-    const url = nativeApiHref(`/api/images/${currentUser.avatar_key}`);
+  const user = activeUser();
+  viewer = user;
+  if (!avatarEl || !user) return;
+  avatarEl.textContent = user.username.charAt(0).toUpperCase();
+  if (user.avatar_key) {
+    const url = nativeApiHref(`/api/images/${user.avatar_key}`);
     const img = new Image();
     img.onload = () => {
       if (!avatarEl) return;
@@ -92,7 +103,7 @@ $effect(() => {
     img.src = url;
   }
   avatarEl.style.cursor = 'pointer';
-  attachPlusBadge(avatarEl, (currentUser.badge_type as never) ?? null);
+  attachPlusBadge(avatarEl, (user.badge_type as never) ?? null);
 });
 
 function autosize(): void {
@@ -370,8 +381,9 @@ export function insertText(value: string): void {
         class="reply-composer-avatar"
         onclick={(e) => {
           e.stopPropagation();
-          if (!currentUser) return;
-          void navigate(`/profile/${currentUser.username}`);
+          const user = activeUser();
+          if (!user) return;
+          void navigate(`/profile/${user.username}`);
         }}
         role="button"
         tabindex="0"

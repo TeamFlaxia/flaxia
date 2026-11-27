@@ -36,6 +36,7 @@ import { markRecommendationProfileDirty } from '../vault/recommendation-profile.
 import PollWidget from './PollWidget.svelte';
 import PostHeader from './PostHeader.svelte';
 import QuotedPostCard from './QuotedPostCard.svelte';
+import { getSessionUser } from './session.ts';
 
 interface Props {
   post: Post;
@@ -171,7 +172,9 @@ function refreshActions(): void {
 }
 
 function requireAuth(action: 'reply' | 'post' | 'fresh'): boolean {
-  if (props.currentUser) return true;
+  // Imperatively mounted cards can keep a stale null prop. The session
+  // singleton is authoritative, so consult it at click time as well.
+  if (getSessionUser() || props.currentUser) return true;
   showSignInPrompt(
     action,
     () => void navigate('/login'),
@@ -338,7 +341,7 @@ function handleQuote(): void {
   if (!requireAuth('post')) return;
   const p = props.post;
   openPostModal({
-    currentUser: props.currentUser ?? null,
+    currentUser: getSessionUser() ?? props.currentUser ?? null,
     onPostCreated: (post) => void navigate(`/thread/${post.id}`),
     quotedPost: {
       id: p.id,
