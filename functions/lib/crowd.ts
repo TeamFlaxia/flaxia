@@ -599,14 +599,45 @@ export async function enqueuePendingEmbed(
         `INSERT INTO pending_embeddings (post_id, text, payload, attempts, last_error)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(post_id) DO UPDATE SET
-           payload = excluded.payload,
-           attempts = excluded.attempts,
-           last_error = excluded.last_error`,
+           text = excluded.text,
+           -- A text-only re-enqueue must not drop media from an earlier row.
+           payload = COALESCE(excluded.payload, pending_embeddings.payload),
+           -- Retry state must survive re-enqueueing the same text. Without
+           -- this, feed requests reset attempts to 0 and the outbox can
+           -- never dead-letter; changed text starts a fresh budget.
+           attempts = CASE
+             WHEN pending_embeddings.text = excluded.text THEN MAX(pending_embeddings.attempts, excluded.attempts)
+             ELSE excluded.attempts
+           END,
+           last_error = COALESCE(excluded.last_error, pending_embeddings.last_error)`,
       )
       .bind(postId, text, payload ?? null, attempts, error ?? null)
       .run();
   } catch (e) {
     console.error(`Failed to enqueue pending embed for post ${postId}:`, e);
+  }
+}
+
+/** Advance the retry budget of an outbox row after a task was submitted. */
+async function bumpPendingEmbedAttempts(db: D1Database, postId: string, error: string): Promise<void> {
+  try {
+    await ensurePendingEmbedsTable(db);
+    await db
+      .prepare('UPDATE pending_embeddings SET attempts = attempts + 1, last_error = ? WHERE post_id = ?')
+      .bind(error, postId)
+      .run();
+  } catch (e) {
+    console.error(`Failed to update pending embed for post ${postId}:`, e);
+  }
+}
+
+/** A completed vector is the only acknowledgement that lets the row go. */
+async function clearPendingEmbed(db: D1Database, postId: string): Promise<void> {
+  try {
+    await ensurePendingEmbedsTable(db);
+    await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
+  } catch (e) {
+    console.error(`Failed to clear pending embed for post ${postId}:`, e);
   }
 }
 
@@ -668,7 +699,9 @@ export async function drainPendingEmbeds(
     return total;
   };
 
-  if (!config.configured) return { submitted: 0, remaining: await count() };
+  // The kill-switch means "queue, do not submit". The cron must respect it too,
+  // otherwise a Crowd outage would be bypassed by the scheduled drain.
+  if (!config.configured || config.screeningDisabled) return { submitted: 0, remaining: await count() };
 
   const rows = await db
     .prepare(
@@ -695,17 +728,12 @@ export async function drainPendingEmbeds(
     }
     const ok = await submitEmbedTask(config, row.post_id, row.text, media);
     if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(row.post_id).run();
+      // Keep the row until the webhook acknowledges it. Crowd does not retry
+      // callbacks, so deleting here could strand the post permanently.
+      await bumpPendingEmbedAttempts(db, row.post_id, 'submitted, awaiting callback');
       submitted++;
     } else {
-      await enqueuePendingEmbed(
-        db,
-        row.post_id,
-        row.text,
-        row.attempts + 1,
-        'submission failed',
-        row.payload ?? undefined,
-      );
+      await bumpPendingEmbedAttempts(db, row.post_id, 'submission failed');
     }
     if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
   }
@@ -725,36 +753,35 @@ export async function embedPost(
   text: string,
   media?: PostMediaInput,
 ): Promise<void> {
+  const config = crowdConfig(env);
+  const payload = media ? JSON.stringify(media) : undefined;
+
+  // Persist to the outbox before the in-flight guard: a concurrent dispatch
+  // for the same post must not silently lose the row. Both the outbox and
+  // `submitEmbedTask` keep the raw body so stripping happens exactly once (it
+  // is not idempotent for escaped markers such as `\{red}`).
+  if (db) await enqueuePendingEmbed(db, postId, text, 0, undefined, payload);
+
+  if (!db) {
+    if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text, media);
+    return;
+  }
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
   try {
-    const config = crowdConfig(env);
-    if (!db) {
-      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text, media);
-      return;
-    }
-
-    // Persist to the outbox before the network call. The submit happens after
-    // the response (waitUntil); if the isolate is evicted mid-flight, the row
-    // is still queued for the next drain instead of being lost. Both the outbox
-    // and `submitEmbedTask` keep the raw body so stripping happens exactly once
-    // (it is not idempotent for escaped markers such as `\{red}`).
-    const payload = media ? JSON.stringify(media) : undefined;
-    await enqueuePendingEmbed(db, postId, text, 0, undefined, payload);
     if (!config.configured || config.screeningDisabled) return;
 
-    // This drain skips `postId` (the in-flight guard), so backfilled rows are
-    // submitted here and the current post is handled below without the throttle
-    // consuming the same slot twice.
-    await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
-
+    // Submit THIS post first. Draining older rows first used to consume the
+    // single 10s throttle slot, so a just-published post was skipped and left
+    // in the outbox with no autonomous consumer.
     if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
     const ok = await submitEmbedTask(config, postId, text, media);
     if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
+      await bumpPendingEmbedAttempts(db, postId, 'submitted, awaiting callback');
     } else {
-      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed', payload);
+      await bumpPendingEmbedAttempts(db, postId, 'submission failed');
     }
+    await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
   } finally {
     embeddingPosts.delete(postId);
   }
@@ -1077,7 +1104,15 @@ async function handleVectorEmbedResult(
   const sourceSha = url.searchParams.get('sha');
   if (sourceSha) {
     const current = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(postId).first<{ text: string }>();
-    if (!current || sourceSha !== (await postTextSha(stripPostColors(current.text)))) return;
+    if (!current) return;
+    if (sourceSha !== (await postTextSha(stripPostColors(current.text)))) {
+      // The task was submitted before an edit. Crowd does not retry webhook
+      // deliveries, so dropping it here used to leave the post permanently
+      // unindexed. Queue the current text for a fresh task instead.
+      console.warn(`Vector embed callback for post ${postId} has stale text; re-queuing the current text`);
+      await enqueuePendingEmbed(db, postId, current.text, 1, 'stale embedding callback');
+      return;
+    }
   }
   await ensureEmbeddingSourceColumn(db);
 
@@ -1104,6 +1139,9 @@ async function handleVectorEmbedResult(
     )
     .bind(postId, JSON.stringify(vector), model, dimensions, sourceSha)
     .run();
+  // The callback is the acknowledgement. Only now is it safe to retire the
+  // outbox row; Crowd never retries a failed delivery.
+  await clearPendingEmbed(db, postId);
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }
 
@@ -1329,6 +1367,14 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleFileScanTaskFailure(url, event, db);
       } else if (callbackType === 'translate') {
         await handleTranslateTaskFailure(url, event, db);
+      } else if (callbackType === 'vector-embed') {
+        const postId = url.searchParams.get('postId');
+        if (postId) {
+          // The row was kept after submission, so let the cron retry it. A
+          // failed callback used to fall through to the web-index handler,
+          // which ignored vector-embed entirely.
+          await bumpPendingEmbedAttempts(db, postId, `task failed: ${(event.error || 'task_failed').slice(0, 200)}`);
+        }
       } else {
         await handleWebIndexTaskFailure(callbackType, event, db);
       }

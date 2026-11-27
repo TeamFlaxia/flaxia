@@ -45,6 +45,22 @@ export default {
   // Triggered by `triggers.crons` in wrangler.worker.toml — exports the
   // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
   async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    // pending_embeddings has no other autonomous consumer: new-post requests
+    // are throttled and admin backfill is manual, so stranded rows never
+    // completed. Drain a bounded batch on every scheduled run.
+    try {
+      const { drainPendingEmbeds } = await import('./lib/crowd');
+      const { submitted, remaining } = await drainPendingEmbeds(env.DB, env, {
+        maxBatch: 50,
+        respectThrottle: false,
+      });
+      if (submitted > 0 || remaining > 0) {
+        console.log(`Pending embeddings: submitted=${submitted} remaining=${remaining}`);
+      }
+    } catch (error) {
+      console.error('Pending embedding drain failed:', (error as Error).message);
+    }
+
     if (event.cron === '0 * * * *') {
       try {
         const { drainCcIngestion } = await import('./lib/cc-ingest');

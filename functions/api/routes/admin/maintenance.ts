@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { postTextSha } from '../../../lib/ai-index.ts';
 import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../../lib/crowd';
 import {
   addBlocklistEntry,
@@ -120,31 +122,37 @@ maintenance.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) =>
     }
 
     const url = new URL(c.req.url);
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 2_147_483_647);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 1_000);
     const drain = url.searchParams.get('drain') !== 'false';
 
     const candidates = (await c.env.DB.prepare(`
-      SELECT p.id, p.text, CASE WHEN pe.post_id IS NULL THEN 0 ELSE 1 END AS pending
+      SELECT p.id, p.text, e.source_sha, e.dimensions
       FROM posts p
       LEFT JOIN post_embeddings e ON p.id = e.post_id
-      LEFT JOIN pending_embeddings pe ON pe.post_id = p.id
       WHERE p.status = 'published'
         AND p.hidden = 0
         AND p.parent_id IS NULL
         AND p.text IS NOT NULL
         AND p.text != ''
-        AND (e.post_id IS NULL OR e.source_sha IS NULL OR COALESCE(e.dimensions, 0) != 768)
       ORDER BY p.created_at DESC
       LIMIT ?
     `)
       .bind(limit)
-      .all()) as { results: Array<{ id: string; text: string; pending: number }> };
+      .all()) as { results: Array<{ id: string; text: string; source_sha: string | null; dimensions: number | null }> };
 
     let enqueued = 0;
     for (const post of candidates.results) {
-      // Posts already in the outbox are counted but not re-enqueued, so failed
-      // retry state (attempts/last_error) is preserved.
-      if (!post.pending) await enqueuePendingEmbed(c.env.DB, post.id, post.text);
+      // A vector is only complete when its provenance matches the current text
+      // and its dimensions match the live index. Both must be checked here.
+      if (
+        post.source_sha &&
+        post.source_sha === (await postTextSha(stripPostColors(post.text))) &&
+        post.dimensions === 768
+      )
+        continue;
+      // Re-enqueueing an existing row refreshes its text while preserving the
+      // retry budget for unchanged content.
+      await enqueuePendingEmbed(c.env.DB, post.id, post.text);
       enqueued++;
     }
 
@@ -156,7 +164,7 @@ maintenance.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) =>
       execCtx.waitUntil(
         (async () => {
           const result = await drainPendingEmbeds(c.env.DB, c.env, {
-            maxBatch: enqueued || 50,
+            maxBatch: Math.min(enqueued, 50) || 50,
             delayMs: 50,
             respectThrottle: false,
           }).catch((e) => {
