@@ -319,7 +319,7 @@ queue is not visible, so a consumer is never bound to a missing queue.
 ### Durable dead letters
 
 Cloudflare Queues keeps a dead letter only for its retention window (**four
-days by default**). Migration `0149_ap_dlq.sql` therefore adds a D1 table that
+days by default**). Migration `0150_ap_dlq.sql` therefore adds a D1 table that
 survives that window. The second `[[queues.consumers]]` in
 `wrangler.worker.toml` consumes `activitypub-delivery-dlq`: the worker stores
 each message in `ap_dlq` and acknowledges it. It has one bounded retry; a
@@ -341,7 +341,7 @@ Public activities keep their payload verbatim. The original queue
 message is never changed, and redaction never affects acknowledgement or
 retry behaviour.
 
-D1 is not an indefinite archive. Migration `0151_ap_dlq_retention.sql` adds a
+D1 is not an indefinite archive. Migration `0152_ap_dlq_retention.sql` adds a
 covering index on `(received_at, id)`, and the dedicated `30 4 * * *` cron in
 `wrangler.worker.toml` deletes rows older than 14 days:
 

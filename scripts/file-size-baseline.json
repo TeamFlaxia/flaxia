@@ -1,8 +1,8 @@
 {
   "functions/api/routes/activitypub.ts": 520,
   "functions/api/routes/auth.ts": 877,
-  "functions/api/routes/games.ts": 759,
-  "functions/api/routes/media.ts": 643,
+  "functions/api/routes/games.ts": 763,
+  "functions/api/routes/media.ts": 644,
   "functions/api/routes/posts/composer.ts": 983,
   "functions/api/routes/posts/engagement.ts": 805,
   "functions/api/routes/posts/manage.ts": 654,

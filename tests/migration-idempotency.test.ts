@@ -1,7 +1,7 @@
 // Replay safety for D1 migrations.
 //
 // Production D1 remembers which files it applied, but local databases and
-// manual re-runs can execute a migration twice. Migrations in the 0149+ AP
+// manual re-runs can execute a migration twice. Migrations in the 0150+ AP
 // series opt into the IF NOT EXISTS convention, so replaying them must be a
 // no-op. Older migrations are one-shot DDL (bare CREATE TABLE / ALTER TABLE ADD
 // COLUMN) and cannot be replayed; rewriting those is out of scope here, so the
@@ -20,7 +20,7 @@ const migrationFiles = readdirSync(MIGRATION_DIR)
   .filter((name) => name.endsWith('.sql'))
   .sort();
 
-const IDEMPOTENT_MIGRATIONS = new Set(['0149_ap_dlq.sql', '0150_ap_pool.sql', '0151_ap_dlq_retention.sql']);
+const IDEMPOTENT_MIGRATIONS = new Set(['0150_ap_dlq.sql', '0151_ap_pool.sql', '0152_ap_dlq_retention.sql']);
 const POOL_INDEXES = ['idx_ap_pool_fetched', 'idx_ap_pool_instance', 'idx_ap_pool_score'];
 
 function migrationSql(file: string): string {
@@ -76,7 +76,7 @@ describe('migration replay idempotency', () => {
       assert.deepEqual(
         replayFailures.filter((file) => IDEMPOTENT_MIGRATIONS.has(file)),
         [],
-        '0149-0151 must be safe to replay on an already-migrated database',
+        '0150-0152 must be safe to replay on an already-migrated database',
       );
 
       const row = db
@@ -92,11 +92,11 @@ describe('migration replay idempotency', () => {
       assert.equal(row.fetched_at, '2026-01-01T00:00:00.000Z');
       assert.deepEqual(poolIndexes(db), POOL_INDEXES, 'the pool indexes must survive a replay');
 
-      // The exact regression: 0150 used bare CREATE TABLE/CREATE INDEX, so its
+      // The exact regression: 0151 used bare CREATE TABLE/CREATE INDEX, so its
       // second execution threw "table ap_pool_metrics already exists".
       assert.doesNotThrow(() => {
-        applyMigrations(db, ['0150_ap_pool.sql']);
-        applyMigrations(db, ['0150_ap_pool.sql']);
+        applyMigrations(db, ['0151_ap_pool.sql']);
+        applyMigrations(db, ['0151_ap_pool.sql']);
       });
       const count = db.prepare('SELECT COUNT(*) AS count FROM ap_pool_metrics').get() as { count: number };
       assert.equal(count.count, 1);

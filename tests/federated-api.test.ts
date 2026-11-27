@@ -86,7 +86,7 @@ let db: TestDatabase;
 beforeEach(() => {
   db = createTestDatabase();
   databases.push(db);
-  // Migration 0150 is owned by another worker; keep the fixture usable even
+  // Migration 0151 is owned by another worker; keep the fixture usable even
   // if that file is not present yet. No-op when the real migration exists.
   db.exec(
     `CREATE TABLE IF NOT EXISTS ap_pool_metrics (

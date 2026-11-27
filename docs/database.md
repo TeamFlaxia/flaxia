@@ -74,7 +74,7 @@ owned in `user_titles` before it can be equipped.
 | parent_id | TEXT | For replies, FK → posts(id) |
 | fresh_count | INTEGER | Denormalized like count |
 | reload_count | INTEGER | Denormalized reload (retweet) count |
-| visibility | TEXT | `public` (default) / `unlisted` / `private` (Followers only) / `direct`; added by migration 0147 |
+| visibility | TEXT | `public` (default) / `unlisted` / `private` (Followers only) / `direct`; added by migration 0148 |
 | created_at | TEXT | ISO 8601 |
 
 Visibility applies to every stored post, local or remote. `public` /

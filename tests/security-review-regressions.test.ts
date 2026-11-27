@@ -55,7 +55,7 @@ function fixture(authenticated = true) {
       visibility_root_author_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
-    -- Recommendation queries LEFT JOIN the federated popularity pool (migration 0150).
+    -- Recommendation queries LEFT JOIN the federated popularity pool (migration 0151).
     CREATE TABLE ap_pool_metrics (
       post_id TEXT PRIMARY KEY, instance TEXT, favourites INTEGER DEFAULT 0,
       reblogs INTEGER DEFAULT 0, score REAL DEFAULT 0, fetched_at TEXT

@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { backfillGameTitles } from './lib/game-title-backfill.ts';
 import { isPublicAddress } from './lib/activitypub/context.ts';
+import { backfillGameTitles } from './lib/game-title-backfill.ts';
 import { parsePublicHttpUrl } from './lib/url-guard.ts';
 
 /** How long a quarantined message may stay in D1 before the daily prune. */
@@ -317,7 +317,7 @@ export async function pruneDeadLetters(db: D1Database, cutoffIso: string): Promi
 /**
  * Persist dead letters and acknowledge every message.
  *
- * The queue keeps a dead letter only for its retention window (four days by
+ * The queue keeps a dead letter only for its retention window (14 days by
  * default). D1 is the durable copy, but private (followers-only/direct) Create
  * bodies are redacted first and a daily cron enforces a 14-day ceiling. A
  * missing table or a database outage must not turn the DLQ consumer into an
