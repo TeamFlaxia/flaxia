@@ -72,7 +72,12 @@ function renderTimeCalls(source: string): string[] {
 }
 
 test('mail children initialise after the session prop arrives, not in onMount', async () => {
-  for (const file of ['src/lib/svelte/MailPage.svelte', 'src/lib/svelte/MailSettingsPage.svelte']) {
+  for (const file of [
+    'src/lib/svelte/MailPage.svelte',
+    'src/lib/svelte/MailSettingsPage.svelte',
+    'src/lib/svelte/MailThreadPage.svelte',
+    'src/lib/svelte/MailComposePage.svelte',
+  ]) {
     const source = await readFile(new URL(`../${file}`, import.meta.url), 'utf8');
     assert.match(source, /\$effect\(\(\)\s*=>\s*\{[\s\S]{0,120}currentUser/, `${file} must react to the session prop`);
   }

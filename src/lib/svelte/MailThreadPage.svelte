@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onDestroy, onMount } from 'svelte';
+import { onDestroy } from 'svelte';
 import { primaryAddressForUsername } from '../../../shared/mail-address.ts';
 import { t } from '../i18n.ts';
 import {
@@ -216,7 +216,12 @@ async function sendReply(): Promise<void> {
   }
 }
 
-onMount(() => {
+// MailView adopts the session in its own onMount, which runs after this
+// child's. React to the prop so a direct /mail/thread/:id visit still loads.
+let started = false;
+$effect(() => {
+  if (!currentUser || started || destroyed) return;
+  started = true;
   void init();
 });
 
