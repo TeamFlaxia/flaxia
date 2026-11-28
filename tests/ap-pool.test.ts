@@ -86,6 +86,35 @@ function status(overrides: Record<string, unknown> = {}): Record<string, unknown
   };
 }
 
+type TaggedStatement = ReturnType<TestDatabase['prepare']> & { readonly sql: string };
+
+/**
+ * A D1-like DB that fails a batch containing the metrics insert before running
+ * any statement. D1 batches are atomic, so this models a failed transaction:
+ * the post insert in the same batch must be rolled back as well.
+ */
+function failMetricsBatch(db: TestDatabase): PoolEnv['DB'] {
+  const prepare = (sql: string, values: unknown[] = []): TaggedStatement => {
+    const statement = values.length ? db.prepare(sql).bind(...values) : db.prepare(sql);
+    return {
+      bind: (...next: unknown[]) => prepare(sql, [...values, ...next]),
+      first: <T>() => statement.first<T>(),
+      all: <T>() => statement.all<T>(),
+      run: () => statement.run(),
+      sql,
+    };
+  };
+  return {
+    prepare,
+    batch: async (statements: ReturnType<TestDatabase['prepare']>[]) => {
+      if (statements.some((statement) => (statement as TaggedStatement).sql?.includes('INSERT INTO ap_pool_metrics'))) {
+        throw new Error('injected ap_pool_metrics insert failure');
+      }
+      return db.batch(statements);
+    },
+  } as unknown as PoolEnv['DB'];
+}
+
 /** Replace global fetch with a deterministic fake and return its restorer. */
 function stubFetch(handler: (url: string) => { status?: number; body: unknown } | null): () => void {
   const original = globalThis.fetch;
@@ -253,7 +282,15 @@ describe('federated popularity pool', () => {
     );
     try {
       const result = await runPoolDiscovery(envFor(db));
-      assert.deepEqual(result, { instances: 1, fetched: 3, stored: 1, refreshed: 0, skipped: 2, errors: 0 });
+      assert.deepEqual(result, {
+        instances: 1,
+        fetched: 3,
+        stored: 1,
+        inserted: 1,
+        refreshed: 0,
+        skipped: 2,
+        errors: 0,
+      });
 
       const post = await db
         .prepare('SELECT id, user_id, text, hidden, ap_object_id FROM posts WHERE ap_object_id = ?')
@@ -282,6 +319,59 @@ describe('federated popularity pool', () => {
       assert.equal(author?.domain, DOMAIN);
       assert.equal(author?.summary, 'Hi there');
     } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('leaves no orphan post when the metrics write fails in the same batch', async () => {
+    const db = createTestDatabase();
+    const restore = stubFetch(mastodonFetch([status()]));
+    try {
+      const result = await runPoolDiscovery(envFor(db, { DB: failMetricsBatch(db) }));
+      assert.equal(result.stored, 0);
+      assert.equal(result.inserted, 0);
+      assert.equal(result.errors, 1);
+      const posts = await db
+        .prepare('SELECT COUNT(*) AS count FROM posts WHERE ap_object_id = ?')
+        .bind(OBJECT_ID)
+        .first<{ count: number }>();
+      assert.equal(posts?.count, 0, 'the public post must roll back with its metrics insert');
+      const metrics = await db.prepare('SELECT COUNT(*) AS count FROM ap_pool_metrics').first<{ count: number }>();
+      assert.equal(metrics?.count, 0);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('does not write orphan metrics when INSERT OR IGNORE is a no-op', async () => {
+    const db = createTestDatabase();
+    const restore = stubFetch(mastodonFetch([status()]));
+    const original = crypto.randomUUID;
+    // randomPostId() slices the hex UUID to ten characters.
+    const duplicateId = 'aaaaaaaabb';
+    crypto.randomUUID = () => 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    try {
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+           VALUES (?, 'u1', 'local', 'existing local post', 'published', ?, ?)`,
+        )
+        .bind(duplicateId, `${ACTOR_URL}/statuses/different`, CREATED_AT)
+        .run();
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.stored, 0);
+      assert.equal(result.skipped, 1);
+      const posts = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(duplicateId).first<{ text: string }>();
+      assert.equal(posts?.text, 'existing local post');
+      const metrics = await db
+        .prepare('SELECT COUNT(*) AS count FROM ap_pool_metrics WHERE post_id = ?')
+        .bind(duplicateId)
+        .first<{ count: number }>();
+      assert.equal(metrics?.count, 0, 'an ignored post insert must not create a metrics row');
+    } finally {
+      crypto.randomUUID = original;
       restore();
       db.close();
     }
@@ -391,7 +481,15 @@ describe('federated popularity pool', () => {
     });
     try {
       const result = await runPoolDiscovery(envFor(db, { AP_POOL_SEED_DOMAINS: 'social.test' }));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 1, refreshed: 0, skipped: 0, errors: 0 });
+      assert.deepEqual(result, {
+        instances: 1,
+        fetched: 1,
+        stored: 1,
+        inserted: 1,
+        refreshed: 0,
+        skipped: 0,
+        errors: 0,
+      });
       const metrics = await db
         .prepare(
           `SELECT pm.favourites, pm.reblogs, pm.instance FROM ap_pool_metrics pm JOIN posts p ON p.id = pm.post_id WHERE p.ap_object_id = ?`,
@@ -407,11 +505,13 @@ describe('federated popularity pool', () => {
     }
   });
 
-  it('respects the total cap across instances', async () => {
+  it('respects the insert cap across instances', async () => {
     const db = createTestDatabase();
     const restore = stubFetch(mastodonFetch([status(), status({ id: `${ACTOR_URL}/statuses/2` })]));
     try {
-      const result = await runPoolDiscovery(envFor(db), { maxTotal: 1, maxPostsPerInstance: 40 });
+      // Disable refreshes so the ceiling is unambiguously about insertions.
+      const result = await runPoolDiscovery(envFor(db), { maxTotal: 1, maxPostsPerInstance: 40, maxRefreshes: 0 });
+      assert.equal(result.inserted, 1);
       assert.equal(result.stored, 1);
       // Collection stops as soon as the ceiling is reached.
       assert.equal(result.fetched, 1);
@@ -419,6 +519,78 @@ describe('federated popularity pool', () => {
         .prepare("SELECT COUNT(*) AS count FROM posts WHERE user_id = '' AND ap_object_id IS NOT NULL")
         .first<{ count: number }>();
       assert.equal(count?.count, 1);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('does not count refreshes against the new-post budget', async () => {
+    const db = createTestDatabase();
+    const restore = stubFetch(
+      mastodonFetch([
+        status(), // already in the pool
+        status({ id: `${ACTOR_URL}/statuses/2` }),
+        status({ id: `${ACTOR_URL}/statuses/3` }),
+        status({ id: `${ACTOR_URL}/statuses/4` }),
+      ]),
+    );
+    try {
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+           VALUES ('known', '', 'alice@mastodon.test', 'known', 'published', ?, ?)`,
+        )
+        .bind(OBJECT_ID, CREATED_AT)
+        .run();
+      await db
+        .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+        .bind('known', DOMAIN, CREATED_AT)
+        .run();
+
+      const result = await runPoolDiscovery(envFor(db), { maxTotal: 2 });
+      assert.equal(result.refreshed, 1);
+      assert.equal(result.inserted, 2, 'one refresh must not eat the insertion budget');
+      assert.equal(result.stored, 3);
+      assert.equal(result.fetched, 4);
+      const count = await db
+        .prepare("SELECT COUNT(*) AS count FROM posts WHERE user_id = '' AND ap_object_id IS NOT NULL")
+        .first<{ count: number }>();
+      assert.equal(count?.count, 3);
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('bounds refreshes with their own cap', async () => {
+    const db = createTestDatabase();
+    const second = `${ACTOR_URL}/statuses/2`;
+    const restore = stubFetch(
+      mastodonFetch([status(), status({ id: second }), status({ id: `${ACTOR_URL}/statuses/3` })]),
+    );
+    try {
+      for (const [id, objectId] of [
+        ['known-1', OBJECT_ID],
+        ['known-2', second],
+      ] as const) {
+        await db
+          .prepare(
+            `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+             VALUES (?, '', 'alice@mastodon.test', 'known', 'published', ?, ?)`,
+          )
+          .bind(id, objectId, CREATED_AT)
+          .run();
+        await db
+          .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+          .bind(id, DOMAIN, CREATED_AT)
+          .run();
+      }
+      const result = await runPoolDiscovery(envFor(db), { maxTotal: 2, maxRefreshes: 1 });
+      assert.equal(result.refreshed, 1);
+      assert.equal(result.inserted, 1);
+      assert.equal(result.stored, 2);
+      assert.equal(result.skipped, 1);
     } finally {
       restore();
       db.close();
@@ -733,6 +905,69 @@ describe('federated popularity pool', () => {
     }
   });
 
+  it('detaches root-only and quote references before deleting a stale pool post', async () => {
+    const db = createTestDatabase();
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      // The regression only bites when SQLite really enforces the plain REFERENCES.
+      const fk = await db.prepare('PRAGMA foreign_keys').first<{ foreign_keys: number }>();
+      assert.equal(fk?.foreign_keys, 1);
+
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, created_at)
+           VALUES ('surviving-parent', 'u1', 'local', 'parent', 'published', ?)`,
+        )
+        .bind(CREATED_AT)
+        .run();
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, ap_object_id, created_at)
+           VALUES ('pool-parent', '', 'alice@${DOMAIN}', 'from pool', 'published', ?, ?)`,
+        )
+        .bind(`${ACTOR_URL}/statuses/root`, old)
+        .run();
+      await db
+        .prepare('INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)')
+        .bind('pool-parent', DOMAIN, old)
+        .run();
+      // root_id references the stale pool post, while parent_id survives.
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, parent_id, root_id, created_at)
+           VALUES ('root-reply', 'u1', 'local', 'reply', 'published', 'surviving-parent', 'pool-parent', ?)`,
+        )
+        .bind(CREATED_AT)
+        .run();
+      await db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, status, quoted_post_id, created_at)
+           VALUES ('local-quote', 'u1', 'local', 'quote', 'published', 'pool-parent', ?)`,
+        )
+        .bind(CREATED_AT)
+        .run();
+
+      const removed = await prunePool(envFor(db));
+      assert.equal(removed, 2);
+      assert.equal(await db.prepare('SELECT id FROM posts WHERE id = ?').bind('pool-parent').first(), null);
+      const reply = await db
+        .prepare('SELECT parent_id, root_id FROM posts WHERE id = ?')
+        .bind('root-reply')
+        .first<{ parent_id: string | null; root_id: string | null }>();
+      // The detach clears both self-references on any row that points at the
+      // pruned post, including the root-only reply (whose parent survives).
+      assert.equal(reply?.parent_id, null);
+      assert.equal(reply?.root_id, null);
+      const quote = await db
+        .prepare('SELECT quoted_post_id FROM posts WHERE id = ?')
+        .bind('local-quote')
+        .first<{ quoted_post_id: string | null }>();
+      assert.equal(quote?.quoted_post_id, null);
+    } finally {
+      db.close();
+    }
+  });
+
   it('keeps a pool post refreshed recently even when the post itself is old', async () => {
     const db = createTestDatabase();
     const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -775,7 +1010,15 @@ describe('federated popularity pool', () => {
     const restore = stubFetch(mastodonFetch([status({ visibility: 'unlisted' })]));
     try {
       const result = await runPoolDiscovery(envFor(db));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, refreshed: 0, skipped: 1, errors: 0 });
+      assert.deepEqual(result, {
+        instances: 1,
+        fetched: 1,
+        stored: 0,
+        inserted: 0,
+        refreshed: 0,
+        skipped: 1,
+        errors: 0,
+      });
       const post = await db.prepare('SELECT id FROM posts WHERE ap_object_id = ?').bind(OBJECT_ID).first();
       assert.equal(post, null);
       const metrics = await db.prepare('SELECT post_id FROM ap_pool_metrics').all<{ post_id: string }>();
@@ -833,7 +1076,15 @@ describe('federated popularity pool', () => {
     });
     try {
       const result = await runPoolDiscovery(envFor(db, { AP_POOL_SEED_DOMAINS: 'social.test' }));
-      assert.deepEqual(result, { instances: 1, fetched: 1, stored: 0, refreshed: 0, skipped: 1, errors: 0 });
+      assert.deepEqual(result, {
+        instances: 1,
+        fetched: 1,
+        stored: 0,
+        inserted: 0,
+        refreshed: 0,
+        skipped: 1,
+        errors: 0,
+      });
       const posts = await db
         .prepare('SELECT id FROM posts WHERE ap_object_id = ?')
         .bind(`${actor}/notes/1`)

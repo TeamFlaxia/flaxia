@@ -295,7 +295,7 @@ describe('GET /api/federated/posts', () => {
     ]);
   });
 
-  it('paginates by (score, created_at, id) with ties', async () => {
+  it('paginates by score with ties', async () => {
     seedPoolPost({ id: 'p-a', actor: ACTOR_A, score: 5, createdAt: '2026-11-20T00:00:00.000Z' });
     seedPoolPost({ id: 'p-b', actor: ACTOR_A, score: 5, createdAt: '2026-11-20T00:00:00.000Z' });
     seedPoolPost({ id: 'p-newer', actor: ACTOR_A, score: 5, createdAt: '2026-11-21T00:00:00.000Z' });
@@ -311,6 +311,25 @@ describe('GET /api/federated/posts', () => {
     const third = await getFeed(app, `/federated/posts?limit=2&cursor=${encodeURIComponent(second.next_cursor!)}`);
     assert.deepEqual(ids(third.posts), []);
     assert.equal(third.next_cursor, null);
+  });
+
+  it('does not skip or repeat rows when the hourly cron rewrites scores', async () => {
+    for (let index = 1; index <= 6; index++) {
+      seedPoolPost({ id: `p-${index}`, actor: ACTOR_A, score: 10 - index });
+    }
+    const app = appFor(null);
+    const first = await getFeed(app, '/federated/posts?limit=3');
+    assert.deepEqual(ids(first.posts), ['p-1', 'p-2', 'p-3']);
+    assert.ok(first.next_cursor);
+
+    // A discovery run drops a served post and promotes an unserved one.
+    db.prepare('UPDATE ap_pool_metrics SET score = ? WHERE post_id = ?').bind(1, 'p-1').run();
+    db.prepare('UPDATE ap_pool_metrics SET score = ? WHERE post_id = ?').bind(100, 'p-4').run();
+
+    const second = await getFeed(app, `/federated/posts?limit=3&cursor=${encodeURIComponent(first.next_cursor!)}`);
+    assert.deepEqual(ids(second.posts), ['p-4', 'p-5', 'p-6']);
+    const served = [...first.posts, ...second.posts].map((post) => post.id);
+    assert.equal(new Set(served).size, served.length, 'no post may be served twice');
   });
 
   it('rejects an unusable cursor and clamps the page size', async () => {
