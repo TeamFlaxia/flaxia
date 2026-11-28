@@ -10,7 +10,7 @@ import type { Bindings, Variables } from '../types';
 
 const recommendations = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-type SignalKind = 'fresh' | 'bookmark' | 'reply' | 'share' | 'dwell';
+type SignalKind = 'fresh' | 'bookmark' | 'reply' | 'share' | 'dwell' | 'view';
 
 interface SignalRow {
   post_id: string;
@@ -32,6 +32,9 @@ const BASE_WEIGHTS: Record<SignalKind, number> = {
   reply: 1.4,
   share: 1.3,
   dwell: 1.0,
+  // A view is weaker than a deliberate action, but it still says the reader
+  // chose that post; repeated views accumulate up to MAX_WEIGHT_PER_POST.
+  view: 0.6,
 };
 
 const MAX_SOURCE_POSTS = 150;
@@ -70,7 +73,7 @@ recommendations.get('/recommendations/profile-sources', requireAuth, async (c) =
   }
 
   try {
-    const [freshRows, bookmarkRows, replyRows, shareRows, dwellRows] = await Promise.all([
+    const [freshRows, bookmarkRows, replyRows, shareRows, dwellRows, viewRows] = await Promise.all([
       c.env.DB.prepare(
         `SELECT f.post_id, f.created_at FROM freshs f JOIN posts p ON p.id = f.post_id
          WHERE f.user_id = ? AND p.status = 'published' AND p.hidden = 0
@@ -109,6 +112,14 @@ recommendations.get('/recommendations/profile-sources', requireAuth, async (c) =
       )
         .bind(user.id)
         .all<SignalRow>(),
+      c.env.DB.prepare(
+        `SELECT i.post_id, i.last_seen_at AS created_at FROM user_post_impressions i
+         JOIN posts p ON p.id = i.post_id
+         WHERE i.user_id = ? AND p.status = 'published' AND p.hidden = 0
+         ORDER BY i.last_seen_at DESC LIMIT 40`,
+      )
+        .bind(user.id)
+        .all<SignalRow>(),
     ]);
 
     const nowMs = Date.now();
@@ -136,6 +147,7 @@ recommendations.get('/recommendations/profile-sources', requireAuth, async (c) =
     add(replyRows.results, 'reply');
     add(shareRows.results, 'share');
     add(dwellRows.results, 'dwell');
+    add(viewRows.results, 'view');
 
     const ordered = [...weights.entries()]
       .sort((a, b) => b[1].weight - a[1].weight || b[1].latest.localeCompare(a[1].latest))

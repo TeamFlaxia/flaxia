@@ -2,15 +2,19 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   computePoolScore,
+  JA_POOL_HASHTAGS,
   normalizeMastodonStatus,
   POOL_JOIN_SQL,
   POOL_SCORE_SQL,
   type PoolActorInfo,
   type PoolEnv,
+  preferredPoolLanguage,
   prunePool,
   runPoolDiscovery,
+  selectPoolHashtags,
 } from '../functions/lib/activitypub/ap-pool.ts';
 import { handleIncomingActivity } from '../functions/lib/activitypub/handlers.ts';
+import { detectedLanguage } from '../functions/lib/activitypub/pool-normalize.ts';
 import { freshnessBoost } from '../functions/lib/scoring.ts';
 import { createTestDatabase, seedLocalUser, type TestDatabase } from './helpers/d1.ts';
 
@@ -713,6 +717,7 @@ describe('federated popularity pool', () => {
           .prepare(`INSERT INTO ap_pool_metrics (post_id, instance, score, fetched_at) VALUES (?, ?, 1, ?)`)
           .bind(id, DOMAIN, createdAt)
           .run();
+        await db.prepare('INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)').bind(id, 'ja').run();
       }
       const removed = await prunePool(envFor(db));
       assert.equal(removed, 2);
@@ -731,6 +736,15 @@ describe('federated popularity pool', () => {
         .all<{ post_id: string }>();
       assert.deepEqual(
         metrics.results.map((row) => row.post_id),
+        ['new-remote', 'old-local'],
+      );
+      const languages = await db
+        .prepare(
+          "SELECT post_id FROM ap_pool_language WHERE post_id IN ('old-remote', 'new-remote', 'old-local') ORDER BY post_id",
+        )
+        .all<{ post_id: string }>();
+      assert.deepEqual(
+        languages.results.map((row) => row.post_id),
         ['new-remote', 'old-local'],
       );
     } finally {
@@ -1145,5 +1159,86 @@ describe('federated popularity pool', () => {
     const slightlyAhead = new Date(now + 2 * 60 * 1000).toISOString();
     assert.ok(withNow(now, () => normalizeMastodonStatus(status({ created_at: slightlyAhead }), actorInfo(), BASE)));
     assert.equal(normalizeMastodonStatus(status({ created_at: 'not-a-date' }), actorInfo(), BASE), null);
+  });
+
+  it('interleaves Japanese tag seeds with local trends for a ja-preferring pool', () => {
+    assert.deepEqual(selectPoolHashtags(['local-1', 'local-2', 'local-3', 'local-4', 'local-5'], 'ja'), [
+      'local-1',
+      JA_POOL_HASHTAGS[0],
+      'local-2',
+      JA_POOL_HASHTAGS[1],
+      'local-3',
+    ]);
+    // A non-ja preference keeps the original local-only selection.
+    assert.deepEqual(selectPoolHashtags(['local-1', 'local-2'], 'en'), ['local-1', 'local-2']);
+    assert.equal(preferredPoolLanguage({}), 'ja');
+    assert.equal(preferredPoolLanguage({ AP_POOL_PREFERRED_LANGUAGE: 'en,ja' }), 'en');
+  });
+
+  it('detects and stores the Mastodon status language for locale-aware ranking', async () => {
+    assert.equal(detectedLanguage('ja-JP'), 'ja-jp');
+    assert.equal(detectedLanguage('EN_GB'), 'en-gb');
+    assert.equal(detectedLanguage('not a language'), null);
+    assert.equal(detectedLanguage(42), null);
+
+    const db = createTestDatabase();
+    const restore = stubFetch(mastodonFetch([status({ language: 'ja' })]));
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.inserted, 1);
+      const row = await db.prepare('SELECT language FROM ap_pool_language').first<{ language: string }>();
+      assert.equal(row?.language, 'ja');
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('filters seeded Japanese tag timelines by the status language', async () => {
+    const db = createTestDatabase();
+    const restore = stubFetch((url) => {
+      if (url === `https://${DOMAIN}/.well-known/nodeinfo`) {
+        return {
+          body: {
+            links: [
+              {
+                rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1',
+                href: `https://${DOMAIN}/nodeinfo/2.1`,
+              },
+            ],
+          },
+        };
+      }
+      if (url === `https://${DOMAIN}/nodeinfo/2.1`) {
+        return { body: { software: { name: 'mastodon' }, protocols: ['activitypub'] } };
+      }
+      if (url.startsWith(`https://${DOMAIN}/api/v1/trends/statuses`)) return { body: [] };
+      if (url.startsWith(`https://${DOMAIN}/api/v1/timelines/tag/`)) {
+        assert.ok(!url.includes('language='), 'Mastodon tag timelines do not accept a language query');
+        const tag = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '');
+        if (!JA_POOL_HASHTAGS.includes(tag)) return { body: [] };
+        return {
+          body: [
+            status({ id: `${ACTOR_URL}/statuses/ja`, language: 'ja' }),
+            status({ id: `${ACTOR_URL}/statuses/en`, language: 'en' }),
+          ],
+        };
+      }
+      return null;
+    });
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.inserted, 1, 'only the Japanese status should be imported');
+      const posts = await db
+        .prepare("SELECT ap_object_id FROM posts WHERE ap_object_id LIKE '%/statuses/%'")
+        .all<{ ap_object_id: string }>();
+      assert.deepEqual(
+        posts.results.map((row) => row.ap_object_id),
+        [`${ACTOR_URL}/statuses/ja`],
+      );
+    } finally {
+      restore();
+      db.close();
+    }
   });
 });

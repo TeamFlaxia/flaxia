@@ -166,15 +166,15 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `GET /api/posts/recommended?client_rank=1&include_vectors=1&limit=100`
 - Adds `vectors` (int8 public post embeddings), `vector_meta`, and
   `base_scores`; the server computes these from follows, recency, popularity,
-  and the caller's own history, and the unlocked browser blends them with
-  cosine similarity against its Vault recommendation profile
+  language affinity, and the caller's own history, and the unlocked browser
+  blends them with cosine similarity against its Vault recommendation profile
 - `next_cursor` is compatible with the non-client endpoint
 
 ### Recommendation Profile Sources
 `GET /api/recommendations/profile-sources`
 - Requires a session; rate limited
-- Returns the caller's fresh / bookmark / reply / share / dwell sources with
-  public post embeddings
+- Returns the caller's fresh / bookmark / reply / share / dwell / view sources
+  with public post embeddings (a view is an impression of a published post)
 - Never returns or accepts a plaintext preference vector
 
 ---

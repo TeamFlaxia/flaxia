@@ -16,14 +16,16 @@ export async function prunePool(env: { DB: Db }, olderThanDays = 7): Promise<num
     .all<{ id: string }>();
   const ids = (stale.results ?? []).map((row) => row.id);
   const orphanMetrics = env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id NOT IN (SELECT id FROM posts)');
+  const orphanLanguage = env.DB.prepare('DELETE FROM ap_pool_language WHERE post_id NOT IN (SELECT id FROM posts)');
   if (ids.length === 0) {
-    const [orphans] = await env.DB.batch([orphanMetrics]);
+    const [orphans] = await env.DB.batch([orphanMetrics, orphanLanguage]);
     return (orphans as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
   }
   // A single JSON bind avoids D1's bind-parameter limit on a large prune.
   const idList = JSON.stringify(ids);
   const results = await env.DB.batch([
     orphanMetrics,
+    orphanLanguage,
     // All three self-references are plain REFERENCES with no ON DELETE action:
     // a local reply may point at the stale post through root_id even when its
     // parent survives, and a local post may quote it. Detach every reference
@@ -36,9 +38,10 @@ export async function prunePool(env: { DB: Db }, olderThanDays = 7): Promise<num
       'UPDATE posts SET quoted_post_id = NULL WHERE quoted_post_id IN (SELECT value FROM json_each(?))',
     ).bind(idList),
     env.DB.prepare('DELETE FROM ap_pool_metrics WHERE post_id IN (SELECT value FROM json_each(?))').bind(idList),
+    env.DB.prepare('DELETE FROM ap_pool_language WHERE post_id IN (SELECT value FROM json_each(?))').bind(idList),
     env.DB.prepare('DELETE FROM posts WHERE id IN (SELECT value FROM json_each(?))').bind(idList),
   ]);
   const changes = (index: number): number =>
     (results[index] as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
-  return changes(0) + changes(3) + changes(4);
+  return changes(0) + changes(1) + changes(4) + changes(6);
 }

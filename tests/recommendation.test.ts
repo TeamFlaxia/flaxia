@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import { describe, it } from 'node:test';
+import {
+  collectRecommendationCandidateIds,
+  LANGUAGE_AFFINITY_WEIGHT,
+  normalizePoolScore,
+  POOL_SCORE_WEIGHT,
+  scoreRecommendationCandidate,
+} from '../functions/lib/recommendation-scoring.ts';
 import { isRemoteRecommendation, presentForYou } from '../shared/recommendation/mix.ts';
 import { normalizeVector, weightedMeanVector } from '../shared/recommendation/vector.ts';
 import { decodeVector, encodeVector } from '../shared/recommendation/vector-codec.ts';
@@ -23,13 +30,7 @@ register(
     }
   `)}`,
 );
-const {
-  buildPoolCandidateSql,
-  collectRecommendationCandidateIds,
-  normalizePoolScore,
-  POOL_SCORE_WEIGHT,
-  scoreRecommendationCandidate,
-} = await import('../functions/api/routes/posts/recommendations.ts');
+const { buildPoolCandidateSql } = await import('../functions/api/routes/posts/recommendations.ts');
 
 describe('recommendation vectors', () => {
   it('round-trips int8 vectors within quantization error', () => {
@@ -231,5 +232,25 @@ describe('federated popularity pool', () => {
     assert.match(sql, /COALESCE\(pm\.score, 0\) AS pool_score/);
     assert.match(sql, /p\.actor_id IS NOT NULL/);
     assert.match(sql, /ORDER BY pool_score DESC LIMIT \?/);
+  });
+});
+
+describe('For You AI scoring', () => {
+  const input = {
+    sourceScore: 0.5,
+    popularity: 0.2,
+    freshness: 0.3,
+    contentQuality: 1,
+  };
+
+  it('adds a small affinity term for posts in the reader language', () => {
+    const plain = scoreRecommendationCandidate(input);
+    const matched = scoreRecommendationCandidate({ ...input, languageAffinity: 1 });
+    assert.ok(Math.abs(matched - plain - LANGUAGE_AFFINITY_WEIGHT) < 1e-9);
+    assert.equal(scoreRecommendationCandidate({ ...input, languageAffinity: 2 }), matched);
+  });
+
+  it('clamps the affinity term to 0..1', () => {
+    assert.equal(scoreRecommendationCandidate({ ...input, languageAffinity: -1 }), scoreRecommendationCandidate(input));
   });
 });

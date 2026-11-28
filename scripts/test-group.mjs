@@ -116,6 +116,7 @@ const groups = {
     'ai-tags',
     'ai-tags-e2e',
     'duplicate-posts',
+    'foryou-language-affinity',
     'iframe-reload',
     'link-preview',
     'link-preview-integration',

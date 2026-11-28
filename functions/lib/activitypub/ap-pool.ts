@@ -13,6 +13,7 @@ import {
   asRecords,
   canonical,
   currentScore,
+  detectedLanguage,
   firstString,
   normalizeMastodonStatus,
   type PoolActorInfo,
@@ -30,6 +31,8 @@ export const POOL_SCORE_SQL = 'COALESCE(pm.score, 0)';
 export interface PoolEnv extends FederationEnv {
   DB: Db;
   AP_POOL_SEED_DOMAINS?: string;
+  /** Primary pool language (comma separated list: first entry wins). Defaults to ja. */
+  AP_POOL_PREFERRED_LANGUAGE?: string;
 }
 export type PoolResult = {
   instances: number;
@@ -49,7 +52,20 @@ type PoolOptions = {
   maxTotal?: number;
   maxRefreshes?: number;
 };
-const SEED_DOMAINS = ['mastodon.social', 'mastodon.online', 'fosstodon.org', 'tech.lgbt'];
+const SEED_DOMAINS = [
+  // English-speaking general instances...
+  'mastodon.social',
+  'mastodon.online',
+  'fosstodon.org',
+  'tech.lgbt',
+  // ...and Japanese ones, so the federated pool is not English-only.
+  'mstdn.jp',
+  'mastodon.jp',
+  'mstdn.plus',
+];
+/** Fixed Japanese tag seeds; interleaved with locally trending tags. */
+export const JA_POOL_HASHTAGS = ['ゲーム', 'アート', '猫', '日本', '技術'];
+const MAX_HASHTAGS = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_POSTS_PER_ACTOR = 5;
 const TIMELINE_LIMIT = 40;
@@ -121,6 +137,31 @@ async function localTrendingHashtags(db: Db): Promise<string[]> {
     return [];
   }
 }
+/** First configured language, with Japanese as the default pool preference. */
+export function preferredPoolLanguage(env: Pick<PoolEnv, 'AP_POOL_PREFERRED_LANGUAGE'>): string {
+  const raw = env.AP_POOL_PREFERRED_LANGUAGE?.trim().toLowerCase();
+  return raw ? raw.split(',')[0].trim() || 'ja' : 'ja';
+}
+
+/**
+ * Interleave Japanese tag seeds with locally trending tags so a ja-preferring
+ * pool gets Japanese content without giving up what this instance is talking
+ * about. Non-ja pools keep the original local-only selection.
+ */
+export function selectPoolHashtags(local: readonly string[], preferred: string): string[] {
+  const localTags = local.filter((tag) => tag).slice(0, MAX_HASHTAGS);
+  if (!preferred.startsWith('ja')) return localTags;
+  const result: string[] = [];
+  const push = (tag: string | undefined) => {
+    if (tag && !result.includes(tag) && result.length < MAX_HASHTAGS) result.push(tag);
+  };
+  for (let i = 0; i < Math.max(localTags.length, JA_POOL_HASHTAGS.length) && result.length < MAX_HASHTAGS; i++) {
+    push(localTags[i]);
+    push(JA_POOL_HASHTAGS[i]);
+  }
+  return result;
+}
+
 interface PoolActor extends PoolActorInfo {
   inboxUrl: string;
   summary: string | null;
@@ -233,24 +274,34 @@ async function isMastodon(env: PoolEnv, domain: string): Promise<boolean> {
   return typeof software?.name === 'string' && software.name.toLowerCase().includes('mastodon');
 }
 async function fetchMastodonStatuses(env: PoolEnv, domain: string, cache: ActorCache, cap: number) {
-  const pages: unknown[] = [await fetchInstanceJson(env, domain, `/api/v1/trends/statuses?limit=${TIMELINE_LIMIT}`)];
-  if (pages[0] !== null) {
-    for (const tag of await localTrendingHashtags(env.DB)) {
+  const pages: Array<{ body: unknown; jaOnly: boolean }> = [
+    { body: await fetchInstanceJson(env, domain, `/api/v1/trends/statuses?limit=${TIMELINE_LIMIT}`), jaOnly: false },
+  ];
+  if (pages[0].body !== null) {
+    const tags = selectPoolHashtags(await localTrendingHashtags(env.DB), preferredPoolLanguage(env));
+    for (const tag of tags) {
       if (pages.length > 5) break;
-      pages.push(
-        await fetchInstanceJson(
+      // Mastodon's tag timeline has no language query parameter, so filter the
+      // seeded Japanese tags by the status language the API actually returns.
+      pages.push({
+        body: await fetchInstanceJson(
           env,
           domain,
           `/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=${TIMELINE_LIMIT}`,
         ),
-      );
+        jaOnly: JA_POOL_HASHTAGS.includes(tag),
+      });
     }
   }
   const statuses: DiscoveredStatus[] = [];
   let skipped = 0;
-  for (const page of pages) {
-    for (const raw of asRecords(page)) {
+  for (const { body, jaOnly } of pages) {
+    for (const raw of asRecords(body)) {
       if (statuses.length >= cap) break;
+      if (jaOnly && detectedLanguage(raw.language)?.slice(0, 2) !== 'ja') {
+        skipped++;
+        continue;
+      }
       const account = recordOf(raw.account);
       const actor = await resolvePoolActor(env, domain, firstString(account?.acct) ?? '', account, cache);
       if (actor) statuses.push({ status: raw, actor });
@@ -371,6 +422,12 @@ async function storeDiscoveredStatus(
       score = ?, fetched_at = ? WHERE post_id = ?`)
       .bind(instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt, existing.id)
       .run();
+    // A later refresh that omits language must not wipe an earlier detection.
+    await env.DB.prepare(`INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)
+      ON CONFLICT(post_id) DO UPDATE SET language =
+        CASE WHEN excluded.language = '' THEN ap_pool_language.language ELSE excluded.language END`)
+      .bind(existing.id, normalized.metrics.language ?? '')
+      .run();
     return 'refreshed';
   }
   if (!budget.canInsert) return null;
@@ -408,7 +465,17 @@ async function storeDiscoveredStatus(
     normalized.post.id,
     objectId,
   );
-  const [postWrite] = await env.DB.batch([insertPost, insertMetrics]);
+  // Language is kept in its own table so the post and its metrics never become
+  // visible without the row the viewer-language ranking joins on.
+  const insertLanguage = env.DB.prepare(`INSERT INTO ap_pool_language (post_id, language)
+    SELECT ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ? AND ap_object_id = ?)
+    ON CONFLICT(post_id) DO UPDATE SET language = excluded.language`).bind(
+    normalized.post.id,
+    normalized.metrics.language ?? '',
+    normalized.post.id,
+    objectId,
+  );
+  const [postWrite] = await env.DB.batch([insertPost, insertMetrics, insertLanguage]);
   // INSERT OR IGNORE may be a no-op; then this is not a new pool row and must
   // not be counted as an insertion.
   const changes = (postWrite as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;

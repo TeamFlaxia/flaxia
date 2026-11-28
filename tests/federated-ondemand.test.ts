@@ -268,7 +268,7 @@ describe('federated on-demand discovery', () => {
   });
 
   it('passes the available bindings into a correctly shaped pool env', async () => {
-    const env = envFor();
+    const env = { ...envFor(), AP_POOL_PREFERRED_LANGUAGE: 'en,ja' } as Bindings;
     let seen: Record<string, unknown> | null = null;
     await runDiscoveryForRequest(env, ONDEMAND_OPTIONS, async (poolEnv, options) => {
       seen = poolEnv as unknown as Record<string, unknown>;
@@ -281,6 +281,7 @@ describe('federated on-demand discovery', () => {
     assert.equal(seen!.BASE_URL, 'https://flaxia.app');
     assert.equal(seen!.ENVIRONMENT, 'test');
     assert.equal(seen!.AP_POOL_SEED_DOMAINS, DOMAIN);
+    assert.equal(seen!.AP_POOL_PREFERRED_LANGUAGE, 'en,ja');
     assert.equal(seen!.AP_ALLOWED_PRIVATE_PEERS, undefined);
   });
 });

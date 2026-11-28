@@ -44,6 +44,7 @@ interface Env {
   HF_TOKEN?: string;
   HF_REPO?: string;
   AP_POOL_SEED_DOMAINS?: string;
+  AP_POOL_PREFERRED_LANGUAGE?: string;
   CROWD_ORCHESTRATOR_URL?: string;
   CROWD_API_KEY?: string;
   CROWD_WEBHOOK_SECRET?: string;

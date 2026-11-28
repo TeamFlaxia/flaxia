@@ -332,6 +332,30 @@ describe('recommended feed D1 bind-limit regressions', () => {
       sqlite.close();
     }
   });
+
+  it('counts impressions as a view signal in the AI preference sources', async () => {
+    const { sqlite, request } = fixture();
+    try {
+      const vector = JSON.stringify(Array.from({ length: 768 }, (_, index) => Number(index === 0)));
+      sqlite.prepare('INSERT INTO posts (id, user_id) VALUES (?, ?)').run('viewed-post', 'author');
+      sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)').run('viewed-post', vector);
+      sqlite
+        .prepare('INSERT INTO user_post_impressions (user_id, post_id, last_seen_at) VALUES (?, ?, ?)')
+        .run('owner', 'viewed-post', new Date().toISOString());
+
+      const response = await request('/recommendations/profile-sources', undefined, 'GET');
+      assert.equal(response.status, 200, await response.clone().text());
+      const body = (await response.json()) as {
+        sources?: Array<{ post_id: string; kind?: string }>;
+      };
+      assert.ok(
+        body.sources?.some((source) => source.post_id === 'viewed-post' && source.kind === 'view'),
+        'a viewed post must feed the personal interest vector',
+      );
+    } finally {
+      sqlite.close();
+    }
+  });
 });
 
 describe('legacy media ownership regressions', () => {

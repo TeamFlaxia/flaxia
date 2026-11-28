@@ -5,7 +5,17 @@ type PoolMetrics = {
   favourites: number;
   reblogs: number;
   score: number;
+  /** Mastodon's `status.language`, normalized when present. */
+  language?: string | null;
 };
+
+const LANGUAGE_RE = /^[a-z]{2,3}(?:-[a-z]{2,4})?$/;
+
+/** Accept BCP-47-like tags (ja, ja-JP, en-GB) and reject anything else. */
+export function detectedLanguage(value: unknown): string | null {
+  const raw = firstString(value)?.trim().toLowerCase().replace('_', '-');
+  return raw && LANGUAGE_RE.test(raw) ? raw : null;
+}
 export type PoolActorInfo = {
   actorUrl: string;
   domain: string;
@@ -123,6 +133,7 @@ export function normalizeMastodonStatus(
       favourites,
       reblogs,
       score: computePoolScore({ favourites, reblogs, createdAt }),
+      language: detectedLanguage(status.language),
     },
   };
 }
