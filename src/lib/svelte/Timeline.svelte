@@ -1,5 +1,6 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
+import { isRemoteRecommendation, mixForYouFeed } from '../../../shared/recommendation/mix.ts';
 import {
   decodeVector,
   type EncodedVector,
@@ -15,9 +16,11 @@ import { openPostModal } from '../post-modal.ts';
 import { rankCandidates } from '../recommendation/rank.ts';
 import {
   DATA_SAVER_AD_SPACING_MULTIPLIER,
+  FOR_YOU_EXTERNAL_CHANGE_EVENT,
   getForYouBatchSize,
   getTimelinePageSize,
   isDataSaverEnabled,
+  isForYouExternalHidden,
 } from '../settings.ts';
 import { signalSsrHandover } from '../ssr-handover.ts';
 import CardHost from '../timeline/CardHost.svelte';
@@ -70,6 +73,7 @@ let generation = 0;
 let destroyed = false;
 let fabButton: HTMLElement | null = null;
 let disposePostCreated: (() => void) | null = null;
+let disposeForYouExternal: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
 let fabObserver: IntersectionObserver | null = null;
@@ -101,6 +105,7 @@ function buildApiUrl(pageCursor?: string): string {
   params.set('limit', String(getTimelinePageSize()));
   if (pageCursor) params.set('cursor', pageCursor);
   if (mode === 'following') params.set('following', 'true');
+  if (mode === 'foryou' && isForYouExternalHidden()) params.set('external', 'hide');
   return `/api/${mode === 'foryou' ? 'posts/recommended' : 'posts'}?${params.toString()}`;
 }
 
@@ -112,6 +117,7 @@ async function fetchForYouBatch(pageCursor?: string): Promise<{ queue: Post[]; n
     include_vectors: '1',
   });
   if (pageCursor) params.set('cursor', pageCursor);
+  if (isForYouExternalHidden()) params.set('external', 'hide');
   const response = await fetch(`/api/posts/recommended?${params.toString()}`, saveDataFetchInit());
   if (!response.ok) return null;
   const data = (await response.json()) as {
@@ -129,13 +135,22 @@ async function fetchForYouBatch(pageCursor?: string): Promise<{ queue: Post[]; n
     const vector = decodeVector(encoded, dim);
     if (vector) vectors.set(postId, vector);
   }
-  const queue = rankCandidates({
+  const ranked = rankCandidates({
     items: posts,
     profile: forYouProfile.vector,
     getVector: (post) => vectors.get(post.id) ?? null,
     getBaseScore: (post) => data.base_scores?.[post.id] ?? 0,
     getAuthor: (post) => post.actor_id ?? post.user_id,
     limit: posts.length,
+  });
+  // Personal ranking decides the best posts; the 50:50 source mix is applied
+  // afterwards so Flaxia leads each pair and federated posts keep half of the
+  // feed. The "don't show" choice removes them entirely.
+  const queue = mixForYouFeed({
+    items: ranked,
+    getSource: (post) => (isRemoteRecommendation(post) ? 'remote' : 'local'),
+    limit: ranked.length,
+    hideRemote: isForYouExternalHidden(),
   });
   return { queue, nextCursor: data.next_cursor || undefined };
 }
@@ -335,6 +350,12 @@ onMount(() => {
   window.addEventListener('postCreated', onPostCreated);
   disposePostCreated = () => window.removeEventListener('postCreated', onPostCreated);
 
+  const onForYouExternalChange = (() => {
+    if (mode === 'foryou') resetAndLoad();
+  }) as EventListener;
+  window.addEventListener(FOR_YOU_EXTERNAL_CHANGE_EVENT, onForYouExternalChange);
+  disposeForYouExternal = () => window.removeEventListener(FOR_YOU_EXTERNAL_CHANGE_EVENT, onForYouExternalChange);
+
   if (fabHost) {
     fabButton = makeFabButton(() => {
       if (!currentUser) {
@@ -370,6 +391,7 @@ onDestroy(() => {
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
   disposePostCreated?.();
   disposePull?.();
+  disposeForYouExternal?.();
   observer?.disconnect();
   fabObserver?.disconnect();
   fabButton?.remove();

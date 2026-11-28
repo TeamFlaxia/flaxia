@@ -1,15 +1,20 @@
-import { type Context, Hono } from 'hono';
+import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { buildLikeActivity, buildUndoActivity } from '../../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
-import { deliverToActorInbox, deliverToFollowers } from '../../../lib/activitypub/delivery';
 import { enrichPostsWithAttachments } from '../../../lib/attachments';
 import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { requireAuth } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { ensureReactionsTable } from './helpers.ts';
+import {
+  deliverFreshLike,
+  deliverReloadActivity,
+  type FederatedPost,
+  isPublicVisibility,
+  type PostsContext,
+} from './engagement-federation.ts';
+import { ensureReactionsTable, visibilityFilter } from './helpers.ts';
 
 export const engagement = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -18,17 +23,23 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
   const userId = c.get('user')?.id || '';
   const currentUser = c.get('user');
 
-  // Get post to check ownership for notification and remote actor
+  // Get post to check ownership for notification and remote actor. Reader
+  // visibility is enforced here too, so a restricted post cannot be liked by
+  // guessing its id.
+  const v = visibilityFilter(userId);
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
+    `SELECT p.id, p.user_id, p.actor_id, p.username, p.text, p.ap_object_id, p.visibility
+     FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`,
   )
-    .bind(postId)
+    .bind(postId, ...v.params)
     .first()) as {
+    id: string;
     user_id: string;
     actor_id: string | null;
     username: string;
     text: string;
     ap_object_id: string | null;
+    visibility: string | null;
   } | null;
 
   if (!post) {
@@ -51,17 +62,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
       .first<{ fresh_count: number }>();
 
     // The like of a post of another instance is retracted there as well.
-    const actorUrl = post.actor_id;
-    if (actorUrl && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
-      const like = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
-      const undo = buildUndoActivity(c.env.BASE_URL, currentUser.username, like, nanoid());
-      waitUntil(
-        c,
-        () => deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity: undo }),
-        'Failed to deliver undo Like to remote actor',
-      );
-    }
+    if (currentUser) deliverFreshLike(c, post, currentUser.username, 'remove');
 
     return c.json({ freshed: false, is_freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
@@ -105,10 +106,12 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
           )
             .bind(nanoid(), post.user_id, 'fresh', postId, userId)
             .run();
-          {
+          // A restricted post must never leave the instance inside a push
+          // body, even though the author is allowed to see it.
+          if (isPublicVisibility(post.visibility)) {
             const actor = c.get('user');
 
-            const textPreview = ((post as Record<string, unknown>).text as string) || '';
+            const textPreview = post.text || '';
             waitUntil(
               c,
               () =>
@@ -125,21 +128,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
     // A post of another instance is liked on the instance that published it:
     // the activity has to reference the object id of that note, not a note
     // URL of this instance.
-    const freshActorUrl = post.actor_id;
-    if (freshActorUrl && currentUser) {
-      const objectUrl = post.ap_object_id ?? `${c.env.BASE_URL}/api/notes/${postId}`;
-      const likeActivity = buildLikeActivity(c.env.BASE_URL, currentUser.username, objectUrl, nanoid());
-      waitUntil(
-        c,
-        () =>
-          deliverToActorInbox(c.env, {
-            actorUrl: freshActorUrl,
-            username: currentUser.username,
-            activity: likeActivity,
-          }),
-        'Failed to deliver Like to remote actor',
-      );
-    }
+    if (currentUser) deliverFreshLike(c, post, currentUser.username, 'add');
 
     return c.json({ freshed: true, is_freshed: true, fresh_count: result?.fresh_count ?? 0 });
   }
@@ -150,9 +139,9 @@ engagement.post('/posts/:id/bookmark', requireAuth, async (c) => {
   const postId = c.req.param('id');
   const userId = c.get('user')?.id || '';
 
-  // Verify post exists
-  const post = (await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'")
-    .bind(postId)
+  const v = visibilityFilter(userId);
+  const post = (await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`)
+    .bind(postId, ...v.params)
     .first()) as { id: string } | null;
 
   if (!post) {
@@ -203,9 +192,9 @@ engagement.post('/posts/:id/reactions', requireAuth, async (c) => {
       return c.json({ error: 'Emoji too long' }, 400);
     }
 
-    // Verify post exists
-    const post = (await c.env.DB.prepare("SELECT id FROM posts WHERE id = ? AND status = 'published'")
-      .bind(postId)
+    const v = visibilityFilter(userId);
+    const post = (await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`)
+      .bind(postId, ...v.params)
       .first()) as { id: string } | null;
 
     if (!post) {
@@ -246,6 +235,7 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
     const cursor = c.req.query('cursor');
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
+    const visibility = visibilityFilter(userId);
 
     let query: string;
     const params: Array<unknown> = [userId];
@@ -260,11 +250,11 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ? ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     } else {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -274,11 +264,11 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0
+        WHERE p.status = 'published' AND p.hidden = 0 ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     }
 
     const result = await c.env.DB.prepare(query)
@@ -304,7 +294,7 @@ engagement.get('/bookmarks', requireAuth, async (c) => {
       });
     }
 
-    await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+    await enrichPostsWithQuotes(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
     await enrichPostsWithRemoteAuthors(posts as Array<Record<string, unknown>>, c.env.DB);
@@ -324,6 +314,7 @@ engagement.get('/freshs', requireAuth, async (c) => {
     const cursor = c.req.query('cursor');
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
+    const visibility = visibilityFilter(userId);
 
     let query: string;
     const params: Array<unknown> = [userId];
@@ -338,11 +329,11 @@ engagement.get('/freshs', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ? ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     } else {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -352,11 +343,11 @@ engagement.get('/freshs', requireAuth, async (c) => {
         LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
-        WHERE p.status = 'published' AND p.hidden = 0
+        WHERE p.status = 'published' AND p.hidden = 0 ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT ?
       `;
-      params.push(limit);
+      params.push(...visibility.params, limit);
     }
 
     const result = await c.env.DB.prepare(query)
@@ -420,17 +411,24 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
     }
 
     const userId = c.get('user')?.id || '';
+    const currentUser = c.get('user');
     const maxBatchSize = 50;
 
     if (post_ids.length > maxBatchSize) {
       return c.json({ error: `Maximum batch size is ${maxBatchSize}` }, 400);
     }
 
-    // Get posts to check ownership for notifications
+    // Get posts to check ownership for notifications and to address the
+    // ActivityPub Like/Undo to the original author of a remote note. The
+    // viewer filter keeps restricted posts out of both the counters and the
+    // outbound activities.
+    const v = visibilityFilter(userId);
     const posts = await c.env.DB.prepare(`
-      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
+      SELECT p.id, p.user_id, p.actor_id, p.ap_object_id, p.visibility
+      FROM posts p
+      WHERE p.id IN (${post_ids.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${v.sql}
     `)
-      .bind(...post_ids)
+      .bind(...post_ids, ...v.params)
       .all();
 
     const validPostIds = posts.results?.map((p) => p.id) || [];
@@ -536,6 +534,18 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
             console.error('Failed to create batch fresh notifications:', e);
           }
         }
+
+        // One Like per freshly liked remote post, delivered to its author.
+        // A Set makes a repeated id in the request still produce one delivery.
+        if (currentUser) {
+          const postById = new Map<string, FederatedPost>(
+            (posts.results ?? []).map((p) => [p.id as string, p as unknown as FederatedPost]),
+          );
+          for (const id of new Set(toFresh as string[])) {
+            const post = postById.get(id);
+            if (post) deliverFreshLike(c, post, currentUser.username, 'add');
+          }
+        }
       }
 
       return c.json({ freshed: toFresh, already_freshed: Array.from(alreadyFreshed) });
@@ -564,6 +574,17 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
         `)
           .bind(...actuallyFreshed)
           .run();
+
+        // Retract the Like on each remote post whose Fresh was removed.
+        if (currentUser) {
+          const postById = new Map<string, FederatedPost>(
+            (posts.results ?? []).map((p) => [p.id as string, p as unknown as FederatedPost]),
+          );
+          for (const id of new Set(actuallyFreshed)) {
+            const post = postById.get(id);
+            if (post) deliverFreshLike(c, post, currentUser.username, 'remove');
+          }
+        }
       }
 
       return c.json({ unfreshed: post_ids });
@@ -574,44 +595,6 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
   }
 });
 
-type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
-
-/**
- * Delivers a reload Announce/Undo to the reloading user's federated followers
- * and, for remote posts, to the original author's inbox.
- */
-function deliverReloadActivity(
-  c: PostsContext,
-  post: { actor_id: string | null },
-  currentUser: { id: string; username: string },
-  activity: Record<string, unknown>,
-): void {
-  const actorUrl = post.actor_id;
-  waitUntil(
-    c,
-    async () => {
-      try {
-        await deliverToFollowers(c.env, {
-          userId: currentUser.id,
-          username: currentUser.username,
-          activity,
-        });
-      } catch (e) {
-        console.error('Failed to deliver reload activity to followers:', e);
-      }
-
-      if (actorUrl) {
-        try {
-          await deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity });
-        } catch (e) {
-          console.error('Failed to deliver reload activity to remote actor:', e);
-        }
-      }
-    },
-    'Failed to deliver reload activity',
-  );
-}
-
 // POST /api/posts/:id/reload - toggle reload (retweet, protected)
 const toggleReload = async (c: PostsContext, legacyAlias = false) => {
   try {
@@ -619,10 +602,12 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     const currentUser = c.get('user');
     if (!currentUser) return c.json({ error: 'Unauthorized' }, 401);
 
+    const v = visibilityFilter(currentUser.id);
     const post = (await c.env.DB.prepare(
-      "SELECT id, user_id, actor_id, ap_object_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      `SELECT p.id, p.user_id, p.actor_id, p.ap_object_id, p.username, p.text, p.visibility
+       FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 ${v.sql}`,
     )
-      .bind(postId)
+      .bind(postId, ...v.params)
       .first()) as {
       id: string;
       user_id: string;
@@ -630,6 +615,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
       ap_object_id: string | null;
       username: string;
       text: string;
+      visibility: string | null;
     } | null;
 
     if (!post) {
@@ -718,20 +704,22 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
           )
             .bind(nanoid(), post.user_id, 'reload', postId, currentUser.id)
             .run();
-          waitUntil(
-            c,
-            () =>
-              sendPushToAll(
-                c.env,
-                post.user_id,
-                'reload',
-                currentUser.username,
-                currentUser.display_name,
-                post.text,
-                postId,
-              ),
-            'Failed to send reload push',
-          );
+          if (isPublicVisibility(post.visibility)) {
+            waitUntil(
+              c,
+              () =>
+                sendPushToAll(
+                  c.env,
+                  post.user_id,
+                  'reload',
+                  currentUser.username,
+                  currentUser.display_name,
+                  post.text,
+                  postId,
+                ),
+              'Failed to send reload push',
+            );
+          }
         }
       } catch (e) {
         console.error('Failed to create reload notification:', e);

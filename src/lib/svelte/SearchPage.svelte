@@ -8,6 +8,7 @@ import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import CardHost from '../timeline/CardHost.svelte';
 import type { CardOptions } from '../timeline/cards.ts';
+import { showToast } from '../toast.ts';
 import { uniqueBy } from '../unique.ts';
 
 interface WebResult {
@@ -27,6 +28,14 @@ interface SearchUser {
   bio?: string;
   is_following?: boolean;
 }
+interface RemoteUserResult {
+  handle: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  actorUrl: string;
+  domain: string;
+}
+const REMOTE_HANDLE_PATTERN = /^@?([A-Za-z0-9_]{1,30})@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})$/;
 type Filter = 'all' | 'web' | 'users' | 'posts' | 'arcade';
 
 interface Props {
@@ -45,6 +54,11 @@ let posts = $state<Post[]>([]);
 let arcade = $state<Post[]>([]);
 let web = $state<WebResult[]>([]);
 let status = $state<'loading' | 'error' | 'ready'>('loading');
+let remoteUser = $state<RemoteUserResult | null>(null);
+let remoteError = $state(false);
+let remoteFollowPending = $state(false);
+let remoteFollowing = $state(false);
+let remoteFollowBusy = $state(false);
 let suggestions = $state<
   Array<{
     type: 'tag' | 'user';
@@ -81,11 +95,137 @@ const showUsers = $derived((filter === 'all' || filter === 'users') && users.len
 const showArcade = $derived((filter === 'all' || filter === 'arcade') && arcade.length > 0);
 const showPosts = $derived((filter === 'all' || filter === 'posts') && posts.length > 0);
 const showWeb = $derived((filter === 'all' || filter === 'web') && web.length > 0);
-const anyVisible = $derived(showUsers || showArcade || showPosts || showWeb);
+const anyVisible = $derived(Boolean(remoteUser) || showUsers || showArcade || showPosts || showWeb);
+
+function safeAvatarUrl(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+// ap_following stores a delivered request as `sent` while the follow endpoint
+// answers `pending`. Both mean the request is still in flight; only accepted
+// (or rejected) is a final state.
+function isRemoteFollowPending(state: string | null | undefined): boolean {
+  return state != null && state !== 'accepted' && state !== 'rejected';
+}
+
+/** Read the viewer's follow state from the actor profile the lookup found. */
+async function seedRemoteFollowState(user: RemoteUserResult, id: number): Promise<void> {
+  const bare = user.handle.replace(/^@/, '');
+  const at = bare.lastIndexOf('@');
+  const username = at > 0 ? bare.slice(0, at) : bare;
+  const domain = user.domain || (at > 0 ? bare.slice(at + 1) : '');
+  if (!username || !domain) return;
+  try {
+    const response = await fetch(`/api/remote/actors/${encodeURIComponent(domain)}/${encodeURIComponent(username)}`, {
+      credentials: 'include',
+    });
+    if (id !== requestId || destroyed || remoteUser?.handle !== user.handle || !response.ok) return;
+    const data = (await response.json().catch(() => ({}))) as {
+      following?: boolean;
+      follow_state?: string | null;
+    };
+    if (id !== requestId || destroyed || remoteUser?.handle !== user.handle) return;
+    const state = data.follow_state ?? null;
+    remoteFollowing = state ? state === 'accepted' : Boolean(data.following);
+    remoteFollowPending = isRemoteFollowPending(state);
+  } catch {
+    // Lookup still succeeded; an unavailable profile just leaves the default
+    // "Follow" state in place.
+  }
+}
+
+async function lookupRemoteHandle(q: string, id: number): Promise<void> {
+  remoteUser = null;
+  remoteError = false;
+  remoteFollowing = false;
+  remoteFollowPending = false;
+  try {
+    const response = await fetch(`/api/remote/lookup?q=${encodeURIComponent(q)}`);
+    if (id !== requestId || destroyed) return;
+    if (!response.ok) {
+      remoteError = true;
+      return;
+    }
+    const found = (await response.json()) as RemoteUserResult;
+    remoteUser = found;
+    // A second request is deliberate: lookup is public and cached, but the
+    // follow state is per-viewer. Without this, an already-followed account
+    // shows "Follow" and a click only produces a 409.
+    await seedRemoteFollowState(found, id);
+  } catch {
+    if (id === requestId && !destroyed) remoteError = true;
+  }
+}
+
+async function toggleRemoteFollow(): Promise<void> {
+  if (!remoteUser || remoteFollowBusy) return;
+  if (!currentUser) {
+    void navigate('/login');
+    return;
+  }
+  remoteFollowBusy = true;
+  const wasFollowing = remoteFollowing;
+  remoteFollowing = !wasFollowing;
+  try {
+    const response = await fetch('/api/remote-follow', {
+      method: wasFollowing ? 'DELETE' : 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: remoteUser.handle.replace(/^@/, '') }),
+    });
+    if (response.status === 409) {
+      // The API refuses duplicate requests. Adopt the state instead of
+      // showing a false error toast for an account we already follow.
+      remoteFollowing = true;
+      remoteFollowPending = false;
+      return;
+    }
+    if (!response.ok) throw new Error('follow failed');
+    // The follow state is SSR-loaded through the short-lived client cache;
+    // invalidate it so returning to the profile never shows a stale state.
+    window.dispatchEvent(new CustomEvent('followChanged'));
+    if (!wasFollowing) {
+      const body = (await response.json().catch(() => ({}))) as { status?: string };
+      remoteFollowPending = isRemoteFollowPending(body.status ?? 'pending');
+    } else {
+      remoteFollowPending = false;
+    }
+  } catch {
+    remoteFollowing = wasFollowing;
+    showToast(t('search.remote_follow_error'), true);
+  } finally {
+    remoteFollowBusy = false;
+  }
+}
+
+function goRemoteUser(remote: RemoteUserResult): void {
+  const handle = remote.handle.replace(/^@/, '');
+  const at = handle.indexOf('@');
+  if (at <= 0) return;
+  void navigate(`/@${encodeURIComponent(handle.slice(at + 1))}/${encodeURIComponent(handle.slice(0, at))}`);
+}
 
 async function loadResults(): Promise<void> {
   const id = ++requestId;
   status = 'loading';
+  users = [];
+  posts = [];
+  arcade = [];
+  web = [];
+  remoteUser = null;
+  remoteError = false;
+  const remoteQuery = query.trim();
+  if (REMOTE_HANDLE_PATTERN.test(remoteQuery)) {
+    status = 'ready';
+    await lookupRemoteHandle(remoteQuery, id);
+    return;
+  }
   try {
     const tab = filter === 'arcade' ? 'games' : filter;
     const response = await fetch(`/api/search/v2?q=${encodeURIComponent(query)}&tab=${tab}&limit=20`);
@@ -280,6 +420,45 @@ onDestroy(() => {
     {:else if status === 'error'}
       <div style="text-align:center;padding:3rem;color:var(--danger);">{t('common.error')}</div>
     {:else}
+      {#if remoteUser}
+        {@const remote = remoteUser}
+        <div class="search-section-label">{t('search.remote_users')}</div>
+        <div
+          class="search-user-row remote-user-row"
+          onclick={() => goRemoteUser(remote)}
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => {
+            // Enter/Space on the nested follow button must toggle the follow
+            // state, not navigate away from the search results.
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              goRemoteUser(remote);
+            }
+          }}
+        >
+          {#if safeAvatarUrl(remote.avatarUrl)}
+            <img class="search-avatar" src={safeAvatarUrl(remote.avatarUrl)} alt="" style="object-fit:cover;" />
+          {:else}
+            <div class="search-avatar">{(remote.displayName || remote.handle)[0].toUpperCase()}</div>
+          {/if}
+          <div class="search-user-info">
+            <div class="search-user-name">{remote.handle}</div>
+            <div class="search-user-display">{remote.displayName || ''}</div>
+          </div>
+          {#if currentUser}
+            <button
+              class="remote-follow-button"
+              type="button"
+              aria-busy={remoteFollowBusy}
+              onclick={(e) => { e.stopPropagation(); void toggleRemoteFollow(); }}
+            >{remoteFollowPending ? t('search.remote_follow_pending') : remoteFollowing ? t('search.remote_following') : t('search.remote_follow')}</button>
+          {/if}
+        </div>
+      {:else if remoteError}
+        <div style="text-align:center;padding:2rem;color:var(--danger);">{t('search.remote_lookup_failed')}</div>
+      {/if}
       {#if showUsers}
         {#if filter === 'all'}<div class="search-section-label">{t('search.users')}</div>{/if}
         <div>

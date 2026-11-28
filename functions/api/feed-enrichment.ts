@@ -1,5 +1,6 @@
 import { enrichPostsWithAttachments } from '../lib/attachments';
 import { batchGetFreshAndBookmarkStatus } from './helpers';
+import { visibilityFilter } from './routes/posts/helpers.ts';
 import type { PollOptionRow, PollRow, PostRow } from './types';
 
 /**
@@ -27,7 +28,7 @@ export async function enrichPostsForFeed(
       }
     })(),
     enrichPostsWithPolls(posts, db, currentUserId),
-    enrichPostsWithQuotes(posts, db),
+    enrichPostsWithQuotes(posts, db, currentUserId),
     enrichPostsWithAttachments(posts, db),
     enrichPostsWithReactions(posts, db, currentUserId),
   ]);
@@ -117,9 +118,15 @@ type QuotedPostRow = {
  * Batch-fetch quoted posts referenced by the given posts and attach them as
  * `quoted_post`. Only embeds 1 level deep (never recurses) to avoid infinite
  * nesting. Deleted/hidden/absent quoted posts are set to null so the client can
- * render a "post unavailable" placeholder.
+ * render a "post unavailable" placeholder. The same is true for private/direct
+ * quotes the viewer may not read: a public post must not smuggle their text or
+ * media into every feed.
  */
-export async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): Promise<void> {
+export async function enrichPostsWithQuotes(
+  posts: PostRow[],
+  db: D1Database,
+  currentUserId?: string | null,
+): Promise<void> {
   if (posts.length === 0) return;
 
   const postIds = posts.map((p) => p.id);
@@ -135,6 +142,11 @@ export async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): P
 
   if (quotedIds.length > 0) {
     const placeholders = quotedIds.map(() => '?').join(',');
+    // Reuse the timeline's visibility predicate (public/unlisted to everyone,
+    // private to the author and followers, direct to the author and mentioned
+    // users). With no viewer it already allows only public/unlisted rows, so
+    // quote enrichment fails closed instead of leaking to anonymous feeds.
+    const visibility = visibilityFilter(currentUserId);
     const result = await db
       .prepare(
         `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language,
@@ -144,9 +156,9 @@ export async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): P
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-       WHERE p.id IN (${placeholders})`,
+       WHERE p.id IN (${placeholders}) ${visibility.sql}`,
       )
-      .bind(...quotedIds)
+      .bind(...quotedIds, ...visibility.params)
       .all<QuotedPostRow>();
 
     const visible = (result.results || []).filter((quoted) => quoted.status === 'published' && !quoted.hidden);

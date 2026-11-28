@@ -17,6 +17,7 @@ export function navItemsFor(signedIn: boolean): NavItemDef[] {
     { id: 'home', labelKey: 'nav.home', icon: 'home' },
     { id: 'explore', labelKey: 'nav.explore', icon: 'explore' },
     { id: 'arcade', labelKey: 'nav.arcade', icon: 'arcade' },
+    { id: 'federated', labelKey: 'nav.federated', icon: 'explore' },
   ];
 
   if (signedIn) {

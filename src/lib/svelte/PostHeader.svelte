@@ -30,8 +30,20 @@ function formatTimestamp(iso: string): string {
   return date.toLocaleDateString();
 }
 
+// The remote profile route only accepts /@domain/user. Encoded actor URLs in
+// profile_path (from older payloads without a domain) must never be navigated
+// to internally — they 404 or reopen non-http schemes.
+const INTERNAL_PROFILE_PATH = /^\/@[a-z0-9.-]+\/[^/]+$/i;
+
 function goToProfile(): void {
-  if (props.profile_url) {
+  // Federated authors have a local profile path: navigate inside the app so
+  // the session, timeline and back stack keep working. Older payloads only
+  // carry an actor URL, which still opens externally as a fallback.
+  if (props.profile_path && INTERNAL_PROFILE_PATH.test(props.profile_path)) {
+    void navigate(props.profile_path);
+    return;
+  }
+  if (props.profile_url && /^https?:\/\//i.test(props.profile_url)) {
     window.open(props.profile_url, '_blank', 'noopener,noreferrer');
     return;
   }

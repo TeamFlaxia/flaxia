@@ -19,7 +19,7 @@ describe('navItemsFor', () => {
   });
 
   it('adds notifications and bookmarks once signed in', () => {
-    assert.deepEqual(ids(true), ['home', 'explore', 'arcade', 'notifications', 'bookmarks']);
+    assert.deepEqual(ids(true), ['home', 'explore', 'arcade', 'federated', 'notifications', 'bookmarks']);
   });
 
   it('never returns duplicate ids', () => {

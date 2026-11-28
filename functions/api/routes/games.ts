@@ -15,6 +15,8 @@ import {
   runBatched,
 } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { serveShuffledGames } from './games-shuffle.ts';
+import { filterVisiblePosts, visibilityFilter } from './posts/helpers.ts';
 import { loadDwellStats } from './recommender';
 
 const games = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -115,13 +117,28 @@ games.get('/games', async (c) => {
         const user = await resolveRequestUser(c, c.get('user'));
         const currentUserId = user?.id;
 
+        // The KV entry is shared by every viewer and may be older than a
+        // moderation or audience change. Re-check both publication state and
+        // per-viewer visibility before serving anything from it.
+        const cachedGames: Array<Record<string, unknown>> = Array.isArray(parsed.games) ? parsed.games : [];
+        if (cachedGames.length > 0) {
+          const gameIds = cachedGames.map((game) => String(game.id));
+          const visible = await filterVisiblePosts(
+            c.env.DB,
+            currentUserId,
+            gameIds.map((id) => ({ id })),
+          );
+          const allowed = new Set(visible.map((game) => String(game.id)));
+          parsed.games = cachedGames.filter((game) => allowed.has(String(game.id)));
+        }
+
         if (currentUserId && parsed.games.length > 0) {
-          const gameIds = parsed.games.map((g: Record<string, unknown>) => g.id as string);
+          const gameIds = parsed.games.map((g: Record<string, unknown>) => String(g.id));
           const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, gameIds);
 
           parsed.games.forEach((game: Record<string, unknown>) => {
-            game.isFreshed = freshed.has(game.id as string);
-            game.isBookmarked = bookmarked.has(game.id as string);
+            game.isFreshed = freshed.has(String(game.id));
+            game.isBookmarked = bookmarked.has(String(game.id));
           });
         }
 
@@ -133,164 +150,10 @@ games.get('/games', async (c) => {
     // no session cookie, where it skips the session lookup).
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId = user?.id;
+    const visibility = visibilityFilter(currentUserId);
 
     if (shuffle) {
-      const shuffleToken = c.req.query('token');
-      const offset = Math.max(0, Number(c.req.query('offset') || '0'));
-      const initialId = c.req.query('initialId');
-
-      let shuffledIds: string[] = [];
-      let currentToken = shuffleToken;
-
-      if (currentToken) {
-        try {
-          const cached = await c.env.CACHE?.get(`games:shuffle:${currentToken}`);
-          if (cached) {
-            shuffledIds = JSON.parse(cached);
-          } else {
-            currentToken = undefined;
-          }
-        } catch {
-          currentToken = undefined;
-        }
-      }
-
-      if (!currentToken) {
-        const idResults = await c.env.DB.prepare(`
-          SELECT p.id FROM posts p
-          WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
-            AND p.status = 'published'
-            AND p.hidden = 0
-            AND p.parent_id IS NULL
-          ORDER BY p.created_at DESC
-        `).all();
-
-        shuffledIds = (idResults.results || []).map((r: Record<string, unknown>) => r.id as string);
-
-        for (let i = shuffledIds.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]];
-        }
-
-        // If initialId is provided, move it to the front
-        if (initialId) {
-          const idx = shuffledIds.indexOf(initialId);
-          if (idx !== -1) {
-            shuffledIds.splice(idx, 1);
-            shuffledIds.unshift(initialId);
-          } else {
-            // Check if the initialId exists and is actually a game post
-            const check = await c.env.DB.prepare(`
-              SELECT id FROM posts 
-              WHERE id = ? AND payload_key IS NOT NULL AND swf_key IS NULL
-                AND status = 'published' AND hidden = 0
-            `)
-              .bind(initialId)
-              .first();
-            if (check) {
-              shuffledIds.unshift(initialId);
-            }
-          }
-        }
-
-        currentToken = crypto.randomUUID();
-
-        try {
-          await c.env.CACHE?.put(`games:shuffle:${currentToken}`, JSON.stringify(shuffledIds), {
-            expirationTtl: 300,
-          });
-        } catch (cacheError) {
-          console.warn('Failed to cache shuffle order:', cacheError);
-        }
-      }
-
-      const pageIds = shuffledIds.slice(offset, offset + limit);
-      const newOffset = offset + pageIds.length;
-      const hasMore = newOffset < shuffledIds.length;
-
-      let shuffledGames: Array<Record<string, unknown>> = [];
-
-      if (pageIds.length > 0) {
-        const placeholders = pageIds.map(() => '?').join(',');
-        const { results: sliceData } = await c.env.DB.prepare(`
-          SELECT
-            p.id as postId, p.user_id, p.text, p.game_title, p.swf_key, p.payload_key,
-            p.thumbnail_key, p.fresh_count,
-            COALESCE(p.reply_count, 0) as reply_count,
-            COALESCE(p.bookmark_count, 0) as bookmark_count,
-            p.impressions, p.created_at,
-            u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
-          FROM posts p
-          JOIN users u ON p.user_id = u.id
-          WHERE p.id IN (${placeholders})
-        `)
-          .bind(...pageIds)
-          .all<{
-            postId: string;
-            user_id: string;
-            text: string;
-            game_title: string | null;
-            swf_key: string | null;
-            payload_key: string | null;
-            thumbnail_key: string | null;
-            fresh_count: number;
-            reply_count: number;
-            bookmark_count: number;
-            impressions: number;
-            created_at: string;
-            username: string;
-            display_name: string | null;
-            avatar_key: string | null;
-            badge_type: string | null;
-          }>();
-
-        const gameMap = new Map((sliceData || []).map((r) => [r.postId, r]));
-
-        let sliceFreshedPostIds: Set<string> = new Set();
-        let sliceBookmarkedPostIds: Set<string> = new Set();
-        if (currentUserId && sliceData && sliceData.length > 0) {
-          const slicePostIds = sliceData.map((r) => r.postId);
-          const result = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, slicePostIds);
-          sliceFreshedPostIds = result.freshed;
-          sliceBookmarkedPostIds = result.bookmarked;
-        }
-
-        shuffledGames = pageIds
-          .map((id) => {
-            const row = gameMap.get(id);
-            if (!row) return null;
-            const type = 'zip';
-            const game: Record<string, unknown> = {
-              id: row.postId,
-              postId: row.postId,
-              title: arcadeGameTitle(row.game_title, row.text, row.username),
-              username: row.username,
-              displayName: row.display_name || undefined,
-              avatarKey: row.avatar_key || undefined,
-              badgeType: row.badge_type || undefined,
-              type,
-              swfKey: row.swf_key || undefined,
-              payloadKey: row.payload_key || undefined,
-              thumbnailKey: row.thumbnail_key || undefined,
-              freshCount: row.fresh_count,
-              replyCount: row.reply_count,
-              bookmarkCount: row.bookmark_count,
-              impressions: row.impressions,
-              isFreshed: sliceFreshedPostIds.has(row.postId),
-              isBookmarked: sliceBookmarkedPostIds.has(row.postId),
-              createdAt: row.created_at,
-            };
-            return game;
-          })
-          .filter((x): x is Record<string, unknown> => x !== null);
-      }
-
-      return c.json({
-        games: shuffledGames,
-        hasMore,
-        token: currentToken,
-        offset: newOffset,
-      });
+      return serveShuffledGames(c, visibility, currentUserId, limit);
     }
 
     // Recommended mode: personalized scoring based on interest vector + dwell time
@@ -323,10 +186,13 @@ games.get('/games', async (c) => {
         JOIN users u ON p.user_id = u.id
         WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+          ${visibility.sql}
         ORDER BY p.created_at DESC
         LIMIT 200
       `;
-      const candidates = await c.env.DB.prepare(candidateQuery).all<ArcadeCandidateRow>();
+      const candidates = await c.env.DB.prepare(candidateQuery)
+        .bind(...visibility.params)
+        .all<ArcadeCandidateRow>();
       const candidateRows = candidates.results || [];
 
       // The Arcade can be opened directly for any ZIP post (timeline, thread,
@@ -343,8 +209,9 @@ games.get('/games', async (c) => {
           JOIN users u ON p.user_id = u.id
           WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
             AND p.status = 'published' AND p.hidden = 0
+            ${visibility.sql}
         `)
-          .bind(initialId)
+          .bind(initialId, ...visibility.params)
           .first<ArcadeCandidateRow>();
         if (initialRow) candidateRows.push(initialRow);
       }
@@ -510,6 +377,10 @@ games.get('/games', async (c) => {
       params.push(cursor);
     }
 
+    // Visibility binds come after every other WHERE bind and before LIMIT.
+    sql += ` ${visibility.sql}`;
+    params.push(...visibility.params);
+
     if (trending) {
       // 0146's expression index is the only B-tree that can serve this ORDER BY;
       // force it here or the planner falls back to 0052's engagement index.
@@ -610,21 +481,28 @@ games.get('/games', async (c) => {
     return c.json({ error: 'Failed to fetch games' }, 500);
   }
 });
-// D1 permits at most 100 bound parameters per query.
-const GAME_VALIDATION_CHUNK_SIZE = 100;
+// D1 permits at most 100 bound parameters per query; reserve room for the
+// visibility binds appended below.
+const GAME_VALIDATION_CHUNK_SIZE = 96;
 
 /** Published, visible game posts (payload or swf present) among the given ids. */
-async function loadValidGamePostIds(db: D1Database, postIds: unknown[]): Promise<Set<string>> {
+async function loadValidGamePostIds(
+  db: D1Database,
+  postIds: unknown[],
+  viewerId?: string | null,
+): Promise<Set<string>> {
+  const visibility = visibilityFilter(viewerId);
+  const chunkSize = GAME_VALIDATION_CHUNK_SIZE - visibility.params.length;
   const unique = [...new Set(postIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
   const validIds = new Set<string>();
-  for (let offset = 0; offset < unique.length; offset += GAME_VALIDATION_CHUNK_SIZE) {
-    const chunk = unique.slice(offset, offset + GAME_VALIDATION_CHUNK_SIZE);
+  for (let offset = 0; offset < unique.length; offset += chunkSize) {
+    const chunk = unique.slice(offset, offset + chunkSize);
     const placeholders = chunk.map(() => '?').join(',');
     const rows = await db
       .prepare(
-        `SELECT id FROM posts WHERE id IN (${placeholders}) AND status = 'published' AND hidden = 0 AND (payload_key IS NOT NULL OR swf_key IS NOT NULL)`,
+        `SELECT p.id FROM posts p WHERE p.id IN (${placeholders}) AND p.status = 'published' AND p.hidden = 0 AND (p.payload_key IS NOT NULL OR p.swf_key IS NOT NULL) ${visibility.sql}`,
       )
-      .bind(...chunk)
+      .bind(...chunk, ...visibility.params)
       .all<{ id: string }>();
     for (const row of rows.results ?? []) validIds.add(row.id);
   }
@@ -689,6 +567,7 @@ games.post('/games/events', async (c) => {
     const validGamePostIds = await loadValidGamePostIds(
       c.env.DB,
       eventList.map((event) => event?.postId),
+      currentUserId,
     );
 
     for (const event of eventList) {
@@ -763,6 +642,7 @@ games.post('/games/dwell', async (c) => {
     const validGamePostIds = await loadValidGamePostIds(
       c.env.DB,
       playList.map((play) => play?.postId),
+      currentUserId,
     );
 
     const statements: D1PreparedStatement[] = [];

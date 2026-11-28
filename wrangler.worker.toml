@@ -1,6 +1,6 @@
 name = "flaxia-ap-delivery"
 main = "functions/queue-worker.ts"
-compatibility_date = "2024-01-01"
+compatibility_date = "2026-06-02"
 compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
@@ -29,6 +29,9 @@ CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 CC_DOMAINS = ""
 CC_CRAWL = ""
 WEB_EMBEDDINGS_ENABLED = "0"
+# Optional: override the default seed instances for the federated popularity
+# pool (comma separated domains). Empty keeps the built-in seed list.
+AP_POOL_SEED_DOMAINS = ""
 # Optional: destination for the Arcade dwell dataset. Set HF_TOKEN as a secret:
 #   npx wrangler secret put HF_TOKEN --config wrangler.worker.toml
 # HF_REPO = "youruser/flaxia-arcade-dwell"
@@ -50,7 +53,7 @@ binding = "BUCKET"
 bucket_name = "flaxia-content"
 
 [triggers]
-crons = ["0 4 * * *", "0 * * * *"]
+crons = ["0 4 * * *", "30 4 * * *", "0 * * * *", "5 * * * *"]
 
 # The worker both consumes deliveries and produces the activities it has to
 # answer (Accept for a Follow, Undo, ...). Without the producer binding
@@ -66,3 +69,13 @@ max_batch_timeout = 5
 # Retry transient failures a bounded number of times, then quarantine them.
 max_retries = 3
 dead_letter_queue = "activitypub-delivery-dlq"
+
+# Dead letters are consumed by this worker as well: it stores them in the
+# ap_dlq D1 table and acknowledges them only after a successful insert. A
+# failed insert is retried (bounded by max_retries) instead of acknowledged,
+# so a database outage cannot silently discard the durable copy.
+[[queues.consumers]]
+queue = "activitypub-delivery-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 1

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { createCloudflareServices } from '../../lib/adapters/cloudflare/index.ts';
 import { isAdmin } from '../../lib/admin.ts';
 import { parseAttachmentKey } from '../../lib/attachments';
+import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { servePublicLoader } from '../../lib/game-loader-public.ts';
 import { resolveLatestGamePayloadKey, resolveVersionPayloadKey } from '../../lib/game-version-key.ts';
 import { handleMediaUpload } from '../../lib/media-upload.ts';
@@ -17,6 +18,7 @@ import {
   requireAuth,
 } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -39,55 +41,96 @@ async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean>
 }
 
 /**
- * Moderation is not optional for media: a hidden or unpublished post must not
- * keep serving its payload to everyone. The owner and admins keep access so
- * review, edits and restoration still work.
+ * Media GETs for images/audio/video/documents deliberately skip session
+ * resolution in authMiddleware to keep the hot path cheap, so `c.get('user')`
+ * is explicitly null there. Resolve the session lazily, only for media that
+ * is not publicly readable; public requests stay as cheap as before.
  */
-async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolean> {
-  const row = (await c.env.DB.prepare('SELECT user_id, hidden, status FROM posts WHERE id = ?')
-    .bind(postId)
-    .first()) as { user_id: string; hidden: number; status: string } | null;
-  if (!row) return true; // key without a post row: keep the previous behavior
-  if (!row.hidden && row.status === 'published') return true;
-  const viewer = c.get('user');
-  if (!viewer) return false;
-  return viewer.id === row.user_id || isAdmin(c.env, viewer);
+async function mediaViewer(c: MediaContext): Promise<Variables['user']> {
+  const contextViewer = c.get('user');
+  if (contextViewer) return contextViewer;
+  const token = getSessionToken(c.req.raw);
+  if (!token) return null;
+  const session = await getMeWithSession(c.env as unknown as Env, token);
+  return session?.user ?? null;
+}
+
+type MediaPostRow = {
+  id: string;
+  user_id: string;
+  hidden: number | null;
+  status: string;
+  visibility: string | null;
+};
+
+/** `public` here means "safe for shared/CDN caching". */
+type MediaAccess = { allowed: boolean; public: boolean };
+
+async function evaluateMediaPostAccess(c: MediaContext, row: MediaPostRow): Promise<MediaAccess> {
+  const visibility = row.visibility ?? 'public';
+  const isPublic = (visibility === 'public' || visibility === 'unlisted') && !row.hidden && row.status === 'published';
+  if (isPublic) return { allowed: true, public: true };
+
+  // Hidden/unpublished files stay owner+admin only, as before.
+  const viewer = await mediaViewer(c);
+  const privileged = Boolean(viewer && (viewer.id === row.user_id || isAdmin(c.env, viewer)));
+  if (row.hidden || row.status !== 'published') return { allowed: privileged, public: false };
+  if (privileged) return { allowed: true, public: false };
+
+  // Private = author + local followers, direct = author + mentioned local
+  // users. Reuse the same predicate the timeline uses, so a media key cannot
+  // bypass the post's visibility.
+  const filter = visibilityFilter(viewer?.id);
+  const allowed = await c.env.DB.prepare(`SELECT p.id FROM posts p WHERE p.id = ? ${filter.sql}`)
+    .bind(row.id, ...filter.params)
+    .first<{ id: string }>();
+  return { allowed: Boolean(allowed), public: false };
 }
 
 /**
- * Same moderation rule as postMediaAllowed for routes addressed by media key
- * instead of post id (legacy gif/payload/swf/thumbnail keys). Attachment keys
- * are resolved through post_attachments; avatar/header keys stay unaffected.
+ * Moderation and visibility are not optional for media: a hidden, private or
+ * unpublished post must not keep serving its payload to everyone. The owner
+ * and admins keep access (plus followers / mentioned users for private and
+ * direct posts) so review, edits and restoration still work.
  */
-async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolean> {
-  const row = (await c.env.DB.prepare(
-    `SELECT user_id, hidden, status FROM posts
-     WHERE gif_key = ? OR payload_key = ? OR swf_key = ? OR thumbnail_key = ?
+async function postMediaAllowed(c: MediaContext, postId: string): Promise<MediaAccess> {
+  const row = await c.env.DB.prepare(
+    `SELECT p.id, p.user_id, p.hidden, p.status, COALESCE(p.visibility, 'public') AS visibility
+     FROM posts p WHERE p.id = ?`,
+  )
+    .bind(postId)
+    .first<MediaPostRow>();
+  if (!row) return { allowed: true, public: true }; // key without a post row: keep the previous behavior
+  return evaluateMediaPostAccess(c, row);
+}
+
+/**
+ * Same rule as postMediaAllowed for routes addressed by media key instead of
+ * post id (legacy gif/payload/swf/thumbnail keys). Attachment keys are
+ * resolved through post_attachments; avatar/header keys stay unaffected.
+ */
+async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<MediaAccess> {
+  const row = await c.env.DB.prepare(
+    `SELECT p.id, p.user_id, p.hidden, p.status, COALESCE(p.visibility, 'public') AS visibility
+     FROM posts p
+     WHERE p.gif_key = ? OR p.payload_key = ? OR p.swf_key = ? OR p.thumbnail_key = ?
      LIMIT 1`,
   )
     .bind(key, key, key, key)
-    .first()) as { user_id: string; hidden: number; status: string } | null;
-  if (row) {
-    if (!row.hidden && row.status === 'published') return true;
-    const viewer = c.get('user');
-    if (!viewer) return false;
-    return viewer.id === row.user_id || isAdmin(c.env, viewer);
-  }
-  // Multi-media attachment lookups enforce the same moderation decision.
+    .first<MediaPostRow>();
+  if (row) return evaluateMediaPostAccess(c, row);
+
+  // Multi-media attachment lookups enforce the same visibility decision.
   // Let database errors reach the route's error handler; serving bytes after
-  // a failed authorization lookup would expose hidden attachments.
+  // a failed authorization lookup would expose private attachments.
   const attached = await c.env.DB.prepare(
-    `SELECT p.user_id, p.hidden, p.status FROM post_attachments a
-     JOIN posts p ON p.id = a.post_id WHERE a.r2_key = ? LIMIT 1`,
+    `SELECT p.id, p.user_id, p.hidden, p.status, COALESCE(p.visibility, 'public') AS visibility
+     FROM post_attachments a JOIN posts p ON p.id = a.post_id WHERE a.r2_key = ? LIMIT 1`,
   )
     .bind(key)
-    .first<{ user_id: string; hidden: number; status: string }>();
-  if (attached) {
-    if (!attached.hidden && attached.status === 'published') return true;
-    const viewer = c.get('user');
-    return Boolean(viewer && (viewer.id === attached.user_id || isAdmin(c.env, viewer)));
-  }
-  return true;
+    .first<MediaPostRow>();
+  if (attached) return evaluateMediaPostAccess(c, attached);
+  return { allowed: true, public: true };
 }
 
 /**
@@ -96,6 +139,15 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
  * blocked file long after the KV/D1 verdict was written.
  */
 const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300, stale-while-revalidate=60';
+
+/**
+ * Anything that required viewer authorization must never enter a shared CDN
+ * cache: the key is guessable and the same URL would otherwise serve a
+ * private/direct attachment to the next anonymous visitor.
+ */
+function mediaCacheControl(isPublic: boolean): string {
+  return isPublic ? MEDIA_CACHE_CONTROL : 'private, no-store';
+}
 
 /**
  * Does a detected MIME type belong in an attachment slot of this kind?
@@ -134,9 +186,11 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Image not found' }, 404);
     }
 
-    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+    const imageAccess = c.env.DB ? await postKeyMediaAllowed(c, key) : { allowed: true, public: true };
+    if (!imageAccess.allowed) {
       return c.json({ error: 'Image not found' }, 404);
     }
+    const imageCacheControl = mediaCacheControl(imageAccess.public);
 
     // Rate limit: 100 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
@@ -163,7 +217,7 @@ media.get('/images/*', async (c) => {
         return new Response(defaultAvatarSvg, {
           headers: {
             'Content-Type': 'image/svg+xml',
-            'Cache-Control': MEDIA_CACHE_CONTROL,
+            'Cache-Control': imageCacheControl,
             'Access-Control-Allow-Origin': 'https://flaxia.app',
             ...MEDIA_SECURITY_HEADERS,
           },
@@ -184,7 +238,7 @@ media.get('/images/*', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': MEDIA_CACHE_CONTROL,
+        'Cache-Control': imageCacheControl,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Content-Disposition': 'inline',
         ...MEDIA_SECURITY_HEADERS,
@@ -209,7 +263,8 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
-    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+    const audioAccess = c.env.DB ? await postKeyMediaAllowed(c, key) : { allowed: true, public: true };
+    if (!audioAccess.allowed) {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
@@ -234,7 +289,9 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
-    return handleRangeRequest(c, key, object, contentType);
+    const response = await handleRangeRequest(c, key, object, contentType);
+    if (!audioAccess.public) response.headers.set('Cache-Control', 'private, no-store');
+    return response;
   } catch (error: unknown) {
     console.error('Audio proxy error:', error);
     return c.json({ error: 'Failed to fetch audio' }, 500);
@@ -254,7 +311,8 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Video not found' }, 404);
     }
 
-    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+    const videoAccess = c.env.DB ? await postKeyMediaAllowed(c, key) : { allowed: true, public: true };
+    if (!videoAccess.allowed) {
       return c.json({ error: 'Video not found' }, 404);
     }
 
@@ -279,7 +337,9 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Video not found' }, 404);
     }
 
-    return handleRangeRequest(c, key, object, contentType);
+    const response = await handleRangeRequest(c, key, object, contentType);
+    if (!videoAccess.public) response.headers.set('Cache-Control', 'private, no-store');
+    return response;
   } catch (error: unknown) {
     console.error('Video proxy error:', error);
     return c.json({ error: 'Failed to fetch video' }, 500);
@@ -312,9 +372,11 @@ media.get('/documents/*', async (c) => {
       return c.json({ error: 'Document not found' }, 404);
     }
 
-    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+    const documentAccess = c.env.DB ? await postKeyMediaAllowed(c, key) : { allowed: true, public: true };
+    if (!documentAccess.allowed) {
       return c.json({ error: 'Document not found' }, 404);
     }
+    const documentCacheControl = mediaCacheControl(documentAccess.public);
 
     // Rate limit: 60 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
@@ -335,14 +397,16 @@ media.get('/documents/*', async (c) => {
     // Preserve inline PDF viewing and partial-content support. Other document
     // attachments always download as opaque bytes.
     if (key.toLowerCase().endsWith('.pdf')) {
-      return handleRangeRequest(c, key, object, 'application/pdf');
+      const response = await handleRangeRequest(c, key, object, 'application/pdf');
+      if (!documentAccess.public) response.headers.set('Cache-Control', 'private, no-store');
+      return response;
     }
 
     return new Response(object.body, {
       headers: {
         ...MEDIA_SECURITY_HEADERS,
         'Content-Type': 'application/octet-stream',
-        'Cache-Control': MEDIA_CACHE_CONTROL,
+        'Cache-Control': documentCacheControl,
         // Must win over MEDIA_SECURITY_HEADERS' inline default: arbitrary
         // document bytes are always a download.
         'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
@@ -386,7 +450,8 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
-    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
+    const zipAccess = c.env.DB ? await postMediaAllowed(c, postId) : { allowed: true, public: true };
+    if (!zipAccess.allowed) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
@@ -403,7 +468,7 @@ media.get('/zip/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=300, s-maxage=300',
+        'Cache-Control': mediaCacheControl(zipAccess.public),
         'Access-Control-Allow-Origin': zipAllowed ? zipOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,
@@ -457,14 +522,13 @@ media.get('/thumbnail/:id', async (c) => {
       post = ad;
     }
 
-    // Hidden or unpublished posts keep their thumbnail for owner/admins only.
-    if (isPostRow && post && (post.hidden || post.status !== 'published')) {
-      const viewer = c.get('user');
-      const allowed = viewer !== null && (viewer.id === String(post.user_id) || isAdmin(c.env, viewer));
-      if (!allowed) {
-        return c.json({ error: 'Thumbnail not found' }, 404);
-      }
+    // Hidden, unpublished and non-public posts keep their thumbnail for the
+    // owner/admins (plus followers or mentioned users) only.
+    const thumbnailAccess = isPostRow ? await postMediaAllowed(c, postId) : { allowed: true, public: true };
+    if (!thumbnailAccess.allowed) {
+      return c.json({ error: 'Thumbnail not found' }, 404);
     }
+    const thumbnailCacheControl = mediaCacheControl(thumbnailAccess.public);
 
     // Get thumbnail object from R2
     const thumbKey = post.thumbnail_key as string;
@@ -501,7 +565,7 @@ media.get('/thumbnail/:id', async (c) => {
     if (c.req.header('If-None-Match') === etag) {
       return new Response(null, {
         status: 304,
-        headers: { ETag: etag, 'Cache-Control': MEDIA_CACHE_CONTROL },
+        headers: { ETag: etag, 'Cache-Control': thumbnailCacheControl },
       });
     }
 
@@ -509,7 +573,7 @@ media.get('/thumbnail/:id', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': MEDIA_CACHE_CONTROL,
+        'Cache-Control': thumbnailCacheControl,
         ETag: etag,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         ...MEDIA_SECURITY_HEADERS,
@@ -547,7 +611,8 @@ media.get('/swf/:postId', async (c) => {
       return c.json({ error: 'SWF not found' }, 404);
     }
 
-    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
+    const swfAccess = c.env.DB ? await postMediaAllowed(c, postId) : { allowed: true, public: true };
+    if (!swfAccess.allowed) {
       return c.json({ error: 'SWF not found' }, 404);
     }
 
@@ -564,7 +629,7 @@ media.get('/swf/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=300, s-maxage=300',
+        'Cache-Control': mediaCacheControl(swfAccess.public),
         'Access-Control-Allow-Origin': swfAllowed ? swfOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,

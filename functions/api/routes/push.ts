@@ -5,6 +5,7 @@ import { getVapidPublicKey } from '../../lib/push';
 import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../lib/titles';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const push = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -160,6 +161,12 @@ push.get('/notifications', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    const visibility = visibilityFilter(userId);
+    // visibilityFilter returns a WHERE fragment (`AND ...`); CASE WHEN needs
+    // the bare predicate. A notification is kept even when its post is no
+    // longer readable — only the text preview is masked.
+    const visiblePredicate = visibility.sql.replace(/^\s*AND\s+/, '');
+
     const result = await c.env.DB.prepare(`
       SELECT 
         n.id,
@@ -169,7 +176,7 @@ push.get('/notifications', requireAuth, async (c) => {
         n.created_at,
         n.actor_id,
         n.actor_data,
-        p.text as post_text_preview,
+        CASE WHEN ${visiblePredicate} THEN p.text ELSE NULL END AS post_text_preview,
         u.username as actor_username,
         u.display_name as actor_display_name,
         u.avatar_key as actor_avatar_key, u.badge_type as actor_badge_type,
@@ -187,7 +194,9 @@ push.get('/notifications', requireAuth, async (c) => {
       LEFT JOIN users u ON n.actor_id = u.id
       ${USER_TITLE_JOIN}
     `)
-      .bind(userId)
+      // The CASE sits in the SELECT list, so its placeholders bind before the
+      // `user_id = ?` of the subquery in FROM.
+      .bind(...visibility.params, userId)
       .all();
 
     if (!result.success) {

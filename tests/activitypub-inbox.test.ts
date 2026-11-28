@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
-import { handlePersonalInbox, handleSharedInbox, type InboxEnv } from '../functions/lib/activitypub/inbox.ts';
+import {
+  handlePersonalInbox,
+  handleSharedInbox,
+  type InboxEnv,
+  inboxReplayKey,
+  MAX_INBOX_BODY_BYTES,
+} from '../functions/lib/activitypub/inbox.ts';
 import { signRequest } from '../functions/lib/activitypub/signature.ts';
 import { createTestDatabase, seedLocalUser, type TestDatabase } from './helpers/d1.ts';
 
@@ -37,9 +43,31 @@ function cacheStub(): CacheStub {
 let privateKeyPem = '';
 let publicKeyPem = '';
 
-function stubRemoteActor(): () => void {
+async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  const contents = pem
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '');
+  const binary = atob(contents);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return crypto.subtle.importKey('pkcs8', bytes.buffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign']);
+}
+
+interface FetchCall {
+  url: string;
+  headers: Headers;
+}
+
+function stubRemoteActor(calls: FetchCall[] = []): () => void {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (typeof init !== 'undefined' || input instanceof Request) {
+      calls.push({
+        url: String(input),
+        headers: new Headers(input instanceof Request ? input.headers : init?.headers),
+      });
+    }
     if (!String(input).startsWith(REMOTE)) return new Response('not found', { status: 404 });
     return new Response(
       JSON.stringify({
@@ -74,11 +102,11 @@ describe('ActivityPub inbox', () => {
     db.close();
   });
 
-  function env(): InboxEnv {
+  function env(cache: CacheStub = cacheStub()): InboxEnv {
     return {
       DB: db as unknown as InboxEnv['DB'],
       BASE_URL: BASE,
-      CACHE: cacheStub() as unknown as InboxEnv['CACHE'],
+      CACHE: cache as unknown as InboxEnv['CACHE'],
       AP_DELIVERY_QUEUE: {
         async send(message: QueueMessage) {
           queue.push(message);
@@ -92,6 +120,66 @@ describe('ActivityPub inbox', () => {
     // The sender signs the request for the inbox it delivers to, so the
     // signature covers the host of this instance.
     const headers = await signRequest(target, body, privateKeyPem, KEY_ID);
+    return new Request(target, { method: 'POST', headers, body });
+  }
+
+  /** Sign a delivery with pure RFC 9421 headers (no draft Signature parameters). */
+  async function rfc9421SignedRequest(
+    activity: Record<string, unknown>,
+    target = `${BASE}/api/inbox`,
+    options: { components?: string[]; expires?: number; created?: number; onlyContentDigest?: boolean } = {},
+  ): Promise<Request> {
+    const body = JSON.stringify(activity);
+    const url = new URL(target);
+    const encoder = new TextEncoder();
+    const digest = btoa(
+      String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(body)))),
+    );
+    const created = options.created ?? Math.floor(Date.now() / 1000);
+    const date = new Date().toUTCString();
+    const components = options.components ?? ['@method', '@target-uri', 'content-digest'];
+    const headers = new Headers({
+      'Content-Type': 'application/activity+json',
+      Host: url.host,
+      Date: date,
+      ...(options.onlyContentDigest ? {} : { Digest: `sha-256=${digest}` }),
+      'Content-Digest': `sha-256=:${digest}:`,
+    });
+    const values: Record<string, string> = {
+      '@method': 'POST',
+      '@target-uri': target,
+      '@request-target': url.pathname + url.search,
+      '@path': url.pathname,
+      '@authority': url.host,
+      host: url.host,
+      date,
+      digest: `sha-256=${digest}`,
+      'content-digest': `sha-256=:${digest}:`,
+      '(created)': String(created),
+    };
+    const params: Array<[string, string]> = [
+      ['created', String(created)],
+      ['keyid', `"${KEY_ID}"`],
+      ['alg', '"rsa-sha256"'],
+    ];
+    if (options.expires !== undefined) params.push(['expires', String(options.expires)]);
+    const base = [
+      ...components.map((component) => `"${component}": ${values[component]}`),
+      ...params.map(([name, value]) => `"${name}": ${value}`),
+    ].join('\n');
+    const signature = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      await importPrivateKey(privateKeyPem),
+      encoder.encode(base),
+    );
+    const label = 'sig1';
+    headers.set(
+      'Signature-Input',
+      `${label}=(${components.map((component) => `"${component}"`).join(' ')});${params
+        .map(([name, value]) => `${name}=${value}`)
+        .join(';')}`,
+    );
+    headers.set('Signature', `${label}=:${btoa(String.fromCharCode(...new Uint8Array(signature)))}:`);
     return new Request(target, { method: 'POST', headers, body });
   }
 
@@ -112,6 +200,137 @@ describe('ActivityPub inbox', () => {
       assert.equal(queue[0].username, 'alice');
       assert.equal(queue[0].actorId, REMOTE_ACTOR);
       assert.equal(queue[0].activity?.type, 'Follow');
+    } finally {
+      restore();
+    }
+  });
+
+  it('accepts a pure RFC 9421 delivery and fetches the actor key', async () => {
+    const calls: FetchCall[] = [];
+    const restore = stubRemoteActor(calls);
+    try {
+      queue.length = 0;
+      const request = await rfc9421SignedRequest({
+        id: `${REMOTE}/activities/inbox-rfc-1`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+      });
+      assert.equal(request.headers.get('Signature-Input') !== null, true);
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 202);
+      assert.equal(queue.length, 1);
+      assert.equal(queue[0].actorId, REMOTE_ACTOR);
+      assert.ok(
+        calls.some((call) => call.url === REMOTE_ACTOR),
+        'the key named by the RFC 9421 keyid must be fetched from the actor document',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery with a mismatching digest header', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest({
+        id: `${REMOTE}/activities/inbox-rfc-2`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+      });
+      request.headers.set('Digest', 'sha-256=AAAA');
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery signed for a different key origin', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-3`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+        },
+        `${BASE}/api/inbox`,
+        { components: ['@method', '@target-uri', 'content-digest'] },
+      );
+      request.headers.set(
+        'Signature-Input',
+        (request.headers.get('Signature-Input') ?? '').replace(KEY_ID, 'https://evil.example/users/alice#main-key'),
+      );
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery just after its expiry', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-4`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+          to: [`${BASE}/api/actors/alice`],
+        },
+        `${BASE}/api/inbox`,
+        { expires: Math.floor(Date.now() / 1000) - 120 },
+      );
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fingerprints RFC 9421 Content-Digest-only requests for replay protection', async () => {
+    const activity = { id: `${REMOTE}/activities/inbox-rfc-5`, type: 'Follow', actor: REMOTE_ACTOR };
+    const request = await rfc9421SignedRequest(activity, `${BASE}/api/inbox`, { onlyContentDigest: true });
+    assert.equal(request.headers.get('Digest'), null);
+
+    const key = await inboxReplayKey(request);
+    assert.ok(key, 'an RFC 9421 request needs a replay fingerprint even without Digest/Date');
+    assert.equal(await inboxReplayKey(request.clone()), key, 'the fingerprint must be stable');
+
+    const changedDigest = request.clone();
+    changedDigest.headers.set('Content-Digest', 'sha-256=:AQIDBA==:');
+    assert.notEqual(await inboxReplayKey(changedDigest), key);
+
+    const laterSignature = await rfc9421SignedRequest(activity, `${BASE}/api/inbox`, {
+      onlyContentDigest: true,
+      created: Math.floor(Date.now() / 1000) + 1,
+    });
+    assert.notEqual(await inboxReplayKey(laterSignature), key);
+  });
+
+  it('drops an exact replay of an RFC 9421 delivery', async () => {
+    const restore = stubRemoteActor();
+    try {
+      queue.length = 0;
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-6`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+          to: [`${BASE}/api/actors/alice`],
+        },
+        `${BASE}/api/inbox`,
+        { onlyContentDigest: true },
+      );
+      const sharedEnv = env();
+      const first = await handleSharedInbox(sharedEnv, request.clone());
+      assert.equal(first.status, 202);
+      const second = await handleSharedInbox(sharedEnv, request.clone());
+      assert.equal(second.status, 202);
+      assert.equal(((await second.json()) as { duplicate?: boolean }).duplicate, true);
+      assert.equal(queue.length, 1, 'a replay must not be queued twice');
     } finally {
       restore();
     }
@@ -182,9 +401,10 @@ describe('ActivityPub inbox', () => {
         to: [`${BASE}/api/actors/alice`],
       };
       const sharedEnv = env();
-      const first = await handleSharedInbox(sharedEnv, await signedRequest(activity));
+      const request = await signedRequest(activity);
+      const first = await handleSharedInbox(sharedEnv, request.clone());
       assert.equal(first.status, 202);
-      const second = await handleSharedInbox(sharedEnv, await signedRequest(activity));
+      const second = await handleSharedInbox(sharedEnv, request.clone());
       assert.equal(second.status, 202);
       const body = (await second.json()) as { duplicate?: boolean };
       assert.equal(body.duplicate, true);
@@ -206,9 +426,10 @@ describe('ActivityPub inbox', () => {
         object: `${BASE}/api/actors/alice`,
       };
       const personalEnv = env();
-      const first = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      const request = await signedRequest(activity, target);
+      const first = await handlePersonalInbox(personalEnv, request.clone(), 'alice');
       assert.equal(first.status, 202);
-      const second = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      const second = await handlePersonalInbox(personalEnv, request.clone(), 'alice');
       assert.equal(second.status, 202);
       assert.equal(((await second.json()) as { duplicate?: boolean }).duplicate, true);
       assert.equal(queue.length, 1, 'a replay must not be queued twice');
@@ -230,6 +451,66 @@ describe('ActivityPub inbox', () => {
       const response = await handleSharedInbox(env(), request);
       assert.equal(response.status, 202);
       assert.equal(queue.length, 0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('rejects an oversized declared Content-Length before reading the body', async () => {
+    const request = new Request(`${BASE}/api/inbox`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/activity+json', 'Content-Length': '999999999' },
+      body: '{}',
+    });
+    const response = await handleSharedInbox(env(), request);
+    assert.equal(response.status, 413);
+    assert.equal(((await response.json()) as { error: string }).error, 'Inbox body too large');
+  });
+
+  it('rejects an oversized actual body, including a multibyte one', async () => {
+    for (const padding of ['x'.repeat(MAX_INBOX_BODY_BYTES), 'あ'.repeat(MAX_INBOX_BODY_BYTES)]) {
+      const body = JSON.stringify({ type: 'Create', actor: REMOTE_ACTOR, padding });
+      const request = new Request(`${BASE}/api/inbox`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/activity+json' },
+        body,
+      });
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 413, 'both ASCII and multibyte bodies must be bounded');
+    }
+  });
+
+  it('rate limits a sender whose KV window is exhausted', async () => {
+    const cache = cacheStub();
+    const window = Math.floor(Date.now() / 1000 / 60);
+    await cache.put(`rl:ap:inbox:unknown:${window}`, '60');
+    const request = new Request(`${BASE}/api/inbox`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/activity+json' },
+      body: '{}',
+    });
+    const response = await handleSharedInbox(env(cache), request);
+    assert.equal(response.status, 429);
+    assert.equal(((await response.json()) as { error: string }).error, 'Rate limit exceeded');
+  });
+
+  it('signs the actor-key fetch with Date and Signature headers', async () => {
+    const calls: FetchCall[] = [];
+    const restore = stubRemoteActor(calls);
+    try {
+      const request = await signedRequest({
+        id: `${REMOTE}/activities/inbox-signed-fetch`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+        object: `${BASE}/api/actors/alice`,
+      });
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 202);
+      const actorFetch = calls.find((call) => call.url === REMOTE_ACTOR);
+      assert.ok(actorFetch, 'the actor document must be fetched to verify the signature');
+      assert.match(actorFetch.headers.get('date') ?? '', /GMT$/);
+      assert.match(actorFetch.headers.get('signature') ?? '', /keyId="[^"]+#main-key"/);
     } finally {
       restore();
     }

@@ -15,7 +15,7 @@ Flaxia operates on a modern edge computing stack designed for global scalability
 **Runtime Environment**
 - **Cloudflare Pages**: Static asset hosting and frontend deployment
 - **Cloudflare Workers**: Serverless API execution at the edge
-- **Compatibility Date**: 2024-01-01 with Node.js compatibility flags
+- **Compatibility Date**: set per component in `wrangler*.toml` — Pages (`wrangler.toml`) `2024-09-23`, ActivityPub Queue Worker (`wrangler.worker.toml`) `2026-06-02`; both with the Node.js compatibility flag
 
 **Database Layer**
 - **Cloudflare D1**: SQLite-based distributed database

@@ -35,6 +35,37 @@ function unb64(value) {
   return new Uint8Array(Buffer.from(value, 'base64'));
 }
 
+// The deferred Crowd node opens a fixed consent overlay after boot whenever its
+// persisted decision is unset, which can steal a click while Playwright waits
+// for actionability. Stub the versioned node entry module with a controller
+// that already reports a decision: no overlay is created and no WASM memory
+// probe runs on the page. This uses the same consent surface as the app
+// (initFlaxiaNode / getFlaxiaNodeConsentState / initFlaxiaNodeConsent).
+const CROWD_CONSENT_STUB = `
+export async function initFlaxiaNodeConsent() { return 'denied'; }
+export function getFlaxiaNodeConsentState() { return 'denied'; }
+export function setFlaxiaNodeHostManagedConsent() {}
+export function initFlaxiaNode() {
+  return {
+    start() {}, stop() {}, isRunning() { return false; },
+    getConsentState() { return 'denied'; },
+    grant() {}, deny() {}, clearConsent() {},
+  };
+}
+`;
+
+async function stubCrowdConsent(page) {
+  await page.route(
+    (url) => url.pathname.startsWith('/crowd/') && url.pathname.endsWith('/index.js'),
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/javascript; charset=utf-8',
+        body: CROWD_CONSENT_STUB,
+      }),
+  );
+}
+
 function testUsername(suffix) {
   const sanitized = `testuser${suffix}`.replace(/[^a-zA-Z0-9_]/g, '');
   if (sanitized.length <= 20) return sanitized;
@@ -130,6 +161,7 @@ test('SSR content is present before JS and survives the handover to the interact
 
   try {
     const page = await browser.newPage();
+    await stubCrowdConsent(page);
     /** @type {string[]} */
     const consoleMessages = [];
     /** @type {string[]} */
@@ -221,35 +253,31 @@ test('SSR boot data removes the locale/session network gate during hydration', a
 
   try {
     const context = await browser.newContext();
-    // The Crowd node shows a blocking consent overlay up to 3s after boot.
-    // Seed the denial before any page script runs so the overlay never mounts
-    // and cannot intercept the post-card click measured below.
-    await context.addInitScript(() => {
-      try {
-        localStorage.setItem('flaxia_consent_denied', 'true');
-      } catch {
-        // Storage disabled: the overlay remains a known flake source.
-      }
-    });
     const [cookieName, ...cookieValue] = cookie.split('=');
     await context.addCookies([
       { name: 'flaxia_locale', value: 'ja', url: baseUrl },
       { name: cookieName, value: cookieValue.join('='), url: baseUrl },
     ]);
     const page = await context.newPage();
+    await stubCrowdConsent(page);
     /** @type {string[]} */
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
 
     // Same user shape as tests/app-shell.browser.mjs SIGNED_IN_STUBS, but the
     // response only arrives after 5s so a client that waits for it fails.
+    // Record when a stub resolves so the network-gate assertion below can tell
+    // whether navigation happened while the gate was still pending.
+    const gate = { resolvedAt: Infinity };
     const signedInMe = { user: { id: 'u1', username, display_name: 'Mikan', language: 'ja' } };
     await page.route('**/locales/*.json', async (/** @type {any} */ route) => {
       await new Promise((resolve) => setTimeout(resolve, 5000));
+      gate.resolvedAt = Math.min(gate.resolvedAt, Date.now());
       await route.continue().catch(() => {});
     });
     await page.route('**/api/me', async (/** @type {any} */ route) => {
       await new Promise((resolve) => setTimeout(resolve, 5000));
+      gate.resolvedAt = Math.min(gate.resolvedAt, Date.now());
       await route
         .fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(signedInMe) })
         .catch(() => {});
@@ -296,15 +324,31 @@ test('SSR boot data removes the locale/session network gate during hydration', a
     assert.equal(await page.$('.nav-auth-buttons'), null, 'guest auth buttons must not render');
     assert.equal(await page.$('.nav-promo'), null, 'guest promo must not render');
 
-    // A real post card click reaches the thread inside the same short budget.
-    const clickedAt = Date.now();
+    // A real post card click reaches the thread inside this 4s budget. The
+    // stubbed /api/me and locale responses only arrive after 5s, so a client
+    // that still waits for that network gate cannot make it; the tighter 1.5s
+    // budget above covers shell interactivity. The Crowd consent state is
+    // stubbed before boot (see stubCrowdConsent), so there is no overlay to
+    // retry around and the measurement covers only the successful click.
+    const clickBudgetMs = 4000;
     // The CSS-stretched SSR anchor is clickable even before the timeline takes
     // over; use it when the interactive card has not mounted yet.
-    await page.waitForSelector('.post-card .post-text, .ssr-view-post', { timeout: budgetMs });
-    await page.locator('.post-card .post-text, .ssr-view-post').first().click();
-    await page.waitForURL(/\/thread\//, { timeout: budgetMs * 2 });
+    const card = page.locator('.post-card .post-text, .ssr-view-post').first();
+    await card.waitFor({ state: 'visible', timeout: clickBudgetMs });
+    const clickedAt = Date.now();
+    await card.click({ timeout: clickBudgetMs });
+    await page.waitForURL(/\/thread\//, { timeout: clickBudgetMs * 2 });
     const clickMs = Date.now() - clickedAt;
-    assert.ok(clickMs <= budgetMs, `post card click took ${clickMs}ms (budget ${budgetMs}ms)`);
+    assert.ok(clickMs <= clickBudgetMs, `post card click took ${clickMs}ms (budget ${clickBudgetMs}ms)`);
+
+    // Independent network-gate guard: navigating during the 5s stub window
+    // proves the click path did not wait for the stalled locale/session data.
+    // A stub that resolved before the click is not a wait and is allowed.
+    const navigatedAt = Date.now();
+    assert.ok(
+      gate.resolvedAt === Infinity || gate.resolvedAt <= clickedAt || navigatedAt < gate.resolvedAt,
+      `navigation waited for the 5s locale/session gate (gate resolved at ${gate.resolvedAt}, navigated at ${navigatedAt})`,
+    );
 
     assert.deepEqual(pageErrors, [], `no uncaught page errors: ${pageErrors.join(' | ')}`);
   } finally {

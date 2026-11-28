@@ -11,6 +11,10 @@ import { checkImageSizeLimit, renderFilePreview } from '../file-preview.ts';
 import { formatCount } from '../format.ts';
 import { t } from '../i18n.ts';
 import { attachIcons } from '../icons.ts';
+// Shared http(s) check for remote ActivityPub media (same rule as the search
+// and remote-profile avatar renderers), used by the mention avatar markup.
+// biome-ignore lint/correctness/noUnusedImports: used in markup
+import { isAbsoluteMediaUrl } from '../media/attachments.ts';
 import { nativeApiHref } from '../native-api.ts';
 import { navigate } from '../navigation.ts';
 import { showToast } from '../toast.ts';
@@ -27,11 +31,12 @@ interface CurrentUser {
 
 interface Suggestion {
   key: string;
-  kind: 'user' | 'tag';
+  kind: 'user' | 'tag' | 'remote';
   value: string;
   display: string;
   sub: string;
   avatarKey?: string | null;
+  avatarUrl?: string | null;
 }
 
 interface Props {
@@ -121,26 +126,51 @@ function onInput(): void {
 function handleMentionInput(): void {
   const pos = textarea.selectionStart;
   const before = text.slice(0, pos);
-  const at = before.match(/@([a-zA-Z0-9_]*)$/);
-  const tag = at ? null : before.match(/#([^\s]*)$/);
+  // A second '@' switches the token to a cross-instance handle.
+  const remote = before.match(/@([a-zA-Z0-9_]{1,30})@([a-zA-Z0-9.-]*)$/);
+  const at = remote ? null : before.match(/@([a-zA-Z0-9_]*)$/);
+  const tag = remote || at ? null : before.match(/#([^\s]*)$/);
   if (mentionTimer) clearTimeout(mentionTimer);
-  if (!at && !tag) {
+  if (!remote && !at && !tag) {
     hideDropdown();
     return;
   }
-  mentionType = at ? 'user' : 'tag';
-  mentionStartPos = pos - (at ?? tag)![0].length;
-  const query = (at ?? tag)![1] || '';
+  mentionType = remote || at ? 'user' : 'tag';
+  mentionStartPos = pos - (remote ?? at ?? tag)![0].length;
+  const query = (remote ?? at ?? tag)![1] || '';
+  const remoteQuery = remote ? `${query}@${remote[2]}` : null;
   const token = ++mentionToken;
   mentionTimer = setTimeout(async () => {
     try {
-      const res = at
-        ? await fetch(`/api/search?type=users&q=${encodeURIComponent(query)}&limit=5`, { credentials: 'include' })
-        : await fetch(`/api/tags/suggest?q=${encodeURIComponent(query)}&limit=5`);
-      if (!res.ok || token !== mentionToken) return;
-      const payload = (await res.json()) as Record<string, unknown>;
-      if (token !== mentionToken) return;
-      if (at) {
+      if (remoteQuery !== null) {
+        const res = await fetch(`/api/remote/lookup?q=${encodeURIComponent(`@${remoteQuery}`)}`, {
+          credentials: 'include',
+        });
+        if (!res.ok || token !== mentionToken) return;
+        const payload = (await res.json()) as {
+          handle?: string;
+          displayName?: string | null;
+          avatarUrl?: string | null;
+        };
+        if (token !== mentionToken) return;
+        const handle = (payload.handle ?? `@${remoteQuery}`).replace(/^@/, '');
+        suggestions = [
+          {
+            key: `remote:${handle}`,
+            kind: 'remote' as const,
+            value: handle,
+            display: payload.displayName || `@${handle}`,
+            sub: `@${handle}`,
+            avatarUrl: payload.avatarUrl ?? null,
+          },
+        ];
+      } else if (at) {
+        const res = await fetch(`/api/search?type=users&q=${encodeURIComponent(query)}&limit=5`, {
+          credentials: 'include',
+        });
+        if (!res.ok || token !== mentionToken) return;
+        const payload = (await res.json()) as Record<string, unknown>;
+        if (token !== mentionToken) return;
         suggestions = (
           (payload.results ?? []) as Array<{ username: string; display_name: string; avatar_key: string | null }>
         ).map((u) => ({
@@ -152,6 +182,10 @@ function handleMentionInput(): void {
           avatarKey: u.avatar_key,
         }));
       } else {
+        const res = await fetch(`/api/tags/suggest?q=${encodeURIComponent(query)}&limit=5`);
+        if (!res.ok || token !== mentionToken) return;
+        const payload = (await res.json()) as Record<string, unknown>;
+        if (token !== mentionToken) return;
         suggestions = ((payload.tags ?? []) as Array<{ tag: string; count: number }>).map((item) => ({
           key: `tag:${item.tag}`,
           kind: 'tag' as const,
@@ -399,6 +433,7 @@ export function insertText(value: string): void {
         onkeydown={onKeydown}
         onpaste={onPaste}
       ></textarea>
+      <div class="reply-composer-remote-hint" style="color:var(--text-muted);font-size:0.75rem;margin-top:2px;">{t('composer.mention_remote_hint')}</div>
       {#if mentionOpen}
         <div bind:this={mentionDropdown} class="mention-dropdown" style="display:block;">
           {#each suggestions as suggestion, i (suggestion.key)}
@@ -415,6 +450,8 @@ export function insertText(value: string): void {
             >
               {#if suggestion.kind === 'tag'}
                 <span class="mention-avatar" style="width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-size:0.8rem;font-weight:bold;">#</span>
+              {:else if suggestion.kind === 'remote' && suggestion.avatarUrl && isAbsoluteMediaUrl(suggestion.avatarUrl)}
+                <img class="mention-avatar" src={suggestion.avatarUrl} alt="" style="width:24px;height:24px;border-radius:50%;object-fit:cover;flex-shrink:0;" />
               {:else if suggestion.avatarKey}
                 <span class="mention-avatar" style="width:24px;height:24px;border-radius:50%;background-image:url({nativeApiHref(`/api/images/${suggestion.avatarKey}`)});background-size:cover;background-position:center;flex-shrink:0;"></span>
               {:else}

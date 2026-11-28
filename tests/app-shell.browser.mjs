@@ -982,7 +982,13 @@ test('the left nav renders guest and signed-in states and routes its menus', {
     const signed = await openApp(browser, `${origin}/explore`, stubs);
     await signed.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
     await signed.page.waitForSelector('.nav-tag', { state: 'attached', timeout: 10_000 });
-    assert.equal(await signed.page.locator('.left-nav .nav-item').count(), 5, 'signed-in nav items');
+    assert.deepEqual(
+      await signed.page
+        .locator('.left-nav .nav-item')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
+      ['arcade', 'bookmarks', 'explore', 'federated', 'home', 'notifications'],
+      'signed-in nav items',
+    );
     assert.equal(await signed.page.locator('.nav-tag').count(), 2, 'trending tags');
     assert.ok(await signed.page.$('.nav-user-area'), 'signed-in account row');
     assert.equal(await signed.page.$('.nav-auth-buttons'), null);
@@ -1004,7 +1010,13 @@ test('the left nav renders guest and signed-in states and routes its menus', {
 
     const guest = await openApp(browser, `${origin}/home`, GUEST_STUBS);
     await guest.page.waitForSelector('.left-nav .nav-item', { timeout: 30_000 });
-    assert.equal(await guest.page.locator('.left-nav .nav-item').count(), 3, 'guest nav items');
+    assert.deepEqual(
+      await guest.page
+        .locator('.left-nav .nav-item')
+        .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
+      ['arcade', 'explore', 'federated', 'home'],
+      'guest nav items',
+    );
     assert.ok(await guest.page.$('.nav-auth-buttons'), 'guest auth buttons');
     assert.ok(await guest.page.$('.nav-promo'), 'guest promo card');
     assert.equal(await guest.page.$('.nav-user-area'), null);

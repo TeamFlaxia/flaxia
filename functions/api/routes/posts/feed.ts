@@ -9,7 +9,13 @@ import { refreshUserTrustSafe } from '../../../lib/trust';
 import { enrichPostsForFeed } from '../../feed-enrichment';
 import { kvCacheGet, kvCacheSet, makeCacheKey, requireAuth, resolveRequestUser } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
-import { colorEntitlementError, enrichFeedPosts, isOwnedMediaKey } from './helpers.ts';
+import {
+  colorEntitlementError,
+  enrichFeedPosts,
+  filterVisiblePosts,
+  isOwnedMediaKey,
+  visibilityFilter,
+} from './helpers.ts';
 
 export const feed = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -116,6 +122,7 @@ feed.get('/posts', async (c) => {
     // middleware did not run for this request.
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId: string | null = user?.id ?? null;
+    const visibility = visibilityFilter(currentUserId);
 
     // For Following tab, require authentication
     if (following && !currentUserId) {
@@ -138,12 +145,12 @@ feed.get('/posts', async (c) => {
       // Filter by hashtag using json_each
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, cursor, ...blockParam, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, cursor, ...blockParam, ...visibility.params, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, ...blockParam, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, ...blockParam, ...visibility.params, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
@@ -164,9 +171,9 @@ feed.get('/posts', async (c) => {
               WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
             ))
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter}
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ${visibility.sql}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, currentUserId, cursor, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, cursor, ...blockParam, ...visibility.params, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
@@ -184,31 +191,31 @@ feed.get('/posts', async (c) => {
               WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
             ))
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter}
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ${visibility.sql}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, currentUserId, ...blockParam, limit];
+        params = [currentUserId, currentUserId, currentUserId, ...blockParam, ...visibility.params, limit];
       }
     } else if (username) {
       // Username filter - show posts from specific user
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
-        params = [username, cursor, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [username, cursor, ...visibility.params, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [username, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [username, ...visibility.params, limit];
       }
     } else {
       // Global timeline
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [cursor, ...blockParam, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [cursor, ...blockParam, ...visibility.params, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
-          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [...blockParam, limit];
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ${visibility.sql} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...blockParam, ...visibility.params, limit];
       }
     }
 
@@ -255,9 +262,9 @@ feed.get('/posts', async (c) => {
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
-        SELECT COUNT(*) as count FROM posts p WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${EXACT_DUPLICATE_FILTER}
+        SELECT COUNT(*) as count FROM posts p WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${EXACT_DUPLICATE_FILTER} ${visibility.sql}
       `)
-        .bind(hashtag)
+        .bind(hashtag, ...visibility.params)
         .first<{ count: number }>();
       return c.json({ posts, count: countResult?.count || 0, next_cursor: nextCursor });
     }
@@ -288,14 +295,16 @@ feed.get('/posts/trending', async (c) => {
     // Reuse the user authMiddleware already resolved.
     const user = await resolveRequestUser(c, c.get('user'));
     const currentUserId: string | null = user?.id ?? null;
+    const visibility = visibilityFilter(currentUserId);
 
     // Try cache hit (only for non-cursor requests)
     if (!cursor) {
       const cacheKey = makeCacheKey('trending', c, `${limit}`, false);
       const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
       if (cached) {
-        // User-agnostic cache: re-apply the current user's block list.
-        const posts = await filterBlockedAuthors(c.env.DB, currentUserId, cached.posts);
+        // User-agnostic cache: re-apply the current user's visibility and block rules.
+        const visible = await filterVisiblePosts(c.env.DB, currentUserId, cached.posts);
+        const posts = await filterBlockedAuthors(c.env.DB, currentUserId, visible);
         await enrichFeedPosts(posts as PostRow[], c.env.DB, currentUserId);
         return c.json({ posts });
       }
@@ -314,11 +323,11 @@ feed.get('/posts/trending', async (c) => {
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
-      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days') ${visibility.sql}
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
-    const params: Array<unknown> = [trendingFetchLimit];
+    const params: Array<unknown> = [...visibility.params, trendingFetchLimit];
 
     const result = await c.env.DB.prepare(query)
       .bind(...params)

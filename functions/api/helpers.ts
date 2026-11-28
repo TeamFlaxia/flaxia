@@ -1,4 +1,6 @@
 import type { Context, Next } from 'hono';
+import type { FederationEnv } from '../lib/activitypub/fetch.ts';
+import { lookupRemoteHandle } from '../lib/activitypub/lookup.ts';
 import { isAdmin } from '../lib/admin.ts';
 import { getMeWithSession, getSessionToken, type User } from '../lib/auth';
 import { NATIVE_APP_ORIGINS } from '../lib/native-origins';
@@ -28,7 +30,6 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
       path.startsWith('/api/audio/') ||
       path.startsWith('/api/video/') ||
       path.startsWith('/api/documents/') ||
-      path === '/api/games' ||
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
       path.startsWith('/api/wvfs-zip/'));
   if (skipsSession) {
@@ -274,34 +275,122 @@ export function getPriority(category: ReportCategory): 'critical' | 'high' | 'no
 }
 
 // Mention resolution
+
+/** A caller may pass plain usernames (legacy) or handles from `extractMentionHandles`. */
+export type MentionHandleInput = string | { username: string; domain?: string | null };
+
+/**
+ * JSON shape stored in `posts.mentions`.
+ *
+ * Local entries keep the original `{ username, user_id }` shape; remote entries
+ * add `domain`, `url` and `name` so the Note builder can address the actor at
+ * another instance.
+ */
+export interface ResolvedMention {
+  username: string;
+  user_id?: string;
+  domain?: string;
+  url?: string;
+  name?: string;
+}
+
+const LOCAL_USERNAME_PATTERN = /^@?[A-Za-z0-9_]{1,30}$/;
+const REMOTE_DOMAIN_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/;
+
+function normalizeMentionInput(raw: MentionHandleInput): { username: string; domain: string | null } | null {
+  if (typeof raw === 'string') {
+    const value = raw.trim();
+    if (!value) return null;
+    if (value.includes('@')) {
+      const match = /^@?([A-Za-z0-9_]{1,30})@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})$/.exec(value);
+      return match ? { username: match[1], domain: match[2].toLowerCase() } : null;
+    }
+    return LOCAL_USERNAME_PATTERN.test(value) ? { username: value.replace(/^@/, ''), domain: null } : null;
+  }
+  if (!raw || typeof raw.username !== 'string') return null;
+  const username = raw.username.replace(/^@/, '');
+  if (!LOCAL_USERNAME_PATTERN.test(username)) return null;
+  const rawDomain = typeof raw.domain === 'string' ? raw.domain.trim().toLowerCase().replace(/^@/, '') : '';
+  if (!rawDomain) return { username, domain: null };
+  return REMOTE_DOMAIN_PATTERN.test(rawDomain) ? { username, domain: rawDomain } : null;
+}
+
+/**
+ * Resolve mentions to the JSON stored with a post.
+ *
+ * Local handles become existing user rows; remote handles are looked up through
+ * WebFinger + the actor document when a federation env is supplied. Existing
+ * callers that only pass usernames keep the exact previous output, and at most
+ * ten mentions (and at most 100 D1 binds) are ever processed.
+ */
 export async function resolveMentions(
   db: D1Database,
-  mentionedUsernames: string[],
+  handles: MentionHandleInput[],
   currentUsername: string,
+  env?: FederationEnv,
 ): Promise<string> {
-  if (mentionedUsernames.length === 0) return '[]';
+  if (!Array.isArray(handles) || handles.length === 0) return '[]';
   void currentUsername;
-  // Cap: one query with unbounded placeholders plus one push per mention.
-  const capped = mentionedUsernames.slice(0, 10);
-  const placeholders = capped.map(() => '?').join(',');
-  const rows = await db
-    .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...capped.map((u) => u.toLowerCase()))
-    .all<{ id: string; username: string }>();
-  const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
+
+  const capped = handles.slice(0, 10);
+  const normalized: Array<{ username: string; domain: string | null }> = [];
+  const seen = new Set<string>();
+  for (const raw of capped) {
+    const handle = normalizeMentionInput(raw);
+    if (!handle) continue;
+    // One canonical key per account, independent of the casing the author typed.
+    const key = `${handle.username.toLowerCase()}@${(handle.domain ?? '').toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(handle);
+  }
+  if (normalized.length === 0) return '[]';
+
+  const localNames = normalized.filter((h) => !h.domain).map((h) => h.username);
+  const localUsers = new Map<string, { id: string; username: string }>();
+  if (localNames.length > 0) {
+    // The ten-mention cap already keeps this far below D1's 100-bind limit;
+    // slice again so the invariant holds even if the cap is raised later.
+    const bindCount = Math.min(localNames.length, 100);
+    const placeholders = localNames
+      .slice(0, bindCount)
+      .map(() => '?')
+      .join(',');
+    const rows = await db
+      .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
+      .bind(...localNames.slice(0, bindCount).map((u) => u.toLowerCase()))
+      .all<{ id: string; username: string }>();
+    for (const row of rows.results ?? []) localUsers.set(row.username.toLowerCase(), row);
+  }
+
+  const remoteActors = await Promise.all(
+    normalized.map((handle) =>
+      handle.domain && env
+        ? lookupRemoteHandle(`${handle.username.toLowerCase()}@${handle.domain.toLowerCase()}`, env)
+        : null,
+    ),
+  );
+
+  const resolved: ResolvedMention[] = [];
   const seenUserIds = new Set<string>();
-  const resolved = capped
-    .map((u) => {
-      const user = userMap.get(u.toLowerCase());
-      return user ? { username: user.username, user_id: user.id } : null;
-    })
-    .filter((m): m is { username: string; user_id: string } => m !== null)
-    .filter((m) => {
-      if (seenUserIds.has(m.user_id)) return false;
-      seenUserIds.add(m.user_id);
-      return true;
+  for (let i = 0; i < normalized.length; i++) {
+    const handle = normalized[i];
+    if (!handle.domain) {
+      const user = localUsers.get(handle.username.toLowerCase());
+      if (!user || seenUserIds.has(user.id)) continue;
+      seenUserIds.add(user.id);
+      resolved.push({ username: user.username, user_id: user.id });
+      continue;
+    }
+    const actor = remoteActors[i];
+    if (!actor) continue;
+    resolved.push({
+      username: handle.username,
+      domain: handle.domain,
+      url: actor.actorUrl,
+      name: actor.displayName ?? actor.preferredUsername ?? handle.username,
     });
+  }
   return JSON.stringify(resolved);
 }
 

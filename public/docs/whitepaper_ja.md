@@ -15,7 +15,7 @@ Flaxiaは、グローバルなスケーラビリティと低レイテンシー�
 **実行環境**
 - **Cloudflare Pages**: 静的アセットのホスティングとフロントエンドのデプロイ
 - **Cloudflare Workers**: エッジでのサーバーレスAPI実行
-- **互換性日付**: 2024-01-01（Node.js互換フラグ付き）
+- **互換性日付**: コンポーネントごとに `wrangler*.toml` で指定 — Pages（`wrangler.toml`）は 2024-09-23、ActivityPub Queue Worker（`wrangler.worker.toml`）は 2026-06-02（いずれも Node.js 互換フラグ付き）
 
 **データベース層**
 - **Cloudflare D1**: SQLiteベースの分散データベース

@@ -1,7 +1,13 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { pruneDeadLetters, storeDeadLetters } from './lib/activitypub/dlq-store.ts';
 import { backfillGameTitles } from './lib/game-title-backfill.ts';
-import { parsePublicHttpUrl } from './lib/url-guard';
+import { parsePublicHttpUrl } from './lib/url-guard.ts';
+
+export { pruneDeadLetters, storeDeadLetters } from './lib/activitypub/dlq-store.ts';
+
+/** How long a quarantined message may stay in D1 before the daily prune. */
+export const AP_DLQ_RETENTION_DAYS = 14;
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -19,6 +25,9 @@ interface InboxMessage {
 
 type QueueMessage = DeliveryMessage | InboxMessage;
 
+/** The consumer that drains quarantined messages into durable storage. */
+export const AP_DLQ_QUEUE = 'activitypub-delivery-dlq';
+
 interface Env {
   DB: D1Database;
   BASE_URL: string;
@@ -34,6 +43,7 @@ interface Env {
   MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
+  AP_POOL_SEED_DOMAINS?: string;
   CROWD_ORCHESTRATOR_URL?: string;
   CROWD_API_KEY?: string;
   CROWD_WEBHOOK_SECRET?: string;
@@ -60,6 +70,35 @@ export default {
       }
     } catch (error) {
       console.error('Pending embedding drain failed:', (error as Error).message);
+    }
+
+    // The federated popularity pool runs before the hourly branch so its
+    // schedule cannot be mistaken for Common Crawl ingestion.
+    if (event.cron === '5 * * * *') {
+      try {
+        const { runPoolDiscovery, prunePool } = await import('./lib/activitypub/ap-pool.ts');
+        const discovered = await runPoolDiscovery(env);
+        const pruned = await prunePool(env);
+        console.log(
+          `Popularity pool finished: ${discovered.stored}/${discovered.fetched} posts stored (${discovered.refreshed} refreshed), ${pruned} rows pruned`,
+        );
+      } catch (error) {
+        console.error('Popularity pool discovery failed:', (error as Error).message);
+      }
+      return;
+    }
+
+    // Dedicated daily branch: private dead letters must not accumulate in D1
+    // forever. A failure is logged, never retried by the scheduler.
+    if (event.cron === '30 4 * * *') {
+      try {
+        const cutoff = new Date(Date.now() - AP_DLQ_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        const pruned = await pruneDeadLetters(env.DB, cutoff);
+        if (pruned > 0) console.log(`Pruned ${pruned} dead letters older than ${cutoff}`);
+      } catch (error) {
+        console.error('Dead-letter retention failed:', (error as Error).message);
+      }
+      return;
     }
 
     if (event.cron === '0 * * * *') {
@@ -132,6 +171,14 @@ export default {
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     console.log(`Processing batch of ${batch.messages.length} messages`);
+
+    // A dead letter is terminal: persisting it is the only work left. It must
+    // never be retried like a delivery, otherwise a broken payload would loop
+    // between the queue and the worker forever.
+    if (batch.queue === AP_DLQ_QUEUE) {
+      await storeDeadLetters(batch as unknown as MessageBatch<unknown>, env);
+      return;
+    }
 
     for (const message of batch.messages) {
       try {

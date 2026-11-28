@@ -6,6 +6,7 @@ import { USER_TITLE_COLUMNS, USER_TITLE_JOIN } from '../../../lib/titles';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
+import { filterVisiblePosts, visibilityFilter } from './helpers.ts';
 
 export const search = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -64,7 +65,9 @@ search.get('/search', async (c) => {
       users: Record<string, unknown>[];
     }>(c, cacheKey);
     if (cached) {
-      return c.json({ ...cached, results: await addReloadStatus(c.env.DB, c.get('user')?.id, cached.results) });
+      const currentUserId = c.get('user')?.id;
+      const visible = await filterVisiblePosts(c.env.DB, currentUserId, cached.results);
+      return c.json({ ...cached, results: await addReloadStatus(c.env.DB, currentUserId, visible) });
     }
 
     const tokens = query.trim().split(/\s+/).filter(Boolean);
@@ -133,7 +136,8 @@ search.get('/search', async (c) => {
       return c.json({ type, query, results: [], users: usersResult });
     }
 
-    const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER}`;
+    const visibility = visibilityFilter(c.get('user')?.id);
+    const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER} ${visibility.sql}`;
 
     const selectColumns = `
       SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
@@ -143,10 +147,10 @@ search.get('/search', async (c) => {
     `;
 
     const posts = await c.env.DB.prepare(`${selectColumns} ${whereClause} ORDER BY p.created_at DESC LIMIT ?`)
-      .bind(...params, limit)
+      .bind(...params, ...visibility.params, limit)
       .all();
 
-    await enrichPostsWithQuotes((posts.results || []) as PostRow[], c.env.DB);
+    await enrichPostsWithQuotes((posts.results || []) as PostRow[], c.env.DB, c.get('user')?.id);
     await enrichPostsWithAttachments((posts.results || []) as PostRow[], c.env.DB);
     await enrichPostsWithReactions((posts.results || []) as PostRow[], c.env.DB, c.get('user')?.id);
 

@@ -16,6 +16,7 @@ import { searchWebIndex } from '../../lib/web-index';
 import { enrichPostsForFeed } from '../feed-enrichment';
 import { kvCacheGet, kvCacheSet } from '../helpers';
 import type { Bindings, PostRow, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const search = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -95,6 +96,7 @@ async function searchPosts(
   const fts = buildFtsMatch(parsed);
   const match = buildMatch(parsed, fts);
   const filters = buildPostFilters(parsed);
+  const visibility = visibilityFilter(options.currentUserId);
   const where: string[] = [
     "d.document_type = 'post'",
     "p.status = 'published'",
@@ -126,11 +128,11 @@ async function searchPosts(
       LEFT JOIN users u ON u.id = p.user_id
       LEFT JOIN titles t ON t.id = u.equipped_title_id
       ${ftsJoin}
-      WHERE ${where.join(' AND ')}
+      WHERE ${where.join(' AND ')} ${visibility.sql}
       ORDER BY ${order}
       LIMIT ?
     `)
-    .bind(...params, options.limit)
+    .bind(...params, ...visibility.params, options.limit)
     .all<PostRow>();
 
   const posts = result.results || [];

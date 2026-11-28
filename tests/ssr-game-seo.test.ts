@@ -1,12 +1,64 @@
 // Game posts must keep their thumbnail/playable metadata when SSR reads the
 // thread endpoint. Without those columns /thread and /arcade fall back to the
-// generic OGP image and lose the no-JS preview.
+// generic OGP image and lose the no-JS preview. The route is exercised against
+// a real migrated database instead of asserting on its SQL source text.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { test } from 'node:test';
+import { register } from 'node:module';
+import { after, test } from 'node:test';
+import { Hono } from 'hono';
+import type { Bindings, Variables } from '../functions/api/types.ts';
 import type { Post } from '../shared/types/post.ts';
 import { loadThread } from '../src/lib/ssr-data.ts';
+import { createTestDatabase, type TestDatabase } from './helpers/d1.ts';
 import { BASE_URL, seedUserAndLogin } from './helpers/setup.ts';
+
+// Route modules use extensionless relative imports for the Worker bundler;
+// resolve them under Node the same way the other behavioural DB tests do.
+register(
+  'data:text/javascript,' +
+    encodeURIComponent(`
+export async function resolve(specifier, context, nextResolve) {
+  try {
+    return await nextResolve(specifier, context);
+  } catch (error) {
+    if (error.code === 'ERR_MODULE_NOT_FOUND' && specifier.startsWith('.') && !/\\.[a-z]+$/i.test(specifier)) {
+      return nextResolve(specifier + '.ts', context);
+    }
+    throw error;
+  }
+}
+`),
+);
+
+const { replies } = await import('../functions/api/routes/posts/replies.ts');
+
+type AppEnv = { Bindings: Bindings; Variables: Variables };
+type TestStatement = ReturnType<TestDatabase['prepare']>;
+
+// The shared D1 adapter has no `success` flag, while the route checks it like
+// real D1. Add the flag locally so the real handler can run against SQLite.
+function wrapStatement(statement: TestStatement): TestStatement {
+  return {
+    bind: (...values: unknown[]) => wrapStatement(statement.bind(...values)),
+    first: <T>() => statement.first<T>(),
+    all: async <T>() => ({ ...(await statement.all<T>()), success: true }) as ReturnType<TestStatement['all']>,
+    run: () => statement.run(),
+  };
+}
+
+function wrapDb(database: TestDatabase): TestDatabase {
+  return {
+    prepare: (sql: string) => wrapStatement(database.prepare(sql)),
+    batch: (statements: TestStatement[]) => database.batch(statements),
+    exec: (sql: string) => database.exec(sql),
+    close: () => database.close(),
+  };
+}
+
+const databases: TestDatabase[] = [];
+after(() => {
+  for (const database of databases) database.close();
+});
 
 function metaContent(html: string, attribute: 'property' | 'name', key: string): string | null {
   for (const tag of html.match(/<meta\b[^>]*>/gi) ?? []) {
@@ -25,25 +77,49 @@ function jsonLdImage(html: string): unknown {
   return undefined;
 }
 
-test('thread SELECTs carry the game thumbnail and description', async () => {
-  const source = await readFile(new URL('../functions/api/routes/posts/replies.ts', import.meta.url), 'utf8');
-  const handler = source.slice(source.indexOf("replies.get('/posts/:id/thread'"));
-  assert.ok(handler, 'the /posts/:id/thread handler must exist');
-  const section = handler.split('// Step 1')[0];
+test('thread route serves the game thumbnail and description to SSR', async () => {
+  const database = createTestDatabase();
+  databases.push(database);
+  // 0002 seeds demo posts; keep the fixture isolated from them.
+  database.prepare('DELETE FROM posts').run();
+  database
+    .prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, thumbnail_key, game_description, game_title, status, created_at, visibility)
+       VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, 'published', ?, 'public')`,
+    )
+    .bind(
+      'game-1',
+      'u1',
+      'author',
+      'A game',
+      'thumbnail/game-1.png',
+      'Playable in the browser',
+      'A Game Title',
+      '2026-11-26T00:00:00.000Z',
+    )
+    .run();
 
-  // Every SELECT on this route feeds the `root`/`replies` objects consumed by
-  // the Svelte load functions, so all of them must expose the game columns.
-  const selects = section.match(/SELECT[\s\S]*?FROM posts p/g) ?? [];
-  assert.equal(selects.length, 2, 'the thread route should select the root post and its replies');
-  for (const [index, select] of selects.entries()) {
-    assert.match(select, /p\.thumbnail_key/, `thread SELECT ${index} must select p.thumbnail_key`);
-    assert.match(select, /p\.game_description/, `thread SELECT ${index} must select p.game_description`);
-    assert.match(select, /p\.game_title/, `thread SELECT ${index} must select p.game_title`);
-  }
-  const lookup = section.match(/SELECT[^`]*?FROM posts WHERE id = \?/)?.[0] ?? '';
-  assert.match(lookup, /thumbnail_key/, 'the initial post lookup must select thumbnail_key');
-  assert.match(lookup, /game_description/, 'the initial post lookup must select game_description');
-  assert.match(lookup, /game_title/, 'the initial post lookup must select game_title');
+  const app = new Hono<AppEnv>();
+  app.use('*', async (c, next) => {
+    c.set('user', null);
+    await next();
+  });
+  app.route('/', replies);
+
+  const response = await app.request('http://localhost/posts/game-1/thread', {}, {
+    DB: wrapDb(database),
+  } as unknown as Bindings);
+  assert.equal(response.status, 200, `the thread route failed: ${await response.clone().text()}`);
+  const body = (await response.json()) as { root?: Record<string, unknown>; replies?: Array<Record<string, unknown>> };
+  assert.equal(body.root?.thumbnail_key, 'thumbnail/game-1.png', 'the thread root must carry the game thumbnail');
+  assert.equal(
+    body.root?.game_description,
+    'Playable in the browser',
+    'the thread root must carry the game description',
+  );
+  // Ported from the main-side game_title expectation: the thread route must
+  // expose game_title as a column on the seeded game post, not just in its SQL.
+  assert.equal(body.root?.game_title, 'A Game Title', 'the thread root must carry the game title');
 });
 
 test('loadThread keeps game fields on root', async () => {
@@ -100,6 +176,10 @@ test('live: game thread and arcade SEO use the seeded thumbnail', async () => {
   assert.ok(
     Object.hasOwn(threadData.root ?? {}, 'game_description'),
     'the thread API must return game_description (null is fine, an omitted column is not)',
+  );
+  assert.ok(
+    Object.hasOwn(threadData.root ?? {}, 'game_title'),
+    'the thread API must return game_title (null is fine, an omitted column is not)',
   );
 
   const threadHtml = await (await fetch(`${BASE_URL}/thread/${id}`, { headers })).text();

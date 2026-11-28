@@ -154,21 +154,33 @@ export function parseMentions(mentions?: string): Map<string, string> {
   const map = new Map<string, string>();
   if (!mentions) return map;
   try {
-    const data = JSON.parse(mentions) as Array<{ username: string; user_id: string }>;
+    const data = JSON.parse(mentions) as Array<{ username: string; user_id?: string }>;
     for (const m of data) {
-      map.set(m.username.toLowerCase(), m.user_id);
+      if (typeof m?.user_id === 'string') map.set(m.username.toLowerCase(), m.user_id);
     }
   } catch {}
   return map;
 }
 
-/** Convert @username mentions to clickable spans for users that exist. */
+/** Internal route for a cross-instance handle. */
+export function remoteMentionPath(username: string, domain: string): string {
+  return `/@${encodeURIComponent(domain)}/${encodeURIComponent(username)}`;
+}
+
+/**
+ * Mentions use one domain-aware token: `@user@domain` stays a single link to
+ * the remote profile, while `@user` keeps the local `/profile/user` target.
+ */
+const MENTION_REGEX =
+  /(?<![a-zA-Z0-9_.@-])@([a-zA-Z0-9_]{1,30})(?:@((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}))?(?![a-zA-Z0-9_])/g;
+
+/** Convert @username and @user@domain mentions to clickable spans. */
 export function linkifyMentions(container: HTMLElement, mentions?: string): void {
   const mentionMap = parseMentions(mentions);
 
   for (const textNode of textNodesUnder(container)) {
     const text = textNode.textContent || '';
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
+    const mentionRegex = new RegExp(MENTION_REGEX.source, MENTION_REGEX.flags);
 
     if (!mentionRegex.test(text)) continue;
 
@@ -187,20 +199,36 @@ export function linkifyMentions(container: HTMLElement, mentions?: string): void
       }
 
       const username = match[1];
-      const userExists = mentionMap.has(username.toLowerCase());
-      if (userExists) {
+      const domain = match[2] ?? null;
+      if (domain) {
         const span = document.createElement('span');
         span.className = 'mention-link';
-        span.textContent = `@${username}`;
+        span.textContent = `@${username}@${domain}`;
         span.style.cursor = 'pointer';
-        // Same lazy import as the hashtag handler: no pushState, no custom
-        // bridge event, and no stopPropagation (PostCard's fallback still runs).
+        span.dataset.mentionTarget = remoteMentionPath(username, domain);
         span.addEventListener('click', () => {
-          void import('../navigation.ts').then(({ navigate }) => navigate(`/profile/${encodeURIComponent(username)}`));
+          void import('../navigation.ts').then(({ navigate }) => navigate(remoteMentionPath(username, domain)));
         });
         fragment.appendChild(span);
       } else {
-        fragment.appendChild(document.createTextNode(`@${username}`));
+        const userExists = mentionMap.has(username.toLowerCase());
+        if (userExists) {
+          const span = document.createElement('span');
+          span.className = 'mention-link';
+          span.textContent = `@${username}`;
+          span.style.cursor = 'pointer';
+          span.dataset.mentionTarget = `/profile/${encodeURIComponent(username)}`;
+          // Same lazy import as the hashtag handler: no pushState, no custom
+          // bridge event, and no stopPropagation (PostCard's fallback still runs).
+          span.addEventListener('click', () => {
+            void import('../navigation.ts').then(({ navigate }) =>
+              navigate(`/profile/${encodeURIComponent(username)}`),
+            );
+          });
+          fragment.appendChild(span);
+        } else {
+          fragment.appendChild(document.createTextNode(`@${username}`));
+        }
       }
 
       lastIndex = match.index + match[0].length;

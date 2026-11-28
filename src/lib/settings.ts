@@ -3,8 +3,36 @@ export type ReplyStyle = 'twitter' | '2ch';
 const REPLY_STYLE_KEY = 'flaxia_reply_style';
 const NSFW_KEY = 'flaxia_show_nsfw';
 const DATA_SAVER_KEY = 'flaxia_data_saver';
+const FOR_YOU_EXTERNAL_KEY = 'flaxia_foryou_external';
 
 export const DATA_SAVER_CHANGE_EVENT = 'flaxia:data-saver-change';
+export const FOR_YOU_EXTERNAL_CHANGE_EVENT = 'flaxia:foryou-external-change';
+
+export type ForYouExternalMode = 'show' | 'hide';
+
+/** Whether federated posts may appear in For You. `show` is the default. */
+export function getForYouExternalMode(): ForYouExternalMode {
+  try {
+    const stored = localStorage.getItem(FOR_YOU_EXTERNAL_KEY);
+    if (stored === 'show' || stored === 'hide') return stored;
+  } catch {}
+  return 'show';
+}
+
+export function isForYouExternalHidden(): boolean {
+  return getForYouExternalMode() === 'hide';
+}
+
+export function setForYouExternalMode(mode: ForYouExternalMode): void {
+  try {
+    localStorage.setItem(FOR_YOU_EXTERNAL_KEY, mode);
+  } catch {}
+  try {
+    window.dispatchEvent(new CustomEvent(FOR_YOU_EXTERNAL_CHANGE_EVENT, { detail: mode }));
+  } catch {
+    // Non-DOM test environments have no window.
+  }
+}
 
 export function getReplyStyle(): ReplyStyle {
   try {

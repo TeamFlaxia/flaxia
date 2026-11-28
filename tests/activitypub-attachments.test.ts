@@ -113,6 +113,45 @@ describe('loadNoteAttachments', () => {
     ]);
   });
 
+  it('federates an SWF game as a single arcade link', async () => {
+    const out = await loadNoteAttachments(fakeDb([]), 'p1', 'https://flaxia.app', {
+      swf_key: 'swf/p1/g.swf',
+    });
+    assert.deepEqual(out, [
+      {
+        type: 'Link',
+        mediaType: 'text/html',
+        href: 'https://flaxia.app/arcade/p1',
+        url: 'https://flaxia.app/arcade/p1',
+        name: 'Play on Flaxia',
+      },
+    ]);
+  });
+
+  it('keeps media rows first and appends the arcade link for a game with media', async () => {
+    const out = await loadNoteAttachments(
+      fakeDb([{ r2_key: 'gif/p1/1.png', kind: 'image' }]),
+      'p1',
+      'https://flaxia.app',
+      { payload_key: 'payload/p1/game.zip' },
+    );
+    assert.deepEqual(out, [
+      {
+        type: 'Image',
+        mediaType: 'image/png',
+        url: 'https://flaxia.app/api/images/gif/p1/1.png',
+        name: '1.png',
+      },
+      {
+        type: 'Link',
+        mediaType: 'text/html',
+        href: 'https://flaxia.app/arcade/p1',
+        url: 'https://flaxia.app/arcade/p1',
+        name: 'Play on Flaxia',
+      },
+    ]);
+  });
+
   it('falls back to the legacy gif_key when no attachment rows exist', async () => {
     const out = await loadNoteAttachments(fakeDb([]), 'p1', 'https://flaxia.app', {
       gif_key: 'audio/p1/voice.mp3',

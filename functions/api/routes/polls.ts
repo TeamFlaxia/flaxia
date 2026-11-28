@@ -4,6 +4,7 @@ import { sendPushToAll } from '../../lib/notify';
 import { checkRateLimit } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const polls = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -13,10 +14,17 @@ polls.get('/polls/:postId', async (c) => {
     const postId = c.req.param('postId');
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first()) as Record<
-      string,
-      unknown
-    > | null;
+    // Resolve the viewer first: the poll itself must be hidden when its post
+    // is not visible, not just its options or vote state.
+    const token = getSessionToken(c.req.raw);
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
+    const visibility = visibilityFilter(sessionData?.user?.id);
+
+    const poll = (await c.env.DB.prepare(
+      `SELECT polls.* FROM polls JOIN posts p ON p.id = polls.post_id WHERE polls.post_id = ? ${visibility.sql}`,
+    )
+      .bind(postId, ...visibility.params)
+      .first()) as Record<string, unknown> | null;
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404);
 
@@ -25,8 +33,6 @@ polls.get('/polls/:postId', async (c) => {
       .all();
 
     let userVote: string | null = null;
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       const vote = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
         .bind(poll.id, sessionData.user.id)
@@ -81,10 +87,15 @@ polls.post('/polls/:pollId/vote', requireAuth, async (c) => {
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
     if (!optionId) return c.json({ error: 'optionId is required' }, 400);
 
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first()) as Record<
-      string,
-      unknown
-    > | null;
+    // Knowing a poll id must not be enough to vote on (or read options of) a
+    // private/direct post. Use the same predicate as the poll GET endpoint.
+    const visibility = visibilityFilter(userId);
+    const poll = (await c.env.DB.prepare(
+      `SELECT polls.* FROM polls JOIN posts p ON p.id = polls.post_id
+       WHERE polls.id = ? ${visibility.sql}`,
+    )
+      .bind(pollId, ...visibility.params)
+      .first()) as Record<string, unknown> | null;
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404);
 

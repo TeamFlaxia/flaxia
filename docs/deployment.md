@@ -192,9 +192,11 @@ federating.
 ```bash
 npx wrangler deploy functions/queue-worker.ts \
   --config wrangler.worker.toml \
-  --name flaxia-ap-delivery \
-  --compatibility-date 2024-01-01
+  --name flaxia-ap-delivery
 ```
+
+The compatibility date lives only in `wrangler.worker.toml` (currently
+`2026-06-02`) so production and local runs use the same runtime behaviour.
 
 `wrangler.worker.toml` sets the same name, so a plain
 `npx wrangler deploy --config wrangler.worker.toml` targets the consumer too.
@@ -310,11 +312,105 @@ npx wrangler deploy --config wrangler.worker.toml
 
 The `activitypub-delivery` consumer retries a failed delivery **at most three
 times** and then moves the message to `activitypub-delivery-dlq` rather than
-dropping it silently. The DLQ has **no automatic consumer**: inspect it via
-Cloudflare Queues metrics / dashboard, set up alerts for non-zero DLQ depth,
-and review quarantined messages before redelivery. Do not replay messages
-indiscriminately if the original failure was caused by a data constraint;
-fix the root cause first.
+dropping it silently. The `scripts/ensure-activitypub-dlq.mjs` deploy step
+lists the queue again after creating it and fails the deploy when the new
+queue is not visible, so a consumer is never bound to a missing queue.
+
+### Durable dead letters
+
+Cloudflare Queues keeps a dead letter only for its retention window (**four
+days by default**). Migration `0150_ap_dlq.sql` therefore adds a D1 table that
+survives that window. The second `[[queues.consumers]]` in
+`wrangler.worker.toml` consumes `activitypub-delivery-dlq`: the worker stores
+each message in `ap_dlq` and acknowledges it. It has one bounded retry; a
+persistence failure (including a not-yet-migrated database) is logged and the
+message is acked instead of looping forever.
+
+### Privacy and retention
+
+A quarantined `Create` can contain a followers-only or direct post. Before
+persistence, the worker **redacts the stored copy** of any `Create` whose
+`to`/`cc` (on the activity or its object) does not address
+`https://www.w3.org/ns/activitystreams#Public`: it removes `content`,
+`contentMap`, `to` and `cc` from the activity and its object, keeping the
+activity `id`, `type`, `actor`, the object `id`/`type`, the queue envelope
+(`type`, `inboxUrl`/`username`, `senderUsername`/`actorId`) and, when the
+message carries one, the error reason. Automatic DLQ messages are stored with
+`error: NULL` (see below), so the reason is best-effort rather than guaranteed.
+Public activities keep their payload verbatim. The original queue
+message is never changed, and redaction never affects acknowledgement or
+retry behaviour.
+
+D1 is not an indefinite archive. Migration `0152_ap_dlq_retention.sql` adds a
+covering index on `(received_at, id)`, and the dedicated `30 4 * * *` cron in
+`wrangler.worker.toml` deletes rows older than 14 days:
+
+```sql
+DELETE FROM ap_dlq WHERE received_at < ?; -- ISO-8601 cutoff: now - 14 days
+```
+
+The cutoff is computed per run from `AP_DLQ_RETENTION_DAYS` in
+`functions/queue-worker.ts`; a failed prune is logged and does not block the
+other scheduled jobs. To prune manually with a specific cutoff:
+
+```bash
+npx wrangler d1 execute flaxia --remote \
+  --command "DELETE FROM ap_dlq WHERE received_at < '2026-01-15T00:00:00.000Z'"
+```
+
+Inspect what was quarantined with D1:
+
+```bash
+npx wrangler d1 execute flaxia --remote \
+  --command "SELECT id, queue, error, received_at, substr(payload, 1, 200) AS payload_preview FROM ap_dlq ORDER BY received_at DESC LIMIT 50"
+```
+
+`error` is best-effort: `deadLetterFields()` in `functions/queue-worker.ts`
+fills it only when the queue message is a `{payload, error}` envelope. Messages
+quarantined by the automatic DLQ arrive as the original payload and are stored
+with `error: NULL`. For the actual failure reason use the
+`wrangler tail --config wrangler.worker.toml` logs as the primary source: the D1
+row records *what* was quarantined, not necessarily *why*.
+
+Set up alerts for non-zero DLQ depth in the Cloudflare Queues dashboard as
+well: that catches the failures *before* they age out of the queue, while the
+`ap_dlq` table is the record of what actually happened.
+
+### Manual redrive
+
+1. Find the row (`id`, `payload`; `error` may be NULL) and fix the root cause —
+   a data constraint, a revoked key or a permanently rejecting peer. Start from
+   the `wrangler tail --config wrangler.worker.toml` logs rather than `error`:
+   the automatic DLQ does not carry a failure reason. Do not replay blindly: a
+   poison activity would just fail again.
+2. Re-publish the original queue message to `activitypub-delivery`. The
+   `payload` column is the JSON body of the original message (`type`,
+   `inboxUrl`/`username`, `activity`, `senderUsername`/`actorId`), so the
+   redrive goes through the normal delivery path. A non-public `Create` was
+   stored with its private body fields removed — reconstruct those from an
+   authoritative source before replaying, never from the redacted row:
+
+   ```bash
+   npx wrangler d1 execute flaxia --remote \
+     --command "SELECT payload FROM ap_dlq WHERE id = '<id>'"
+   ```
+
+   Publish that JSON as a message on `activitypub-delivery`, either with the
+   "send message" action in the Cloudflare Queues dashboard or with a one-off
+   Worker that uses the `AP_DELIVERY_QUEUE` binding from
+   `wrangler.worker.toml` (`await env.AP_DELIVERY_QUEUE.send(JSON.parse(payload))`).
+   Wrangler has no `queues produce` subcommand; do not invent one.
+
+3. Confirm the delivery in the Worker logs (`wrangler tail --config
+   wrangler.worker.toml`) and delete the row only after it succeeded:
+
+   ```bash
+   npx wrangler d1 execute flaxia --remote \
+     --command "DELETE FROM ap_dlq WHERE id = '<id>'"
+   ```
+
+Rows are kept as an audit trail otherwise; prune old entries deliberately,
+not as part of the redrive.
 
 If deployment reports that the DLQ does not exist, do **not** remove the
-`dead_letter_queue` setting. Create the queue and redeploy.
+`dead_letter_queue` setting or the DLQ consumer. Create the queue and redeploy.

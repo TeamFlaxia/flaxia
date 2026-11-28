@@ -1,5 +1,6 @@
 import { checkUrlForSsrf, SsrfError } from '../url-guard.ts';
 import { importPrivateKey } from './crypto.ts';
+import { htmlToText } from './text.ts';
 
 /**
  * Network access for ActivityPub.
@@ -364,6 +365,22 @@ export function normalizeRemoteInbox(
   return { inbox: inbox.toString(), sharedInbox: null };
 }
 
+/** Maximum length of a cached remote bio. */
+export const MAX_ACTOR_SUMMARY_LENGTH = 500;
+
+/**
+ * Normalise an untrusted ActivityPub `summary` into a short plain-text bio.
+ *
+ * The federated value is HTML and may contain scripts, markup or entities. It
+ * is converted with the same helper used for Note content and never stored as
+ * raw HTML, so every consumer can render it as escaped text.
+ */
+export function normalizeActorSummary(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const text = htmlToText(value).slice(0, MAX_ACTOR_SUMMARY_LENGTH);
+  return text.length > 0 ? text : null;
+}
+
 export interface RemoteActor {
   actorUrl: string;
   inbox: string;
@@ -373,6 +390,7 @@ export interface RemoteActor {
   displayName: string | null;
   iconUrl: string | null;
   domain: string;
+  summary: string | null;
 }
 
 /**
@@ -426,5 +444,6 @@ export async function resolveRemoteActor(
     displayName: typeof document.name === 'string' ? document.name : null,
     iconUrl,
     domain,
+    summary: normalizeActorSummary(document.summary),
   };
 }

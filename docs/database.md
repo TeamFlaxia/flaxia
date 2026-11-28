@@ -74,7 +74,21 @@ owned in `user_titles` before it can be equipped.
 | parent_id | TEXT | For replies, FK → posts(id) |
 | fresh_count | INTEGER | Denormalized like count |
 | reload_count | INTEGER | Denormalized reload (retweet) count |
+| visibility | TEXT | `public` (default) / `unlisted` / `private` (Followers only) / `direct`; added by migration 0148 |
 | created_at | TEXT | ISO 8601 |
+
+Visibility applies to every stored post, local or remote. `public` /
+`unlisted` are visible to everyone, `private` only to the author and local
+followers (`follows`), and `direct` only to the author and local users listed
+in the `mentions` JSON (`user_id`). For a remote Note (`actor_id IS NOT NULL`),
+`visibilityFromInboundAudience()` in `functions/lib/activitypub/handlers.ts`
+derives `public` / `unlisted` / `private` / `direct` from the `to`/`cc` audience
+of the inbound Create/Note (read from both the activity and the object) and
+stores the result instead of leaving the column at its default. Every read path
+— timeline, search v2, thread, single-post and remote profile — applies the
+same visibility predicate (see `visibilityFilter` in
+`functions/api/routes/posts/helpers.ts`); ActivityPub note/outbox endpoints
+never expose non-public posts.
 
 ### `post_attachments`
 Multiple image/audio/video/PDF files per post (max 4, or 32 for Flaxia+). Game payloads

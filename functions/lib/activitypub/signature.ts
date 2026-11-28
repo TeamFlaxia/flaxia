@@ -1,4 +1,7 @@
 import { importPublicKey } from './crypto.ts';
+import { EXPIRES_TOLERANCE_MS, verifyRfc9421Signature } from './rfc9421.ts';
+
+export { buildRfc9421SignatureBase, parseRfc9421Signatures, rfc9421Param } from './rfc9421.ts';
 
 /**
  * HTTP Signatures (draft-cavage-http-signatures-12) for ActivityPub.
@@ -33,6 +36,27 @@ export interface VerifyOptions {
 }
 
 const DEFAULT_MAX_SKEW_MS = 30 * 60 * 1000;
+
+/**
+ * Decode the `signature` parameter into raw bytes.
+ *
+ * Peers differ in padding, whitespace and base64 alphabet, so the canonical
+ * byte form is used both for verification and for replay fingerprints.
+ * Returns null when the value is not a valid base64(base64url) string.
+ */
+export function decodeSignatureBytes(value: string): Uint8Array<ArrayBuffer> | null {
+  let base64 = value.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4 !== 0) base64 += '=';
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64) || base64.length === 0) return null;
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Parse a `Signature` header.
@@ -158,6 +182,16 @@ export async function verifyHttpSignature(
       return false;
     }
 
+    // Peers that "double knock" send both formats; prefer RFC 9421 whenever
+    // it is advertised, then fall back to draft-cavage for older instances.
+    if (request.headers.has('Signature-Input')) {
+      try {
+        if (await verifyRfc9421Signature(request, publicKeyPem, options, decodeSignatureBytes)) return true;
+      } catch {
+        // Malformed RFC headers must not disable the draft verification path.
+      }
+    }
+
     let parsed: SignatureHeader;
     try {
       parsed = parseSignatureHeader(signatureHeader);
@@ -183,7 +217,8 @@ export async function verifyHttpSignature(
     if (parsed.created !== undefined && parsed.created * 1000 > now + maxSkewMs) {
       return false;
     }
-    if (parsed.expires !== undefined && parsed.expires * 1000 < now - maxSkewMs) {
+    // The date skew must not turn an expired signature into a valid one.
+    if (parsed.expires !== undefined && parsed.expires * 1000 + EXPIRES_TOLERANCE_MS <= now) {
       return false;
     }
 
@@ -206,24 +241,10 @@ export async function verifyHttpSignature(
     });
     const publicKey = await importPublicKey(publicKeyPem);
 
-    let signatureBase64 = parsed.signature.replace(/\s/g, '');
-    signatureBase64 = signatureBase64.replace(/-/g, '+').replace(/_/g, '/');
-
-    while (signatureBase64.length % 4 !== 0) {
-      signatureBase64 += '=';
-    }
-
-    if (/[^A-Za-z0-9+/=]/.test(signatureBase64)) {
-      return false;
-    }
+    const signatureArray = decodeSignatureBytes(parsed.signature);
+    if (!signatureArray) return false;
 
     try {
-      const signatureString = atob(signatureBase64);
-      const signatureArray = new Uint8Array(signatureString.length);
-      for (let i = 0; i < signatureString.length; i++) {
-        signatureArray[i] = signatureString.charCodeAt(i);
-      }
-
       const encoder = new TextEncoder();
       const signingStringArray = encoder.encode(signingString);
 
@@ -237,27 +258,47 @@ export async function verifyHttpSignature(
 }
 
 /**
- * Verify the `Digest` header of a request against its body.
+ * Verify the digest headers of a request against its body.
+ *
+ * Both digest formats must be checked when both are present. Accepting one
+ * matching header while ignoring a mismatching one would let an attacker sign
+ * `Digest` and deliver a different body behind a valid `Content-Digest` (or
+ * the other way around).
  */
 export async function verifyDigest(request: Request, body: string): Promise<boolean> {
   try {
-    const digestHeader = request.headers.get('Digest');
-    if (!digestHeader) {
-      return false;
-    }
-
-    const match = digestHeader.match(/sha-256=([A-Za-z0-9+/=]+)/i);
-    if (!match) {
-      return false;
-    }
-
-    const expectedDigest = match[1];
     const encoder = new TextEncoder();
     const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(body));
-    const hashArray = new Uint8Array(hashBuffer);
-    const actualDigest = btoa(String.fromCharCode(...hashArray));
+    const actualDigest = btoa(String.fromCharCode(...new Uint8Array(hashBuffer)));
 
-    return expectedDigest === actualDigest;
+    const digestHeader = request.headers.get('Digest');
+    const contentDigest = request.headers.get('Content-Digest');
+    if (!digestHeader && !contentDigest) return false;
+
+    let verified = 0;
+
+    // RFC 9530 (used by RFC 9421 signers): `sha-256=:base64:`.
+    if (contentDigest) {
+      const values = [...contentDigest.matchAll(/sha-256\s*=\s*:([^:]+):/gi)];
+      if (values.length === 0) return false;
+      for (const value of values) {
+        const bytes = decodeSignatureBytes(value[1]);
+        if (!bytes || btoa(String.fromCharCode(...bytes)) !== actualDigest) return false;
+        verified++;
+      }
+    }
+
+    // RFC 3230 (draft-cavage signers): `sha-256=base64`.
+    if (digestHeader) {
+      const values = [...digestHeader.matchAll(/sha-256\s*=\s*([A-Za-z0-9+/=]+)/gi)];
+      if (values.length === 0) return false;
+      for (const value of values) {
+        if (value[1] !== actualDigest) return false;
+        verified++;
+      }
+    }
+
+    return verified > 0;
   } catch {
     return false;
   }

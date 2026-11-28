@@ -5,6 +5,7 @@ import { t } from './i18n.ts';
 const TITLES: Array<[RegExp, () => string]> = [
   [/^\/$|^\/home\/?$/, () => ''],
   [/^\/explore/, () => t('nav.explore')],
+  [/^\/federated/, () => t('federated.title')],
   [/^\/search/, () => t('page_title.search')],
   [/^\/arcade/, () => t('nav.arcade')],
   [/^\/thread\//, () => t('thread.title')],
@@ -27,7 +28,17 @@ const TITLES: Array<[RegExp, () => string]> = [
 ];
 
 function profileLabel(pathname: string): string | null {
-  const match = pathname.match(/^\/(?:profile|users)\/([^/]+)/) ?? pathname.match(/^\/@[^/]+\/([^/]+)/);
+  // A remote handle is only unique together with its instance, so the title
+  // has to include both parts. Local profiles keep their existing label.
+  const remote = pathname.match(/^\/@([^/]+)\/([^/]+)/);
+  if (remote?.[1] && remote[2]) {
+    try {
+      return `${t('remote_profile.title')} · @${decodeURIComponent(remote[2])}@${decodeURIComponent(remote[1])}`;
+    } catch {
+      return t('remote_profile.title');
+    }
+  }
+  const match = pathname.match(/^\/(?:profile|users)\/([^/]+)/);
   if (!match?.[1]) return null;
   try {
     return `${t('nav.profile')} · @${decodeURIComponent(match[1])}`;
@@ -45,4 +56,15 @@ export function pageTitle(pathname: string): string {
     return text ? `Flaxia - ${text}` : 'Flaxia';
   }
   return 'Flaxia';
+}
+
+/**
+ * Route-specific meta description. The root layout supplies the generic site
+ * description for every other route; a route that owns its description uses
+ * this helper in its own <svelte:head> (SvelteKit keeps the last meta tag with
+ * the same name). Remote profiles deliberately keep the generic description.
+ */
+export function pageDescription(pathname: string): string {
+  if (/^\/federated\/?$/.test(pathname)) return t('federated.subtitle');
+  return t('site.description');
 }

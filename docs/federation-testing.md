@@ -12,11 +12,20 @@ instance in secure mode that answers nothing but a signed request.
 
 | Peer | Use | Needs |
 |---|---|---|
-| GoToSocial 0.22.2 | CI and local runs | one container, SQLite |
-| Mastodon 4.7.5 | local runs | Postgres, Redis, three processes |
+| GoToSocial 0.22.2 | every pull request, weekly schedule and local runs | one container, SQLite |
+| Mastodon 4.7.5 | weekly schedule and local runs | Postgres, Redis, three processes (docker compose) |
 
-Both peers are started with `network_mode: host`, so they reach the instance
-under test on `localhost` and the other way round.
+Mastodon is the second peer because it is the implementation most instances
+use. Its job is independent from the GoToSocial job and runs on the weekly
+schedule: the heavyweight compose stack is too slow and its readiness too
+flaky to run on every pull request, but compatibility with the **pinned version
+v4.7.5** still has to be checked regularly to detect regressions. The job does
+not detect or track new releases.
+
+Both peers reach the instance under test on `localhost` and the other way
+round, but they are exposed differently: GoToSocial runs with
+`network_mode: host`, while Mastodon publishes its ports on `localhost` through
+the compose port mappings (no host network mode).
 
 ## Running the test
 
@@ -53,6 +62,21 @@ FLAXIA_FEDERATION_PEER=gotosocial npm run test:federation
 | Note | A note of the peer reaches the timeline of the instance |
 | Signature | Every delivered activity carries a valid signature and digest |
 | Note document | Both publish a note with the same shape |
+| Like | A remote Like notifies the author; Undo-Like removes it |
+| Announce | A remote Announce counts as a reload; Undo-Announce reverses it |
+| Delete (outbound) | A deleted local post is delivered as a Tombstone with `formerType` |
+| Delete (inbound) | A deleted remote post is hidden on the instance |
+
+The Like, Announce and Delete scenarios are driven by the remote instance of
+the test (`tests/federation/remote.ts`), which signs its deliveries. Their
+effect is checked on the instance under test: a Like notifies the author, an
+Announce counts as a reload, and a Delete of a local post arrives as a signed
+delivery whose shape is compared with `activityShape()`. These flows do not go
+through the peer client, which is used only to look up accounts, post notes,
+read the timeline and manage follows. The `ignore: ['Undo.object']` option of `diffShapes()` is
+covered by the shape unit tests in `tests/activitypub-ap-gaps.test.ts`; the
+only ignore used in this suite is for the optional actor properties
+`hasLiked` and `hasSharedInbox`.
 
 The comparison reduces a document to the properties a peer reads, because
 the documents of two instances never look the same: the ids, the hosts and
@@ -76,7 +100,13 @@ them the peer cannot verify a signature of it.
 
 ## In the CI
 
-The workflow `.github/workflows/federation.yml` starts the instance, starts
-the peer and runs the comparison. It runs on every pull request and once a
-week, because a new release of the peer may change the behaviour of the
-federation.
+The workflow `.github/workflows/federation.yml` has two independent jobs.
+`differential` starts the instance and GoToSocial on every pull request and
+once a week; `differential-mastodon` does the same with the pinned Mastodon
+v4.7.5 on the weekly schedule only (45 minute timeout, non-blocking via
+`continue-on-error`). The Mastodon run is a compatibility-regression
+check against that fixed version, not a way to discover new releases. Both jobs
+set `FLAXIA_FEDERATION_PEER` to the peer they start; a missing or misspelled name
+fails the test run instead of silently skipping it. The Mastodon job removes its
+compose containers and volumes with `if: always()` cleanup, so a failed test
+cannot leave a dirty runner.

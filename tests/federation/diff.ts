@@ -16,6 +16,16 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+const PUBLIC_COLLECTION = 'https://www.w3.org/ns/activitystreams#Public';
+
+/** The audience of an object: the addresses may be a single value or a list. */
+function audienceOf(document: Record<string, unknown>): string[] {
+  const values = [document.to, document.cc].flatMap((value) =>
+    Array.isArray(value) ? value : typeof value === 'string' ? [value] : [],
+  );
+  return values.filter((value): value is string => typeof value === 'string');
+}
+
 /** The properties of an actor document a peer reads. */
 export function actorShape(document: Record<string, unknown>): Record<string, unknown> {
   const publicKey = isObject(document.publicKey) ? document.publicKey : null;
@@ -55,14 +65,32 @@ export function webfingerShape(document: Record<string, unknown>): Record<string
   };
 }
 
-const PUBLIC_COLLECTION = 'https://www.w3.org/ns/activitystreams#Public';
-
-/** The audience of an object: the addresses may be a single value or a list. */
-function audienceOf(document: Record<string, unknown>): string[] {
-  const values = [document.to, document.cc].flatMap((value) =>
-    Array.isArray(value) ? value : typeof value === 'string' ? [value] : [],
-  );
-  return values.filter((value): value is string => typeof value === 'string');
+/**
+ * The properties of an activity a peer reads.
+ *
+ * An `Undo` wraps the activity it retracts. Implementations differ in the
+ * exact representation of that inner object (a URL, an embedded activity,
+ * different audiences), so only the type and the target of the retracted
+ * activity are compared.
+ */
+export function activityShape(document: Record<string, unknown>): Record<string, unknown> {
+  const object = isObject(document.object) ? document.object : null;
+  const audience = audienceOf(document);
+  return {
+    type: document.type,
+    hasId: typeof document.id === 'string',
+    hasActor: typeof document.actor === 'string',
+    hasObject: document.object !== undefined,
+    objectIsString: typeof document.object === 'string',
+    objectType: typeof document.object === 'string' ? null : (object?.type ?? null),
+    hasTo: document.to !== undefined,
+    hasCc: document.cc !== undefined,
+    addressedToPublic: audience.includes(PUBLIC_COLLECTION),
+    // `@context` may legally be a string or an array in JSON-LD. Implementations
+    // differ here, so this is deliberately not part of the compared shape.
+    undoneType: document.type === 'Undo' ? (object?.type ?? null) : null,
+    undoneObjectIsString: document.type === 'Undo' && typeof object?.object === 'string',
+  };
 }
 
 /**
@@ -90,6 +118,61 @@ export function noteShape(document: Record<string, unknown>): Record<string, unk
 }
 
 /**
+ * True when a difference at `path` was explicitly excluded.
+ *
+ * A plain name (`hasLiked`) ignores exactly that root field: it must not hide
+ * a same-named field nested somewhere else. Only a dotted name (`Undo.object`,
+ * `object.id`) names a path and therefore also ignores that subtree. A dotted
+ * name additionally ignores the trailing path relative to a root of the given
+ * type, which is how `Undo.object` applies to a reduced Undo shape whose field
+ * is just `object`.
+ */
+function ignoredPath(
+  path: string,
+  ours: Record<string, unknown>,
+  theirs: Record<string, unknown>,
+  ignored: Set<string>,
+): boolean {
+  for (const pattern of ignored) {
+    if (!pattern.includes('.')) {
+      if (path === pattern) return true;
+      continue;
+    }
+
+    if (path === pattern || path.startsWith(`${pattern}.`)) return true;
+    const [parent, ...rest] = pattern.split('.');
+    const leaf = rest.join('.');
+    if (ours.type !== parent && theirs.type !== parent) continue;
+    if (path === leaf || path.startsWith(`${leaf}.`)) return true;
+  }
+  return false;
+}
+
+function collectDifferences(
+  path: string,
+  ours: unknown,
+  theirs: unknown,
+  ignored: Set<string>,
+  roots: { ours: Record<string, unknown>; theirs: Record<string, unknown> },
+  differences: FieldDiff[],
+): void {
+  if (ignoredPath(path, roots.ours, roots.theirs, ignored)) return;
+  if (isObject(ours) && isObject(theirs)) {
+    for (const key of new Set([...Object.keys(ours), ...Object.keys(theirs)])) {
+      collectDifferences(path ? `${path}.${key}` : key, ours[key], theirs[key], ignored, roots, differences);
+    }
+    return;
+  }
+  if (Array.isArray(ours) && Array.isArray(theirs)) {
+    for (let index = 0; index < Math.max(ours.length, theirs.length); index++) {
+      collectDifferences(`${path}.${index}`, ours[index], theirs[index], ignored, roots, differences);
+    }
+    return;
+  }
+  if (ours !== theirs) differences.push({ field: path, ours, theirs });
+}
+
+/**
  * The differences between two shapes.
  *
  * A property that is missing on one side is reported with `undefined`, so the
@@ -101,15 +184,10 @@ export function diffShapes(
   options: { ignore?: string[] } = {},
 ): FieldDiff[] {
   const ignored = new Set(options.ignore ?? []);
-  const fields = new Set([...Object.keys(ours), ...Object.keys(theirs)]);
   const differences: FieldDiff[] = [];
+  const fields = new Set([...Object.keys(ours), ...Object.keys(theirs)]);
   for (const field of fields) {
-    if (ignored.has(field)) continue;
-    const ourValue = ours[field];
-    const theirValue = theirs[field];
-    if (ourValue !== theirValue) {
-      differences.push({ field, ours: ourValue, theirs: theirValue });
-    }
+    collectDifferences(field, ours[field], theirs[field], ignored, { ours, theirs }, differences);
   }
   return differences;
 }

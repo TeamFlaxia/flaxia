@@ -24,6 +24,9 @@ export interface QuotedPost {
   avatar_url?: string | null;
   actor_id?: string | null;
   is_remote?: boolean;
+  /** Internal remote profile path (`/@domain/user`) for federated authors. */
+  profile_path?: string | null;
+  visibility?: PostVisibility;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;
@@ -46,6 +49,9 @@ export interface QuotedPost {
 }
 
 export type MediaAttachmentKind = 'image' | 'audio' | 'video' | 'document';
+
+/** `private` is the followers-only audience; `direct` is mentioned-only. */
+export type PostVisibility = 'public' | 'unlisted' | 'private' | 'direct';
 
 /** One media file attached to a post (multi-media attachments, max 4; 32 for Flaxia+). */
 export interface PostAttachment {
@@ -71,6 +77,9 @@ export interface Post {
   avatar_url?: string | null;
   actor_id?: string | null;
   is_remote?: boolean;
+  /** Internal remote profile path (`/@domain/user`) for federated authors. */
+  profile_path?: string | null;
+  visibility?: PostVisibility;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;
@@ -156,6 +165,8 @@ export interface PostHeaderProps {
   avatar_url?: string | null;
   /** Remote actor URL; when set, the profile link opens it in a new tab. */
   profile_url?: string | null;
+  /** Preferred internal path to the author's profile (`/@domain/user`). */
+  profile_path?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
   equipped_title_id?: string | null;

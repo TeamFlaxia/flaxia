@@ -51,8 +51,18 @@ function fixture(authenticated = true) {
       bookmark_count INTEGER DEFAULT 0,
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
       root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
+      visibility TEXT NOT NULL DEFAULT 'public',
+      visibility_root_author_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
+    -- Recommendation queries LEFT JOIN the federated popularity pool (migration 0151).
+    CREATE TABLE ap_pool_metrics (
+      post_id TEXT PRIMARY KEY, instance TEXT, favourites INTEGER DEFAULT 0,
+      reblogs INTEGER DEFAULT 0, score REAL DEFAULT 0, fetched_at TEXT
+    );
+    CREATE INDEX idx_ap_pool_score ON ap_pool_metrics(score DESC);
+    CREATE INDEX idx_ap_pool_fetched ON ap_pool_metrics(fetched_at);
+    CREATE INDEX idx_ap_pool_instance ON ap_pool_metrics(instance);
     CREATE TABLE post_attachments (post_id TEXT, r2_key TEXT, kind TEXT, position INTEGER);
     CREATE TABLE reactions (post_id TEXT, user_id TEXT, emoji TEXT);
     CREATE TABLE arcade_events (
@@ -66,6 +76,14 @@ function fixture(authenticated = true) {
     );
     CREATE TABLE post_embeddings (post_id TEXT PRIMARY KEY, embedding TEXT, created_at TEXT);
     CREATE TABLE follows (follower_id TEXT, followee_id TEXT);
+    -- visibilityFilter authorizes private remote posts through ap_following.
+    CREATE TABLE ap_following (
+      id TEXT PRIMARY KEY, local_user_id TEXT NOT NULL, target_actor_url TEXT NOT NULL,
+      target_inbox_url TEXT NOT NULL, target_username TEXT, target_domain TEXT,
+      remote_actor_json TEXT, status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(local_user_id, target_actor_url)
+    );
     CREATE TABLE blocks (blocker_id TEXT, blocked_id TEXT);
     CREATE TABLE freshs (user_id TEXT, post_id TEXT, created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
     CREATE TABLE bookmarks (user_id TEXT, post_id TEXT, created_at TEXT);
@@ -74,6 +92,7 @@ function fixture(authenticated = true) {
     CREATE TABLE polls (id TEXT, post_id TEXT);
   `);
   const validationQueries: SQLInputValue[][] = [];
+  const validationIdBinds: SQLInputValue[][] = [];
   function statement(sql: string, values: SQLInputValue[] = []) {
     return {
       bind(...bound: SQLInputValue[]) {
@@ -84,7 +103,14 @@ function fixture(authenticated = true) {
         return sqlite.prepare(sql).get(...values) ?? null;
       },
       async all() {
-        if (sql.startsWith('SELECT id FROM posts WHERE id IN')) validationQueries.push(values);
+        if (/^SELECT (?:p\.)?id FROM posts(?: p)? WHERE (?:p\.)?id IN/.test(sql)) {
+          validationQueries.push(values);
+          // The remaining binds are viewer/visibility params, not candidate ids.
+          const inStart = sql.indexOf('IN (');
+          const inEnd = sql.indexOf(')', inStart);
+          const idBindCount = (sql.slice(inStart, inEnd).match(/\?/g) ?? []).length;
+          validationIdBinds.push(values.slice(0, idBindCount));
+        }
         return { success: true, results: sqlite.prepare(sql).all(...values) };
       },
       async run() {
@@ -130,7 +156,7 @@ function fixture(authenticated = true) {
       env,
     );
   }
-  return { sqlite, db, validationQueries, deletedKeys, request };
+  return { sqlite, db, validationQueries, validationIdBinds, deletedKeys, request };
 }
 
 describe('recommended feed D1 bind-limit regressions', () => {
@@ -387,7 +413,7 @@ describe('Arcade ingestion D1 bind-limit regressions', () => {
   for (const route of ['events', 'dwell']) {
     for (const size of [100, 101, 200]) {
       it(`records ${size} distinct published games through /games/${route}`, async () => {
-        const { sqlite, validationQueries, request } = fixture();
+        const { sqlite, validationQueries, validationIdBinds, request } = fixture();
         try {
           const ids = Array.from({ length: size }, (_, i) => `game-${i}`);
           const insert = sqlite.prepare('INSERT INTO posts (id, payload_key) VALUES (?, ?)');
@@ -396,7 +422,7 @@ describe('Arcade ingestion D1 bind-limit regressions', () => {
           const body = route === 'events' ? { sessionId: 'batch', events: entries } : { plays: entries };
           const response = await request(`/games/${route}`, body);
           assert.equal(response.status, 200, await response.text());
-          assert.deepEqual(validationQueries.flat(), ids);
+          assert.deepEqual(validationIdBinds.flat(), ids);
           assert.ok(validationQueries.every((values) => values.length <= 100));
           const stored = sqlite.prepare('SELECT post_id FROM user_game_plays ORDER BY post_id').all();
           assert.deepEqual(
@@ -413,7 +439,7 @@ describe('Arcade ingestion D1 bind-limit regressions', () => {
     }
 
     it(`filters unknown, hidden, pending and non-game IDs across chunks in /games/${route}`, async () => {
-      const { sqlite, validationQueries, request } = fixture();
+      const { sqlite, validationIdBinds, request } = fixture();
       try {
         const ids = Array.from({ length: 104 }, (_, i) => `game-${i}`);
         const insert = sqlite.prepare(
@@ -428,7 +454,7 @@ describe('Arcade ingestion D1 bind-limit regressions', () => {
         const body = route === 'events' ? { sessionId: 'filtered', events: entries } : { plays: entries };
         const response = await request(`/games/${route}`, body);
         assert.equal(response.status, 200, await response.text());
-        assert.deepEqual(validationQueries.flat(), [...ids, 'missing']);
+        assert.deepEqual(validationIdBinds.flat(), [...ids, 'missing']);
         const stored = sqlite.prepare('SELECT post_id FROM user_game_plays ORDER BY post_id').all();
         assert.deepEqual(
           stored.map((row) => row.post_id),

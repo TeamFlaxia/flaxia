@@ -70,9 +70,27 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-const URL_PATTERN = /(https?:\/\/[^\s<>"']+)/g;
-const MENTION_PATTERN = /@([a-zA-Z0-9_]{1,30})(?:@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,}))?/g;
+/**
+ * Mention pattern with a domain-aware second half.
+ *
+ * The leading boundary keeps the `@` of an email address (`foo@example.com`)
+ * from being read as a mention; the trailing boundary keeps a partial username
+ * from being linked. The optional domain uses the same shape as the lookup
+ * endpoint accepts, so `@bob@example.com` is one token rather than `@bob`
+ * followed by unrelated text.
+ */
+const MENTION_PATTERN =
+  /(?<![\p{L}\p{N}_.@-])@([A-Za-z0-9_]{1,30})(?:@((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}))?(?![A-Za-z0-9_])/gu;
 const HASHTAG_PATTERN = /#([\p{L}\p{N}_]{1,50})/gu;
+
+/**
+ * URLs, mentions and hashtags are tokenised in one pass. Running three
+ * independent `String.replace` calls over an already-linked document lets the
+ * mention regex rewrite `href="https://host/@bob"` attributes, which corrupts
+ * the markup produced by the URL pass.
+ */
+const INLINE_TOKEN_PATTERN =
+  /(?<url>https?:\/\/[^\s<>"']+)|(?<![\p{L}\p{N}_.@-])@(?<username>[A-Za-z0-9_]{1,30})(?:@(?<domain>(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}))?(?![A-Za-z0-9_])|(?<tag>#[\p{L}\p{N}_]{1,50})/gu;
 
 function isSafeUrl(url: string): boolean {
   try {
@@ -95,20 +113,50 @@ function isSafeUrl(url: string): boolean {
  */
 export function textToHtml(text: string, baseUrl: string, mentionUrls?: Record<string, string>): string {
   const escaped = escapeHtml(text).replace(/\\\{/g, '{');
-  const withLinks = escaped.replace(URL_PATTERN, (match) => {
-    if (!isSafeUrl(match)) return match;
-    return `<a href="${match}" rel="nofollow noopener noreferrer" target="_blank">${match}</a>`;
-  });
-  const withMentions = withLinks.replace(MENTION_PATTERN, (match, username: string, domain?: string) => {
-    const handle = domain ? `@${username}@${domain}` : `@${username}`;
-    const lookup = domain ? `${username}@${domain}` : username;
-    const href = mentionUrls?.[lookup] ?? `${baseUrl}/users/${username}`;
-    return `<span class="h-card"><a href="${href}" class="u-url mention">${handle}</a></span>`;
-  });
-  const withHashtags = withMentions.replace(HASHTAG_PATTERN, (match, tag: string) => {
-    return `<a href="${baseUrl}/tags/${encodeURIComponent(tag)}" class="hashtag" rel="tag">#${tag}</a>`;
-  });
-  const paragraphs = withHashtags
+  let linked = '';
+  let lastIndex = 0;
+
+  for (const match of escaped.matchAll(INLINE_TOKEN_PATTERN)) {
+    const index = match.index ?? 0;
+    linked += escaped.slice(lastIndex, index);
+    lastIndex = index + match[0].length;
+    const groups = match.groups ?? {};
+
+    if (groups.url) {
+      // The token is already escaped, so it can be reused in both the
+      // attribute and the link text without a second escaping pass.
+      if (!isSafeUrl(groups.url)) {
+        linked += match[0];
+        continue;
+      }
+      linked += `<a href="${groups.url}" rel="nofollow noopener noreferrer" target="_blank">${groups.url}</a>`;
+      continue;
+    }
+
+    if (groups.username) {
+      const username = groups.username;
+      const domain = groups.domain;
+      const handle = domain ? `@${username}@${domain}` : `@${username}`;
+      // Mention keys are stored lower-cased by both buildNoteObject and
+      // resolveMentions: `@Bob@Example.COM` must resolve like `@bob@example.com`.
+      const lookup = (domain ? `${username}@${domain}` : username).toLowerCase();
+      // Stored mention URLs come from a remote actor document: escape again
+      // before placing them in an attribute.
+      const mapped = mentionUrls?.[lookup];
+      const href = escapeHtml(mapped ?? `${baseUrl}/users/${username}`);
+      linked += `<span class="h-card"><a href="${href}" class="u-url mention">${handle}</a></span>`;
+      continue;
+    }
+
+    if (groups.tag) {
+      const tag = groups.tag.slice(1);
+      const href = escapeHtml(`${baseUrl}/tags/${encodeURIComponent(tag)}`);
+      linked += `<a href="${href}" class="hashtag" rel="tag">${groups.tag}</a>`;
+    }
+  }
+  linked += escaped.slice(lastIndex);
+
+  const paragraphs = linked
     .split(/\n{2,}/)
     .map((block) => `<p>${block.replace(/\n/g, '<br />')}</p>`)
     .join('');
@@ -126,9 +174,23 @@ export function extractHashtags(text: string): string[] {
 
 /** Usernames mentioned in a plain-text body, without the remote domain. */
 export function extractMentions(text: string): string[] {
-  const found = new Set<string>();
+  return extractMentionHandles(text).map((handle) => handle.username);
+}
+
+/**
+ * Mentions in a plain-text body, with the remote domain when present.
+ *
+ * Local mentions carry `domain: null`; a cross-instance `@user@domain` keeps
+ * the domain so mention resolution can look the account up on its own server.
+ */
+export function extractMentionHandles(text: string): Array<{ username: string; domain: string | null }> {
+  const found = new Map<string, { username: string; domain: string | null }>();
   for (const match of text.matchAll(MENTION_PATTERN)) {
-    if (match[1]) found.add(match[1]);
+    const username = match[1];
+    if (!username) continue;
+    const domain = match[2] ? match[2].toLowerCase() : null;
+    const key = domain ? `${username}@${domain}` : username;
+    if (!found.has(key)) found.set(key, { username, domain });
   }
-  return [...found];
+  return [...found.values()];
 }

@@ -1,9 +1,12 @@
 import { buildAcceptActivity } from './activities.ts';
-import { actorUrl, localProfileUsername, noteUrl } from './actor.ts';
+import { actorUrl, localActorUsername, localProfileUsername, noteUrl } from './actor.ts';
 import { storeRemoteAttachments } from './attachments.ts';
+import { audienceEntries, isPublicAddress } from './context.ts';
 import { deliverToInbox } from './delivery.ts';
-import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
+import { type FederationEnv, normalizeActorSummary, resolveRemoteActor } from './fetch.ts';
 import { actorSignOptions } from './keys.ts';
+import { handleMove } from './move.ts';
+import { type Visibility } from './note.ts';
 import { htmlToText } from './text.ts';
 
 /**
@@ -68,7 +71,9 @@ export function localPostIdFromNoteUrl(url: unknown, baseUrl: string): string | 
     return null;
   }
   if (parsed.origin !== base.origin) return null;
-  const match = parsed.pathname.match(/^\/notes\/([^/]+)$/);
+  // Peers may echo either the legacy path or the canonical /api path. Accept
+  // both so replies, likes and deletes still resolve to the local post.
+  const match = parsed.pathname.match(/^\/(?:api\/)?notes\/([^/]+)$/);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -183,6 +188,88 @@ interface NoteTag {
   href?: unknown;
 }
 
+/** The maximum number of local users one inbound Note can mention. */
+const MAX_INBOUND_MENTIONS = 10;
+
+/** Audience on the Create/Note; bto/bcc/audience resolve mentions but never widen visibility. */
+function inboundAudience(activity: Record<string, unknown>, object: Record<string, unknown>): string[] {
+  const values: string[] = [];
+  for (const source of [activity, object]) {
+    for (const field of ['to', 'cc', 'bto', 'bcc', 'audience']) {
+      values.push(...audienceEntries(source[field]));
+    }
+  }
+  return [...new Set(values)];
+}
+
+/** True when a URL is exactly the given actor's followers collection. */
+function isFollowersCollection(value: string, actorId: string): boolean {
+  try {
+    const expected = new URL(actorId);
+    const actual = new URL(value);
+    if (expected.origin !== actual.origin || !['http:', 'https:'].includes(actual.protocol)) return false;
+    const path = expected.pathname.replace(/\/$/, '');
+    return actual.pathname.replace(/\/$/, '') === `${path}/followers`;
+  } catch {
+    return false;
+  }
+}
+
+/** Inverse of `audienceFor()` in note.ts: map an inbound Note's audience to a visibility. */
+export function visibilityFromInboundAudience(
+  activity: Record<string, unknown>,
+  object: Record<string, unknown>,
+  actorId: string,
+): Visibility {
+  const to: string[] = [];
+  const cc: string[] = [];
+  for (const source of [activity, object]) {
+    to.push(...audienceEntries(source.to));
+    cc.push(...audienceEntries(source.cc));
+  }
+  // A Note with no audience at all is addressed (at most) to the inbox that
+  // received it. Defaulting to public would publish a private conversation
+  // just because the sender omitted the addressing fields.
+  if (to.length === 0 && cc.length === 0) return 'direct';
+  if (to.some(isPublicAddress)) return 'public';
+  if (cc.some(isPublicAddress)) return 'unlisted';
+  if ([...to, ...cc].some((value) => isFollowersCollection(value, actorId))) return 'private';
+  return 'direct';
+}
+
+/** Local usernames named directly in an inbound audience. */
+function localAddressees(audience: string[], baseUrl: string): string[] {
+  const usernames = new Set<string>();
+  for (const value of audience) {
+    const username = localActorUsername(value, baseUrl) ?? localProfileUsername(value, baseUrl);
+    if (username) usernames.add(username);
+  }
+  return [...usernames];
+}
+
+interface LocalMention {
+  username: string;
+  user_id: string;
+}
+
+/** Resolve local addressees/mentions to the `{username, user_id}` rows visibilityFilter reads. */
+async function resolveLocalMentions(env: HandlerEnv, usernames: string[]): Promise<LocalMention[]> {
+  const names = [...new Set(usernames)].slice(0, MAX_INBOUND_MENTIONS);
+  if (names.length === 0) return [];
+  const placeholders = names.map(() => '?').join(',');
+  const rows = await env.DB.prepare(`SELECT id, username FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`)
+    .bind(...names)
+    .all<{ id: string; username: string }>();
+  const seen = new Set<string>();
+  const mentions: LocalMention[] = [];
+  for (const row of rows.results ?? []) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    mentions.push({ username: row.username, user_id: row.id });
+  }
+  return mentions;
+}
+
 async function handleCreate(
   env: HandlerEnv,
   activity: Record<string, unknown>,
@@ -295,6 +382,13 @@ async function handleCreate(
     }
   }
 
+  // The audience of the Create/Note decides who may read it locally. Without
+  // this mapping every signed Note would inherit the DB default `public`,
+  // turning a direct message or a followers-only post into a public one.
+  const audience = inboundAudience(activity, object);
+  const visibility = visibilityFromInboundAudience(activity, object, actorId);
+  const mentions = await resolveLocalMentions(env, [...localAddressees(audience, env.BASE_URL), ...mentionedUsernames]);
+
   const postId = randomPostId();
 
   // A remote Note belongs to the instance, not to the local account that
@@ -317,10 +411,22 @@ async function handleCreate(
   const remoteUsername = actorProfile?.preferred_username ? `${actorProfile.preferred_username}@${actorHost}` : actorId;
 
   await env.DB.prepare(`
-    INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, ap_object_id, created_at)
-    VALUES (?, '', ?, ?, ?, 'published', ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status, parent_id, root_id, depth, actor_id, ap_object_id, visibility, created_at)
+    VALUES (?, '', ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(postId, remoteUsername, text, JSON.stringify(hashtags), parentId, rootId, depth, actorId, objectId)
+    .bind(
+      postId,
+      remoteUsername,
+      text,
+      JSON.stringify(hashtags),
+      JSON.stringify(mentions),
+      parentId,
+      rootId,
+      depth,
+      actorId,
+      objectId,
+      visibility,
+    )
     .run();
 
   await storeRemoteAttachments(env.DB, postId, object); // media stays remote; archives are links
@@ -419,8 +525,8 @@ async function handleFollow(
 
   if (actor) {
     await env.DB.prepare(`
-      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, fetched_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      INSERT INTO ap_actors (actor_url, inbox_url, shared_inbox_url, public_key_pem, preferred_username, display_name, icon_url, domain, summary, fetched_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       ON CONFLICT(actor_url) DO UPDATE SET
         inbox_url = excluded.inbox_url,
         shared_inbox_url = excluded.shared_inbox_url,
@@ -429,6 +535,7 @@ async function handleFollow(
         display_name = excluded.display_name,
         icon_url = excluded.icon_url,
         domain = excluded.domain,
+        summary = excluded.summary,
         fetched_at = excluded.fetched_at
     `)
       .bind(
@@ -440,6 +547,7 @@ async function handleFollow(
         actor.displayName,
         actor.iconUrl,
         actor.domain,
+        actor.summary,
       )
       .run();
   }
@@ -621,10 +729,28 @@ async function handleLike(
     return;
   }
 
+  // `fresh_count` is the public Fresh number on the post card. It counts local
+  // Fresh!s and remote Likes alike, so a Like received over ActivityPub has to
+  // move the same counters as a local one (+2 hotness). INSERT OR IGNORE above
+  // guarantees a replayed Like never increments them a second time.
+  await env.DB.prepare(
+    'UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id = ?',
+  )
+    .bind(postId)
+    .run();
+
   if (post.user_id) {
     try {
-      await env.DB.prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(randomId(), post.user_id, 'ap_like', postId, actorId)
+      // Idempotent: a delivered Like that is retried with a new activity id
+      // still only produces one notification per (post, actor).
+      await env.DB.prepare(`
+        INSERT INTO notifications (id, user_id, type, post_id, actor_id)
+        SELECT ?, ?, 'ap_like', ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'ap_like' AND actor_id = ?
+        )
+      `)
+        .bind(randomId(), post.user_id, postId, actorId, post.user_id, postId, actorId)
         .run();
     } catch (error) {
       console.error('Failed to create Like notification:', error);
@@ -731,7 +857,22 @@ async function handleUndo(
       const objectUrl = typeof object.object === 'string' ? object.object : '';
       const postId = await resolveLikeTarget(env, objectUrl);
       if (postId) {
-        await env.DB.prepare('DELETE FROM likes WHERE post_id = ? AND actor_id = ?').bind(postId, actorId).run();
+        // Only the actor that signed the Undo can retract its own Like. The
+        // counters follow the row that was actually deleted, so an Undo from
+        // another actor (or a replay) cannot decrement them.
+        const removed = await env.DB.prepare('DELETE FROM likes WHERE post_id = ? AND actor_id = ?')
+          .bind(postId, actorId)
+          .run();
+        if ((removed.meta?.changes ?? 0) > 0) {
+          await env.DB.prepare(
+            'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 2.0) WHERE id = ?',
+          )
+            .bind(postId)
+            .run();
+          await env.DB.prepare("DELETE FROM notifications WHERE post_id = ? AND actor_id = ? AND type = 'ap_like'")
+            .bind(postId, actorId)
+            .run();
+        }
         console.log('Like removed:', postId, actorId);
       }
       break;
@@ -793,20 +934,21 @@ async function handleDelete(
     return;
   }
 
-  // A deleted actor loses its follower relation and its posts.
-  if (object?.type === 'Person' || object?.type === 'Tombstone') {
-    const isActor = objectUrl === actorId;
-    if (isActor) {
-      const userId = await localUserId(env, username);
-      if (userId) {
-        await env.DB.prepare('DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
-          .bind(userId, actorId)
-          .run();
-      }
-      await env.DB.prepare('UPDATE posts SET status = ?, hidden = 1 WHERE actor_id = ?').bind('deleted', actorId).run();
-      console.log('Remote actor deleted:', actorId);
-      return;
+  // A deleted actor loses its follower relation and its posts. Peers send the
+  // actor URL either as a bare string object or as a Person/Tombstone object.
+  const isActorDelete =
+    objectUrl === actorId &&
+    (typeof activity.object === 'string' || object?.type === 'Person' || object?.type === 'Tombstone');
+  if (isActorDelete) {
+    const userId = await localUserId(env, username);
+    if (userId) {
+      await env.DB.prepare('DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+        .bind(userId, actorId)
+        .run();
     }
+    await env.DB.prepare('UPDATE posts SET status = ?, hidden = 1 WHERE actor_id = ?').bind('deleted', actorId).run();
+    console.log('Remote actor deleted:', actorId);
+    return;
   }
 
   const postId = await resolveLikeTarget(env, objectUrl);
@@ -848,11 +990,17 @@ async function handleUpdate(
 
   const displayName = typeof object.name === 'string' ? object.name : null;
   const preferredUsername = typeof object.preferredUsername === 'string' ? object.preferredUsername : null;
+  // A partial Update (for example only a new display name) must not wipe a bio
+  // we already cached. An explicit summary — even an empty one — replaces it.
+  const hasSummary = typeof object.summary === 'string';
+  const summary = hasSummary ? normalizeActorSummary(object.summary) : null;
   await env.DB.prepare(`
-    UPDATE ap_actors SET display_name = ?, preferred_username = ?, fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    UPDATE ap_actors SET display_name = ?, preferred_username = ?,
+      summary = CASE WHEN ? = 1 THEN ? ELSE summary END,
+      fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
     WHERE actor_url = ?
   `)
-    .bind(displayName, preferredUsername, actorId)
+    .bind(displayName, preferredUsername, hasSummary ? 1 : 0, summary, actorId)
     .run();
   await env.DB.prepare('UPDATE ap_followers SET display_name = ?, username = ? WHERE actor_url = ?')
     .bind(displayName, preferredUsername, actorId)
@@ -882,23 +1030,6 @@ async function handleBlock(
     .bind(randomId(), userId, actorId)
     .run();
   console.log('Block recorded from:', actorId, 'target:', target);
-}
-
-async function handleMove(
-  env: HandlerEnv,
-  activity: Record<string, unknown>,
-  actorId: string,
-  username: string,
-): Promise<void> {
-  const object = objectOf(activity);
-  const movedTo = typeof object?.movedTo === 'string' ? object.movedTo : null;
-  if (!movedTo) return;
-  await env.DB.prepare(
-    `UPDATE ap_actors SET moved_to = ?, fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE actor_url = ?`,
-  )
-    .bind(movedTo, actorId)
-    .run();
-  console.log('Remote actor moved:', actorId, '->', movedTo);
 }
 
 /** URLs of the local actor, exported for the delivery side. */

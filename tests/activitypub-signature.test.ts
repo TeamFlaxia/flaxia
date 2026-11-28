@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
-import { isPrivatePeerAllowed, resolveActorPublicKey } from '../functions/lib/activitypub/fetch.ts';
+import {
+  fetchFederationDocument,
+  isPrivatePeerAllowed,
+  resolveActorPublicKey,
+  USER_AGENT,
+} from '../functions/lib/activitypub/fetch.ts';
 import {
   buildSigningString,
+  parseRfc9421Signatures,
   parseSignatureHeader,
   signRequest,
   verifyDigest,
@@ -197,6 +203,45 @@ describe('ActivityPub signature verification', () => {
     assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
   });
 
+  it('rejects a signature whose expires passed just outside the grace period', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRequest(
+      URL_UNDER_TEST,
+      '{}',
+      privateKeyPem,
+      'https://remote.example/users/alice#main-key',
+    );
+    headers.set('Host', 'remote.example');
+    const parsed = parseSignatureHeader(headers.get('Signature') ?? '');
+    const seconds = Math.floor(Date.now() / 1000);
+    // Well inside the old 30 minute skew, but beyond the fixed one-minute grace.
+    headers.set(
+      'Signature',
+      `keyId="${parsed.keyId}",created="${seconds - 180}",expires="${seconds - 120}",headers="${parsed.headers.join(' ')}",signature="${parsed.signature}"`,
+    );
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects a matching Content-Digest when the signed Digest does not match', async () => {
+    const { privateKeyPem } = await keyPair();
+    const body = '{"type":"Follow"}';
+    const headers = await signRequest(
+      URL_UNDER_TEST,
+      body,
+      privateKeyPem,
+      'https://remote.example/users/alice#main-key',
+    );
+    const otherDigest = btoa(
+      String.fromCharCode(
+        ...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('{"type":"Delete"}'))),
+      ),
+    );
+    headers.set('Content-Digest', `sha-256=:${otherDigest}:`);
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyDigest(request, body), false, 'both digest headers must match the same body');
+  });
+
   it('verifies a signature that covers (created) and (expires)', async () => {
     const { privateKeyPem, publicKeyPem } = await keyPair();
     const body = '{}';
@@ -248,6 +293,262 @@ describe('ActivityPub signature verification', () => {
     assert.equal(
       signingString,
       '(request-target): post /inbox?x=1\nhost: remote.example\ndate: Wed, 01 Jan 2026 00:00:00 GMT',
+    );
+  });
+});
+
+describe('ActivityPub RFC 9421 signatures', () => {
+  const KEY_ID = 'https://remote.example/users/alice#main-key';
+
+  /** Build a genuine RFC 9421 signature for the given components. */
+  async function signRfc9421(options: {
+    url?: string;
+    body?: string;
+    privateKeyPem: string;
+    components: string[];
+    created?: number;
+    expires?: number;
+    label?: string;
+    alg?: string;
+  }): Promise<Headers> {
+    const url = options.url ?? URL_UNDER_TEST;
+    const body = options.body ?? '{"type":"Follow"}';
+    const created = options.created ?? Math.floor(Date.now() / 1000);
+    const label = options.label ?? 'sig1';
+    const parsed = new URL(url);
+    const encoder = new TextEncoder();
+    const digest = btoa(
+      String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(body)))),
+    );
+    const date = new Date().toUTCString();
+    const headers = new Headers({
+      Host: parsed.host,
+      Date: date,
+      Digest: `sha-256=${digest}`,
+      'Content-Digest': `sha-256=:${digest}:`,
+    });
+
+    const values: Record<string, string> = {
+      '@method': 'POST',
+      '@target-uri': url,
+      '@request-target': parsed.pathname + parsed.search,
+      '(request-target)': parsed.pathname + parsed.search,
+      '@authority': parsed.host,
+      '@scheme': parsed.protocol.replace(/:$/, ''),
+      '@path': parsed.pathname,
+      '@query': parsed.search,
+      host: parsed.host,
+      date,
+      digest: `sha-256=${digest}`,
+      'content-digest': `sha-256=:${digest}:`,
+      '(created)': String(created),
+      '(expires)': String(options.expires ?? ''),
+    };
+    const params: Array<[string, string]> = [
+      ['created', String(created)],
+      ['keyid', `"${KEY_ID}"`],
+      ['alg', `"${options.alg ?? 'rsa-sha256'}"`],
+    ];
+    if (options.expires !== undefined) params.push(['expires', String(options.expires)]);
+
+    const base = [
+      ...options.components.map((component) => `"${component}": ${values[component]}`),
+      ...params.map(([name, value]) => `"${name}": ${value}`),
+    ].join('\n');
+    const signature = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      await importKey(options.privateKeyPem),
+      encoder.encode(base),
+    );
+    headers.set(
+      'Signature-Input',
+      `${label}=(${options.components.map((component) => `"${component}"`).join(' ')});${params
+        .map(([name, value]) => `${name}=${value}`)
+        .join(';')}`,
+    );
+    headers.set('Signature', `${label}=:${btoa(String.fromCharCode(...new Uint8Array(signature)))}:`);
+    return headers;
+  }
+
+  it('accepts an RFC 9421 signature with derived components and Content-Digest', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const body = '{"type":"Follow"}';
+    const headers = await signRfc9421({
+      privateKeyPem,
+      body,
+      components: ['@method', '@target-uri', 'host', 'date', 'content-digest'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem, { expectedHost: 'remote.example' }), true);
+    assert.equal(await verifyDigest(request, body), true);
+  });
+
+  it('accepts a signature without a Date header when created is signed', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const body = '{"type":"Create"}';
+    const headers = await signRfc9421({
+      privateKeyPem,
+      body,
+      components: ['@method', '@target-uri', 'content-digest'],
+    });
+    headers.delete('Date');
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), true);
+    assert.equal(await verifyDigest(request, body), true);
+  });
+
+  it('rejects a body whose Content-Digest no longer matches', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      body: '{"type":"Follow"}',
+      components: ['@method', '@target-uri', 'content-digest'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Delete"}' });
+    assert.equal(await verifyDigest(request, '{"type":"Delete"}'), false);
+    // The signature itself still verifies because the header values are intact;
+    // the digest check is what detects the replaced body.
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), true);
+  });
+
+  it('rejects a signature that was made for a different target', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+    });
+    const request = new Request('https://remote.example/other-inbox', {
+      method: 'POST',
+      headers,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects a POST whose body is not covered by the signature', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'date'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects an expired created parameter', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      created: Math.floor(Date.now() / 1000) - 7200,
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects an unknown component identifier', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'x-unknown-header', 'content-digest'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects a matching Digest when Content-Digest does not match', async () => {
+    const { privateKeyPem } = await keyPair();
+    const body = '{"type":"Follow"}';
+    const headers = await signRfc9421({
+      privateKeyPem,
+      body,
+      components: ['@method', '@target-uri', 'content-digest'],
+    });
+    const otherDigest = btoa(
+      String.fromCharCode(
+        ...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('{"type":"Delete"}'))),
+      ),
+    );
+    headers.set('Digest', `sha-256=${otherDigest}`);
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyDigest(request, body), false, 'both digest headers must match the same body');
+  });
+
+  it('rejects a signature shortly after its expiry but accepts one before it', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const expired = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      expires: Math.floor(Date.now() / 1000) - 120,
+    });
+    const expiredRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: expired,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(expiredRequest, publicKeyPem), false);
+
+    const current = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      expires: Math.floor(Date.now() / 1000) + 120,
+    });
+    const currentRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: current,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(currentRequest, publicKeyPem), true);
+  });
+
+  it('rejects a POST whose signature does not cover @method', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@target-uri', 'content-digest'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('validates the advertised algorithm', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const unsupported = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      alg: 'ed25519',
+    });
+    const unsupportedRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: unsupported,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(unsupportedRequest, publicKeyPem), false);
+
+    const supported = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      alg: 'rsa-v1_5-sha256',
+    });
+    const supportedRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: supported,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(supportedRequest, publicKeyPem), true);
+  });
+
+  it('parses labelled signatures and ignores labels without a matching value', () => {
+    const input = 'sig1=("@method" "@target-uri" "content-digest");created=1700000000;keyid="key-1", sig2=("date")';
+    const signature = 'sig1=:YWJj:, sig3=:ZGVm:';
+    const parsed = parseRfc9421Signatures(input, signature);
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0].label, 'sig1');
+    assert.deepEqual(parsed[0].components, ['@method', '@target-uri', 'content-digest']);
+    assert.equal(parsed[0].signature, 'YWJj');
+    assert.deepEqual(
+      parsed[0].params.map((parameter) => parameter.name),
+      ['created', 'keyid'],
     );
   });
 });
@@ -348,6 +649,46 @@ describe('ActivityPub key resolution', () => {
       assert.ok(!requested.some((url) => url.startsWith('https://evil.example')));
       assert.ok(requested.every((url) => url.startsWith('https://remote.example')));
       assert.equal(resolved, '-----BEGIN PUBLIC KEY-----evil');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+describe('ActivityPub authorized fetch', () => {
+  it('signs a GET of a remote document with Date and Signature', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init: init ?? {} });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/activity+json' },
+      });
+    }) as typeof fetch;
+    try {
+      const url = 'https://remote.example/users/alice';
+      const response = await fetchFederationDocument(
+        url,
+        {},
+        {
+          privateKeyPem,
+          keyId: 'https://remote.example/users/alice#main-key',
+        },
+      );
+      assert.equal(response?.status, 200);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, url);
+      const headers = new Headers(calls[0].init.headers);
+      assert.equal(headers.get('user-agent'), USER_AGENT);
+      assert.match(headers.get('date') ?? '', /GMT$/);
+      assert.match(headers.get('signature') ?? '', /headers="\(request-target\) host date"/);
+      assert.equal(calls[0].init.method, 'GET');
+
+      // The signature covers the real request, not a decorative header.
+      const request = new Request(url, { method: 'GET', headers });
+      assert.equal(await verifyHttpSignature(request, publicKeyPem, { expectedHost: 'remote.example' }), true);
     } finally {
       globalThis.fetch = originalFetch;
     }

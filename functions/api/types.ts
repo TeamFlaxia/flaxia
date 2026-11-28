@@ -1,3 +1,4 @@
+import type { PostVisibility } from '../../shared/types/post.ts';
 import type { User } from '../lib/auth';
 
 export type Bindings = {
@@ -56,6 +57,15 @@ export type Variables = {
 };
 
 /**
+ * The single API-boundary accessor for the platform database. Keeping the
+ * binding lookup here (an allowed adapter boundary) lets feature routes stay
+ * free of Cloudflare-specific expressions; see the architecture ratchet.
+ */
+export function dbFromContext(c: { env: Bindings }): D1Database {
+  return c.env.DB;
+}
+
+/**
  * Body shape of an SRP re-authentication proof: the output of
  * `/api/auth/reauth/start` plus the client's `A` and `M1`. The password itself
  * never appears in a request body — see docs/e2ee.md.
@@ -97,6 +107,7 @@ export type PostRow = {
   impressions: number;
   status: string;
   hidden: number;
+  visibility?: PostVisibility;
   author_language?: string | null;
   actor_id: string | null;
   created_at: string;

@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import {
+  buildAcceptActivity,
+  buildAnnounceActivity,
+  buildBlockActivity,
+  buildDeleteActivity,
+  buildFollowActivity,
+  buildLikeActivity,
+  buildRejectActivity,
+  buildUndoActivity,
+  buildUpdateActivity,
+} from '../functions/lib/activitypub/activities.ts';
 import { buildActorDocument, localActorUsername, parseWebfingerResource } from '../functions/lib/activitypub/actor.ts';
-import { activityContentType, PUBLIC_COLLECTION } from '../functions/lib/activitypub/context.ts';
+import { activityContentType, activityContext, PUBLIC_COLLECTION } from '../functions/lib/activitypub/context.ts';
 import { audienceFor, buildCreateActivity, buildNoteObject } from '../functions/lib/activitypub/note.ts';
 import { decodeHtmlEntities, extractHashtags, htmlToText, textToHtml } from '../functions/lib/activitypub/text.ts';
 
 const BASE = 'https://flaxia.app';
+const REMOTE = 'https://remote.example';
 const USER = { id: 'u1', username: 'alice', display_name: 'Alice' };
 const FOLLOWERS = `${BASE}/api/actors/alice/followers`;
 
@@ -73,7 +85,9 @@ describe('ActivityPub Note builder', () => {
     assert.ok(note.content.includes('href="https://remote.example/users/bob"'));
 
     const tags = note.tag ?? [];
-    assert.ok(tags.some((tag) => tag.type === 'Mention' && tag.href === 'https://remote.example/users/bob'));
+    const mentionTag = tags.find((tag) => tag.type === 'Mention');
+    assert.equal(mentionTag?.name, '@bob');
+    assert.equal(mentionTag?.href, 'https://remote.example/users/bob');
     assert.ok(tags.some((tag) => tag.type === 'Hashtag' && tag.name === '#flaxia'));
   });
 
@@ -88,6 +102,27 @@ describe('ActivityPub Note builder', () => {
     assert.ok(note.replies);
   });
 
+  it('links a mixed-case remote mention to the resolved actor', () => {
+    const note = buildNoteObject(
+      {
+        id: 'post-case',
+        text: 'hi @Bob@Example.COM',
+        created_at: '2026-01-01T00:00:00.000Z',
+        mentions: [{ username: 'Bob', domain: 'Example.COM', url: 'https://example.com/users/bob' }],
+      },
+      USER,
+      BASE,
+      { followersUrl: FOLLOWERS },
+    );
+    assert.ok(note.content.includes('href="https://example.com/users/bob"'), 'the actor URL must be used');
+    assert.ok(note.content.includes('>@Bob@Example.COM</a>'), 'the author’s casing stays in the visible handle');
+
+    const html = textToHtml('hi @Bob@Example.COM', BASE, {
+      'bob@example.com': 'https://example.com/users/bob',
+    });
+    assert.ok(html.includes('href="https://example.com/users/bob"'));
+  });
+
   it('wraps a Note in a Create activity', () => {
     const note = buildNoteObject({ id: 'post-3', text: 'hello', created_at: '2026-01-01T00:00:00.000Z' }, USER, BASE, {
       followersUrl: FOLLOWERS,
@@ -99,6 +134,120 @@ describe('ActivityPub Note builder', () => {
     assert.deepEqual(activity.to, [PUBLIC_COLLECTION]);
     // The Create must not be timestamped at outbox-request time.
     assert.equal(activity.published, note.published);
+  });
+});
+
+describe('ActivityPub activity builders', () => {
+  const FOLLOW = {
+    id: `${BASE}/activities/follow-remote-1`,
+    type: 'Follow',
+    actor: `${REMOTE}/users/bob`,
+    object: `${BASE}/api/actors/alice`,
+  };
+
+  it('builds a Follow addressed only to its target', () => {
+    const activity = buildFollowActivity(BASE, 'alice', `${REMOTE}/users/bob`, 'remote-1');
+    assert.deepEqual(activity['@context'], activityContext());
+    assert.equal(activity.id, `${BASE}/activities/follow-remote-1`);
+    assert.equal(activity.type, 'Follow');
+    assert.equal(activity.actor, `${BASE}/api/actors/alice`);
+    assert.equal(activity.object, `${REMOTE}/users/bob`);
+    assert.deepEqual(activity.to, [`${REMOTE}/users/bob`]);
+    assert.equal(activity.cc, undefined);
+  });
+
+  it('wraps the original Follow in Accept and Reject, addressed to its actor', () => {
+    for (const [type, build] of [
+      ['Accept', buildAcceptActivity],
+      ['Reject', buildRejectActivity],
+    ] as const) {
+      const activity = build(BASE, 'alice', FOLLOW, `${type.toLowerCase()}-1`);
+      assert.deepEqual(activity['@context'], activityContext());
+      assert.equal(activity.id, `${BASE}/activities/${type.toLowerCase()}-${type.toLowerCase()}-1`);
+      assert.equal(activity.type, type);
+      assert.equal(activity.actor, `${BASE}/api/actors/alice`);
+      assert.deepEqual(activity.object, FOLLOW);
+      assert.deepEqual(activity.to, [`${REMOTE}/users/bob`]);
+    }
+  });
+
+  it('builds a Like and an Announce with the requested audience', () => {
+    const object = `${REMOTE}/notes/1`;
+    const like = buildLikeActivity(BASE, 'alice', object, 'like-1', { cc: [FOLLOWERS] });
+    assert.equal(like.id, `${BASE}/activities/like-like-1`);
+    assert.equal(like.type, 'Like');
+    assert.equal(like.actor, `${BASE}/api/actors/alice`);
+    assert.equal(like.object, object);
+    assert.deepEqual(like.to, [object]);
+    assert.deepEqual(like.cc, [FOLLOWERS]);
+    assert.deepEqual(like['@context'], activityContext());
+
+    const announce = buildAnnounceActivity(BASE, 'alice', object, 'announce-1', { to: [PUBLIC_COLLECTION] });
+    assert.equal(announce.id, `${BASE}/activities/announce-announce-1`);
+    assert.equal(announce.type, 'Announce');
+    assert.equal(announce.actor, `${BASE}/api/actors/alice`);
+    assert.equal(announce.object, object);
+    assert.deepEqual(announce.to, [PUBLIC_COLLECTION]);
+    assert.deepEqual(announce.cc, []);
+    assert.equal(typeof announce.published, 'string');
+    assert.deepEqual(announce['@context'], activityContext());
+  });
+
+  it('wraps the retracted activity in an Undo addressed to its audience', () => {
+    const like = buildLikeActivity(BASE, 'alice', `${REMOTE}/notes/1`, 'like-1');
+    const undo = buildUndoActivity(BASE, 'alice', like, 'undo-1');
+    assert.deepEqual(undo['@context'], activityContext());
+    assert.equal(undo.id, `${BASE}/activities/undo-undo-1`);
+    assert.equal(undo.type, 'Undo');
+    assert.equal(undo.actor, `${BASE}/api/actors/alice`);
+    assert.deepEqual(undo.object, like);
+    // The target and the actor of the retracted activity are both addressees.
+    assert.deepEqual(undo.to, [`${REMOTE}/notes/1`, `${BASE}/api/actors/alice`]);
+    assert.deepEqual(undo.cc, []);
+  });
+
+  it('inherits the cc audience of the retracted activity', () => {
+    const like = buildLikeActivity(BASE, 'alice', `${REMOTE}/notes/1`, 'like-audience', { cc: [FOLLOWERS] });
+    const undo = buildUndoActivity(BASE, 'alice', like, 'undo-audience');
+    assert.deepEqual(undo.to, [`${REMOTE}/notes/1`, `${BASE}/api/actors/alice`]);
+    assert.deepEqual(undo.cc, [FOLLOWERS]);
+  });
+
+  it('builds a Delete as a Tombstone that names the former type', () => {
+    const activity = buildDeleteActivity(BASE, 'alice', `${BASE}/api/notes/post-1`, 'delete-1', { cc: [FOLLOWERS] });
+    assert.deepEqual(activity['@context'], activityContext());
+    assert.equal(activity.id, `${BASE}/activities/delete-delete-1`);
+    assert.equal(activity.type, 'Delete');
+    assert.equal(activity.actor, `${BASE}/api/actors/alice`);
+    assert.deepEqual(activity.object, {
+      id: `${BASE}/api/notes/post-1`,
+      type: 'Tombstone',
+      formerType: 'Note',
+    });
+    assert.deepEqual(activity.to, [PUBLIC_COLLECTION]);
+    assert.deepEqual(activity.cc, [FOLLOWERS]);
+  });
+
+  it('builds an Update of the actor document', () => {
+    const profile = { id: `${BASE}/api/actors/alice`, type: 'Person', name: 'Alice Renamed' };
+    const activity = buildUpdateActivity(BASE, 'alice', profile, 'update-1');
+    assert.deepEqual(activity['@context'], activityContext());
+    assert.equal(activity.id, `${BASE}/activities/update-update-1`);
+    assert.equal(activity.type, 'Update');
+    assert.equal(activity.actor, `${BASE}/api/actors/alice`);
+    assert.deepEqual(activity.object, profile);
+    assert.deepEqual(activity.to, [PUBLIC_COLLECTION]);
+    assert.deepEqual(activity.cc, []);
+  });
+
+  it('builds a Block addressed to the blocked actor', () => {
+    const activity = buildBlockActivity(BASE, 'alice', `${REMOTE}/users/mallory`, 'block-1');
+    assert.deepEqual(activity['@context'], activityContext());
+    assert.equal(activity.id, `${BASE}/activities/block-block-1`);
+    assert.equal(activity.type, 'Block');
+    assert.equal(activity.actor, `${BASE}/api/actors/alice`);
+    assert.equal(activity.object, `${REMOTE}/users/mallory`);
+    assert.deepEqual(activity.to, [`${REMOTE}/users/mallory`]);
   });
 });
 

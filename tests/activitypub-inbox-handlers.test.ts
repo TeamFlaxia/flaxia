@@ -28,6 +28,27 @@ function envFor(db: TestDatabase, queue: QueueMessage[] = []): HandlerEnv {
 }
 
 /** Stub the remote actor document the handler fetches. */
+/**
+ * Serve the target actor documents fetched when a Move is processed. A target
+ * without a back-reference is served as an unrelated actor (empty document
+ * fields), so the handler must refuse to update `moved_to`.
+ */
+function stubMoveTargets(targets: Record<string, Record<string, unknown>>): () => void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input).replace(/\/$/, '');
+    const document = targets[url];
+    if (!document) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify({ id: url, type: 'Person', ...document }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/activity+json' },
+    });
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
 function stubRemoteActor(originalFetch: typeof fetch): () => void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -728,5 +749,252 @@ describe('ActivityPub inbox handlers', () => {
     } finally {
       restore();
     }
+  });
+
+  it('records the new actor of a Move with movedTo', async () => {
+    const target = `${REMOTE}/users/alice-new`;
+    const restore = stubMoveTargets({ [target]: { movedFrom: REMOTE_ACTOR } });
+    try {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/move-1`,
+          type: 'Move',
+          actor: REMOTE_ACTOR,
+          object: {
+            id: REMOTE_ACTOR,
+            type: 'Person',
+            movedTo: target,
+          },
+        },
+      });
+    } finally {
+      restore();
+    }
+
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, target);
+  });
+
+  it('records a Move that only names a target (the form Mastodon sends)', async () => {
+    const target = `${REMOTE}/users/alice-target`;
+    const restore = stubMoveTargets({ [target]: { alsoKnownAs: [REMOTE_ACTOR] } });
+    try {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/move-target`,
+          type: 'Move',
+          actor: REMOTE_ACTOR,
+          object: REMOTE_ACTOR,
+          target,
+        },
+      });
+    } finally {
+      restore();
+    }
+
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, target, 'a target-only Move must be honoured');
+  });
+
+  it('ignores a Move whose target does not back-reference the source or is not a URL', async () => {
+    const foreign = 'https://evil.example/users/alice';
+    const sameOrigin = `${REMOTE}/users/alice-new`;
+    await db.prepare('UPDATE ap_actors SET moved_to = NULL WHERE actor_url = ?').bind(REMOTE_ACTOR).run();
+    const restore = stubMoveTargets({
+      // A public target is fetched, but neither actor acknowledges the move.
+      [foreign]: {},
+      [sameOrigin]: {},
+    });
+    try {
+      for (const [id, target] of [
+        ['move-foreign', foreign],
+        ['move-invalid', 'not-a-url'],
+        ['move-no-backref', `${REMOTE}/users/alice-new`],
+      ]) {
+        await handleIncomingActivity(envFor(db), {
+          actorId: REMOTE_ACTOR,
+          username: 'alice',
+          activity: {
+            id: `${REMOTE}/activities/${id}`,
+            type: 'Move',
+            actor: REMOTE_ACTOR,
+            object: REMOTE_ACTOR,
+            target,
+          },
+        });
+      }
+    } finally {
+      restore();
+    }
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, null, 'an untrusted target must not replace the actor');
+  });
+
+  it('treats an actor Delete with a string object as an actor deletion', async () => {
+    const originalFetch = globalThis.fetch;
+    const restore = stubRemoteActor(originalFetch);
+    try {
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+           VALUES ('following-bob-delete', 'local-1', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
+        )
+        .bind(REMOTE_BOB, `${REMOTE}/users/bob/inbox`)
+        .run();
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
+           VALUES ('follower-string-delete', 'local-1', ?, ?, '2026-01-01T00:00:00.000Z')`,
+        )
+        .bind(REMOTE_BOB, `${REMOTE}/users/bob/inbox`)
+        .run();
+      const noteId = `${REMOTE}/notes/string-delete`;
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_BOB,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/string-delete-create`,
+          type: 'Create',
+          actor: REMOTE_BOB,
+          object: { id: noteId, type: 'Note', attributedTo: REMOTE_BOB, content: 'temporary' },
+        },
+      });
+
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_BOB,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/string-delete`,
+          type: 'Delete',
+          actor: REMOTE_BOB,
+          object: REMOTE_BOB,
+        },
+      });
+
+      const follower = await db
+        .prepare('SELECT id FROM ap_followers WHERE actor_url = ?')
+        .bind(REMOTE_BOB)
+        .first<{ id: string }>();
+      assert.equal(follower, null, 'a bare-string actor Delete must remove the follower');
+      const post = await db
+        .prepare('SELECT status, hidden FROM posts WHERE ap_object_id = ?')
+        .bind(noteId)
+        .first<{ status: string; hidden: number }>();
+      assert.equal(post?.status, 'deleted');
+      assert.equal(post?.hidden, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('removes the follower and hides the posts of a deleted actor', async () => {
+    const originalFetch = globalThis.fetch;
+    const restore = stubRemoteActor(originalFetch);
+    try {
+      await db
+        .prepare(
+          `INSERT OR REPLACE INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
+           VALUES ('follower-actor-delete', 'local-1', ?, ?, '2026-01-01T00:00:00.000Z')`,
+        )
+        .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
+        .run();
+      const noteId = `${REMOTE}/notes/actor-delete`;
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/actor-delete-create`,
+          type: 'Create',
+          actor: REMOTE_ACTOR,
+          object: { id: noteId, type: 'Note', attributedTo: REMOTE_ACTOR, content: 'will disappear' },
+        },
+      });
+
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/actor-delete`,
+          type: 'Delete',
+          actor: REMOTE_ACTOR,
+          object: { id: REMOTE_ACTOR, type: 'Person' },
+        },
+      });
+
+      const follower = await db
+        .prepare('SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?')
+        .bind('local-1', REMOTE_ACTOR)
+        .first<{ id: string }>();
+      assert.equal(follower, null, 'a deleted actor is not a follower any more');
+      const post = await db
+        .prepare('SELECT status, hidden FROM posts WHERE ap_object_id = ?')
+        .bind(noteId)
+        .first<{ status: string; hidden: number }>();
+      assert.equal(post?.status, 'deleted');
+      assert.equal(post?.hidden, 1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('updates the name of a remote actor but currently leaves the icon untouched', async () => {
+    await db
+      .prepare('UPDATE ap_actors SET icon_url = ? WHERE actor_url = ?')
+      .bind(`${REMOTE}/icons/old.png`, REMOTE_ACTOR)
+      .run();
+    await db
+      .prepare(
+        `INSERT OR REPLACE INTO ap_followers (id, local_user_id, actor_url, inbox_url, display_name, created_at)
+         VALUES ('follower-update-icon', 'local-1', ?, ?, 'Alice Old', '2026-01-01T00:00:00.000Z')`,
+      )
+      .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
+      .run();
+
+    await handleIncomingActivity(envFor(db), {
+      actorId: REMOTE_ACTOR,
+      username: 'alice',
+      activity: {
+        id: `${REMOTE}/activities/update-icon`,
+        type: 'Update',
+        actor: REMOTE_ACTOR,
+        object: {
+          id: REMOTE_ACTOR,
+          type: 'Person',
+          attributedTo: REMOTE_ACTOR,
+          name: 'Alice With Icon',
+          preferredUsername: 'alice',
+          icon: { type: 'Image', url: `${REMOTE}/icons/new.png` },
+        },
+      },
+    });
+
+    const actor = await db
+      .prepare('SELECT display_name, icon_url FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ display_name: string; icon_url: string | null }>();
+    assert.equal(actor?.display_name, 'Alice With Icon');
+    // Documented gap: handleUpdate only writes display_name and
+    // preferredUsername; an updated avatar is ignored until the actor document
+    // is fetched again. Do not edit handlers.ts from this suite.
+    assert.equal(actor?.icon_url, `${REMOTE}/icons/old.png`);
+
+    const follower = await db
+      .prepare('SELECT display_name FROM ap_followers WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ display_name: string }>();
+    assert.equal(follower?.display_name, 'Alice With Icon');
   });
 });

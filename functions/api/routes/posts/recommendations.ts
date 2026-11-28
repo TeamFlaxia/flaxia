@@ -1,17 +1,19 @@
 import { Hono } from 'hono';
 import { stripPostColors } from '../../../../shared/post-colors.ts';
+import { presentForYou } from '../../../../shared/recommendation/mix.ts';
 import {
   type EncodedVector,
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../../shared/recommendation/vector-codec.ts';
+import { POOL_JOIN_SQL, POOL_SCORE_SQL } from '../../../lib/activitypub/ap-pool.ts';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
 import { computeQualityScore } from '../../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST } from '../../../lib/trust';
 import type { Bindings, PostRow, Variables } from '../../types';
 
-import { enrichFeedPosts, RECOMMENDED_SELECT } from './helpers.ts';
+import { enrichFeedPosts, RECOMMENDED_SELECT, visibilityFilter } from './helpers.ts';
 
 export const recommendations = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -24,10 +26,12 @@ function diversifyPosts(
   const result: Array<{ post: Record<string, unknown>; score: number }> = [];
   for (const item of items) {
     if (result.length >= maxCount) break;
-    const userId = String(item.post.user_id || '');
-    const count = userCounts.get(userId) || 0;
+    // Remote posts share an empty user_id; key by actor so one federated
+    // author cannot take every slot (and so they are not capped to 2 total).
+    const authorId = String(item.post.actor_id || item.post.user_id || '');
+    const count = userCounts.get(authorId) || 0;
     if (count >= maxPerUser) continue;
-    userCounts.set(userId, count + 1);
+    userCounts.set(authorId, count + 1);
     result.push(item);
   }
   return result;
@@ -73,6 +77,77 @@ function decayingRecommendationPenalty(
 
 const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
+
+/**
+ * Federated popularity is a small nudge, never a takeover: a log scale keeps
+ * viral remote posts bounded and the bounded weight keeps them behind equally
+ * good local candidates before the 50:50 presentation mix.
+ */
+export const POOL_SCORE_WEIGHT = 0.08;
+
+export function normalizePoolScore(poolScore: number | null | undefined): number {
+  if (typeof poolScore !== 'number' || !Number.isFinite(poolScore) || poolScore <= 0) return 0;
+  return Math.min(1, Math.log1p(poolScore) / Math.log1p(50));
+}
+
+export interface CandidateScoreInput {
+  sourceScore: number;
+  popularity: number;
+  freshness: number;
+  contentQuality: number;
+  /** Raw `ap_pool_metrics.score`; local posts have no row and score zero. */
+  poolScore?: number | null;
+  historyPenalty?: number;
+}
+
+/** Shared by the server-ranked feed and the client-ranked candidate batch. */
+export function scoreRecommendationCandidate(input: CandidateScoreInput): number {
+  const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, input.contentQuality));
+  const baseScore =
+    (0.65 * input.sourceScore + 0.18 * input.popularity + 0.17 * input.freshness) * qualityFactor +
+    POOL_SCORE_WEIGHT * normalizePoolScore(input.poolScore);
+  const historyPenalty = Math.min(0.55, Math.max(0, input.historyPenalty ?? 0));
+  return baseScore * (1 - historyPenalty);
+}
+
+/** Pool IDs join the other independent sources and pass through one dedup step. */
+export function collectRecommendationCandidateIds(...sources: ReadonlyArray<Iterable<string>>): string[] {
+  const ids = new Set<string>();
+  for (const source of sources) {
+    for (const id of source) ids.add(id);
+  }
+  return [...ids];
+}
+
+export function buildPoolCandidateSql(filterSql: string): string {
+  return `SELECT p.id, ${POOL_SCORE_SQL} AS pool_score
+    FROM posts p ${POOL_JOIN_SQL}
+    LEFT JOIN users u ON p.user_id = u.id
+    WHERE p.actor_id IS NOT NULL AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+      ${filterSql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+    ORDER BY pool_score DESC LIMIT ?`;
+}
+
+async function loadPoolCandidates(
+  db: D1Database,
+  limit: number,
+  asOfMs: number,
+  filterSql: string,
+  filterParams: string[],
+): Promise<{ ids: string[]; scoreById: Map<string, number> }> {
+  const cutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const result = await db
+    .prepare(buildPoolCandidateSql(filterSql))
+    .bind(...filterParams, cutoff, new Date(asOfMs).toISOString(), limit)
+    .all<{ id: string; pool_score: number | null }>();
+  const rows = result.results ?? [];
+  const scoreById = new Map<string, number>();
+  for (const row of rows) {
+    const score = Number(row.pool_score);
+    scoreById.set(String(row.id), Number.isFinite(score) ? Math.max(0, score) : 0);
+  }
+  return { ids: rows.map((row) => String(row.id)), scoreById };
+}
 
 async function attachRecommendationVectors(
   db: D1Database,
@@ -131,35 +206,40 @@ async function loadClientRankedCandidatePage(
     return { ...archive, vectors, vector_meta: vectorMeta, base_scores: baseScores };
   }
 
-  const visibilityFilter = currentUserId
-    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+  // Blocked authors stay out. As before, For You excludes the viewer's own
+  // ordinary posts; only their own private/direct posts are kept so authors
+  // retain access under the visibility predicate below.
+  const blockFilter = currentUserId
+    ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
     : '';
-  const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+  const blockParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+  const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
   const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
   const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
   const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
   const sourceLimit = Math.min(limit * 2, 200);
 
-  const [recentResult, trendingResult, followingResult] = await Promise.all([
+  const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
     db
       .prepare(
         `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY p.created_at DESC LIMIT ?`,
       )
-      .bind(...visibilityParams, recentCutoff, asOfIso, sourceLimit)
+      .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, sourceLimit)
       .all<Record<string, unknown>>(),
     db
       .prepare(
         `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
       )
-      .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
+      .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
       .all<Record<string, unknown>>(),
     currentUserId
       ? db
@@ -169,24 +249,27 @@ async function loadClientRankedCandidatePage(
              WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                AND p.created_at >= ? AND p.created_at <= ?
                AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-               ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+               ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
              ORDER BY p.created_at DESC LIMIT ?`,
           )
-          .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, sourceLimit)
+          .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, sourceLimit)
           .all<Record<string, unknown>>()
       : Promise.resolve(null),
+    loadPoolCandidates(db, sourceLimit, asOfMs, `${blockFilter} ${visibilitySql}`, [
+      ...blockParams,
+      ...visibilityParams,
+    ]),
   ]);
 
   const recentPosts = recentResult.results ?? [];
   const trendingPosts = trendingResult.results ?? [];
   const followingPosts = followingResult?.results ?? [];
-  const candidateIds = [
-    ...new Set([
-      ...followingPosts.map((post) => String(post.id)),
-      ...trendingPosts.map((post) => String(post.id)),
-      ...recentPosts.map((post) => String(post.id)),
-    ]),
-  ];
+  const candidateIds = collectRecommendationCandidateIds(
+    followingPosts.map((post) => String(post.id)),
+    trendingPosts.map((post) => String(post.id)),
+    recentPosts.map((post) => String(post.id)),
+    poolCandidates.ids,
+  );
   if (candidateIds.length === 0) {
     return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
   }
@@ -199,10 +282,10 @@ async function loadClientRankedCandidatePage(
        LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (SELECT value FROM json_each(?))
          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at >= ? AND p.created_at <= ?`,
     )
-    .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+    .bind(asOfUnixSeconds, serializedCandidateIds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso)
     .all<Record<string, unknown>>();
   const candidatePosts = candidateResult.results ?? [];
 
@@ -256,15 +339,19 @@ async function loadClientRankedCandidatePage(
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
-      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
-      const historyPenalty = Math.min(
-        0.55,
+      const historyPenalty =
         decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
-          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
-      );
+        decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3);
+      const score = scoreRecommendationCandidate({
+        sourceScore,
+        popularity,
+        freshness,
+        contentQuality,
+        poolScore: poolCandidates.scoreById.get(id),
+        historyPenalty,
+      });
       delete post.eng_score;
-      return { post, score: baseScore * (1 - historyPenalty) };
+      return { post, score };
     })
     .sort(compareScoredPosts);
 
@@ -299,6 +386,10 @@ async function loadClientRankedCandidatePage(
 recommendations.get('/posts/recommended', async (c) => {
   try {
     const clientRank = c.req.query('client_rank') === '1' || c.req.query('include_vectors') === '1';
+    // `external=hide` is the server-side half of the "don't show" choice. The
+    // client sends it for its own preference so hidden posts never reach the
+    // browser, even on the unranked fallback path.
+    const hideRemote = c.req.query('external') === 'hide';
     const limit = clientRank
       ? clampLimit(c.req.query('limit'), 80, CLIENT_RANK_VECTOR_BATCH_MAX)
       : clampLimit(c.req.query('limit'), 20, 50);
@@ -329,52 +420,54 @@ recommendations.get('/posts/recommended', async (c) => {
     const db = c.env.DB;
     const currentUserId = c.get('user')?.id || null;
     if (clientRank) {
-      return c.json(
-        await loadClientRankedCandidatePage(
-          db,
-          currentUserId,
-          limit,
-          cursorCreatedAt,
-          cursorId,
-          asOfMs,
-          seenIds,
-          isArchiveCursor,
-        ),
+      const page = await loadClientRankedCandidatePage(
+        db,
+        currentUserId,
+        limit,
+        cursorCreatedAt,
+        cursorId,
+        asOfMs,
+        seenIds,
+        isArchiveCursor,
       );
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, false) });
     }
 
     if (isArchiveCursor) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
-    const visibilityFilter = currentUserId
-      ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+    const blockFilter = currentUserId
+      ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
       : '';
-    const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+    const blockParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+    const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
     const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
     const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
-    const [recentResult, trendingResult, followingResult] = await Promise.all([
+    const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
       db
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY p.created_at DESC LIMIT ?`,
         )
-        .bind(...visibilityParams, recentCutoff, asOfIso, limit * 4)
+        .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       db
         .prepare(
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
-        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
+        .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       currentUserId
         ? db
@@ -384,26 +477,30 @@ recommendations.get('/posts/recommended', async (c) => {
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                  AND p.created_at >= ? AND p.created_at <= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-                 ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+                 ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
                ORDER BY p.created_at DESC LIMIT ?`,
             )
-            .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
+            .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, limit * 4)
             .all<Record<string, unknown>>()
         : Promise.resolve(null),
+      loadPoolCandidates(db, limit * 4, asOfMs, `${blockFilter} ${visibilitySql}`, [
+        ...blockParams,
+        ...visibilityParams,
+      ]),
     ]);
 
     const recentPosts = recentResult.results || [];
     const trendingPosts = trendingResult.results || [];
     const followingPosts = followingResult?.results || [];
-    const candidateIds = [
-      ...new Set([
-        ...followingPosts.map((post) => String(post.id)),
-        ...trendingPosts.map((post) => String(post.id)),
-        ...recentPosts.map((post) => String(post.id)),
-      ]),
-    ];
+    const candidateIds = collectRecommendationCandidateIds(
+      followingPosts.map((post) => String(post.id)),
+      trendingPosts.map((post) => String(post.id)),
+      recentPosts.map((post) => String(post.id)),
+      poolCandidates.ids,
+    );
     if (candidateIds.length === 0) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
@@ -413,11 +510,11 @@ recommendations.get('/posts/recommended', async (c) => {
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
         AND p.created_at >= ? AND p.created_at <= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+      .bind(asOfUnixSeconds, serializedCandidateIds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
 
@@ -470,14 +567,17 @@ recommendations.get('/posts/recommended', async (c) => {
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
-      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
-      const historyPenalty = Math.min(
-        0.55,
+      const historyPenalty =
         decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
-          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
-      );
-      const score = baseScore * (1 - historyPenalty);
+        decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3);
+      const score = scoreRecommendationCandidate({
+        sourceScore,
+        popularity,
+        freshness,
+        contentQuality,
+        poolScore: poolCandidates.scoreById.get(id),
+        historyPenalty,
+      });
       delete post.eng_score;
       return { post, score };
     });
@@ -497,7 +597,8 @@ recommendations.get('/posts/recommended', async (c) => {
     }
 
     if (filteredPosts.length === 0) {
-      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+      const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
+      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
     }
 
     filteredPosts.sort(compareScoredPosts);
@@ -506,9 +607,11 @@ recommendations.get('/posts/recommended', async (c) => {
       return post;
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
+    // Pagination follows the ranked (unmixed) page so the score cursor stays
+    // monotonic; only the response is interleaved for display.
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
-    // At most 700 candidates come from the four sources (100 vector + 3*200).
+    // At most 800 candidate IDs come from the four time-bounded sources (4*200).
     // Bound cursor growth well below Cloudflare's URL ceiling before moving
     // into the chronological archive, whose cursor does not need an ID set.
     const nextCursor = !lastPost
@@ -517,7 +620,7 @@ recommendations.get('/posts/recommended', async (c) => {
         ? `archive,,,${asOfMs}`
         : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
 
-    return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
+    return c.json({ posts: presentForYou(enrichedPosts, limit, hideRemote, true), next_cursor: nextCursor });
   } catch (error: unknown) {
     console.error('Recommended posts error:', error);
     return c.json({ error: 'Internal server error' }, 500);
@@ -537,18 +640,20 @@ async function loadRecommendedArchivePage(
   const hasCursor = Boolean(cursorCreatedAt && cursorId);
   const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
   const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
-  const visibilityFilter = currentUserId
-    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+  const blockFilter = currentUserId
+    ? `AND (p.user_id != ? OR COALESCE(p.visibility, 'public') IN ('private', 'direct'))
+       AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)`
     : '';
+  const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
   if (currentUserId) params.push(currentUserId, currentUserId);
-  params.push(asOfIso, limit + 1);
+  params.push(...visibilityParams, asOfIso, limit + 1);
 
   const result = await db
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         AND ${cursorFilter} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at <= ?
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )

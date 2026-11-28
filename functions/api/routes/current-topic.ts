@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { batchGetFreshAndBookmarkStatus } from '../helpers';
 import type { Bindings, Variables } from '../types';
+import { visibilityFilter } from './posts/helpers.ts';
 
 const topic = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -11,14 +12,20 @@ topic.get('/current-topic', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // This is a viewer-agnostic random discovery endpoint, so its candidate
+    // pool (and the final row) may only contain public/unlisted posts. Remote
+    // Notes stay eligible as before; anonymous visibility has no bind params.
+    const visibility = visibilityFilter(null);
+
     // Get a random Flash/HTML post — sample 50 candidate IDs, pick one randomly
     const candidates = await c.env.DB.prepare(`
-      SELECT id FROM posts
-      WHERE (swf_key IS NOT NULL OR payload_key IS NOT NULL)
-        AND status = 'published'
-        AND hidden = 0
-        AND parent_id IS NULL
-      ORDER BY id
+      SELECT p.id FROM posts p
+      WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        AND p.status = 'published'
+        AND p.hidden = 0
+        AND p.parent_id IS NULL
+        ${visibility.sql}
+      ORDER BY p.id
       LIMIT 50
     `).all<{ id: string }>();
 
@@ -37,6 +44,7 @@ topic.get('/current-topic', async (c) => {
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id = ?
+        ${visibility.sql}
     `)
       .bind(pick.id)
       .first();

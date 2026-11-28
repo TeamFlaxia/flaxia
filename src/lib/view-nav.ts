@@ -11,6 +11,7 @@ export function viewToBottomNavId(view: string): string {
     case 'thread':
       return 'home';
     case 'explore':
+    case 'federated':
     case 'search':
       return 'explore';
     case 'arcade':

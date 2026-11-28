@@ -28,9 +28,11 @@ test('parameterised ActivityPub redirects moved from _redirects into the hook', 
     location: '/api/actors/alice/followers',
     status: 301,
   });
-  assert.deepEqual(legacyRedirect('/users/alice/inbox'), { location: '/api/actors/alice/inbox', status: 308 });
+  assert.equal(legacyRedirect('/users/alice/inbox'), null);
+  assert.equal(legacyRedirect('/actors/alice/inbox'), null);
   assert.deepEqual(legacyRedirect('/notes/abc'), { location: '/api/notes/abc', status: 301 });
-  // Profile pages stay SvelteKit routes; only the ActivityPub inbox is redirected.
+  // Profile pages and legacy inboxes stay SvelteKit routes; the latter must
+  // not redirect because peers sign the original request target.
   assert.equal(legacyRedirect('/users/alice'), null);
   assert.equal(legacyRedirect('/home'), null);
 });

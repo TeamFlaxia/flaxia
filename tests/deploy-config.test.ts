@@ -188,6 +188,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
       'AP_DIRECT_DELIVERY',
       'only the federation test delivers without a queue; the variable is inert outside test and development',
     ],
+    ['AP_POOL_SEED_DOMAINS', 'the popularity pool falls back to its built-in instance list when unset or empty'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {
@@ -264,4 +265,21 @@ test('Cloudflare Pages serves postbuild static files without hitting the worker'
   for (const pattern of ['/crowd/*', '/export-popup.html', '/export-popup', '/docs/index.json', '/404.html']) {
     assert.ok(routes.exclude?.includes(pattern), `_routes.json must exclude ${pattern} from the worker`);
   }
+});
+
+test('the AP queue worker has a single compatibility date', async () => {
+  const root = new URL('..', import.meta.url).pathname;
+  const workerToml = await readFile(join(root, 'wrangler.worker.toml'), 'utf8');
+  const match = workerToml.match(/^\s*compatibility_date\s*=\s*"([^"]+)"/m);
+  assert.ok(match, 'wrangler.worker.toml must declare compatibility_date');
+  assert.equal(match[1], '2026-06-02');
+
+  // An override on the CLI would make production behave differently from
+  // local `wrangler dev`, which is how dev-only federation flags used to leak.
+  const deploy = await readFile(join(root, '.github/workflows/deploy.yml'), 'utf8');
+  assert.doesNotMatch(deploy, /--compatibility-date/, 'the deploy workflow must not override the toml value');
+  const doc = await readFile(DEPLOYMENT_DOC_URL, 'utf8');
+  assert.doesNotMatch(doc, /--compatibility-date/, 'the deployment doc must not suggest an override');
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(readme, /--compatibility-date/, 'the README must not suggest an override');
 });

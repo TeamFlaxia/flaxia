@@ -1,8 +1,35 @@
 import assert from 'node:assert/strict';
+import { register } from 'node:module';
 import { describe, it } from 'node:test';
+import { isRemoteRecommendation, mixForYouFeed, presentForYou } from '../shared/recommendation/mix.ts';
 import { normalizeVector, weightedMeanVector } from '../shared/recommendation/vector.ts';
 import { decodeVector, encodeVector } from '../shared/recommendation/vector-codec.ts';
 import { rankCandidates } from '../src/lib/recommendation/rank.ts';
+
+// The Hono route module still uses extensionless relative imports, which Node's
+// ESM resolver does not accept. Teach this test process to append `.ts` so the
+// pure recommendation helpers can be exercised directly (no dev server needed).
+register(
+  `data:text/javascript,${encodeURIComponent(`
+    export async function resolve(specifier, context, nextResolve) {
+      try {
+        return await nextResolve(specifier, context);
+      } catch (error) {
+        if (error && error.code === 'ERR_MODULE_NOT_FOUND' && specifier.startsWith('.')) {
+          return nextResolve(specifier + '.ts', context);
+        }
+        throw error;
+      }
+    }
+  `)}`,
+);
+const {
+  buildPoolCandidateSql,
+  collectRecommendationCandidateIds,
+  normalizePoolScore,
+  POOL_SCORE_WEIGHT,
+  scoreRecommendationCandidate,
+} = await import('../functions/api/routes/posts/recommendations.ts');
 
 describe('recommendation vectors', () => {
   it('round-trips int8 vectors within quantization error', () => {
@@ -99,5 +126,170 @@ describe('client-side recommendation ranking', () => {
       ranked.map((item) => item.id),
       ['high', 'low'],
     );
+  });
+});
+
+describe('For You source mixing', () => {
+  const local = (n: number) => `local-${n}`;
+  const remote = (n: number) => `remote-${n}`;
+  const items = [...Array.from({ length: 6 }, (_, i) => local(i)), ...Array.from({ length: 6 }, (_, i) => remote(i))];
+  const source = (id: string) => (id.startsWith('remote') ? ('remote' as const) : ('local' as const));
+
+  it('alternates 1:1 with Flaxia taking the first slot', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 8 });
+    assert.deepEqual(mixed.map(source), ['local', 'remote', 'local', 'remote', 'local', 'remote', 'local', 'remote']);
+    assert.equal(mixed[0], 'local-0');
+  });
+
+  it('keeps per-side order', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 4 });
+    assert.deepEqual(mixed, ['local-0', 'remote-0', 'local-1', 'remote-1']);
+  });
+
+  it('fills the remaining slots from the longer side', () => {
+    const skewed = ['local-0', 'local-1', 'local-2', 'remote-0'];
+    assert.deepEqual(mixForYouFeed({ items: skewed, getSource: source, limit: 4 }), [
+      'local-0',
+      'remote-0',
+      'local-1',
+      'local-2',
+    ]);
+    assert.deepEqual(mixForYouFeed({ items: ['remote-0', 'remote-1'], getSource: source, limit: 4 }), [
+      'remote-0',
+      'remote-1',
+    ]);
+  });
+
+  it('honours the "do not show" choice', () => {
+    const mixed = mixForYouFeed({ items, getSource: source, limit: 6, hideRemote: true });
+    assert.ok(mixed.every((id) => source(id) === 'local'));
+    assert.deepEqual(mixed, ['local-0', 'local-1', 'local-2', 'local-3', 'local-4', 'local-5']);
+  });
+
+  it('handles empty input and zero limits', () => {
+    assert.deepEqual(mixForYouFeed({ items, getSource: source, limit: 0 }), []);
+    assert.deepEqual(mixForYouFeed({ items: [], getSource: source, limit: 10 }), []);
+  });
+
+  it('recognises remote posts by flag or actor id', () => {
+    assert.equal(isRemoteRecommendation({ is_remote: true }), true);
+    assert.equal(isRemoteRecommendation({ is_remote: 1 }), true);
+    assert.equal(isRemoteRecommendation({ actor_id: 'https://mastodon.example/users/a' }), true);
+    assert.equal(isRemoteRecommendation({ user_id: 'local', is_remote: false }), false);
+  });
+
+  it('presentForYou mixes raw D1 rows (is_remote is 0/1)', () => {
+    const rows = [
+      { id: 'local-1', is_remote: 0 },
+      { id: 'remote-1', is_remote: 1, actor_id: 'https://mastodon.example/users/a' },
+      { id: 'local-2', is_remote: 0 },
+      { id: 'remote-2', is_remote: 1 },
+    ];
+    assert.deepEqual(
+      presentForYou(rows, 4, false, true).map((row) => row.id),
+      ['local-1', 'remote-1', 'local-2', 'remote-2'],
+    );
+    assert.deepEqual(
+      presentForYou(rows, 4, true, true).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+  });
+
+  it('presentForYou hides remote candidates without mixing for client ranking', () => {
+    const rows = [
+      { id: 'local-1', is_remote: 0 },
+      { id: 'remote-1', is_remote: 1 },
+      { id: 'local-2', is_remote: 0 },
+    ];
+    assert.deepEqual(
+      presentForYou(rows, 3, true, false).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+    assert.deepEqual(
+      presentForYou(rows, 3, false, false).map((row) => row.id),
+      ['local-1', 'remote-1', 'local-2'],
+    );
+  });
+
+  it('keeps Flaxia first in each pair even when a pool post scores highest', () => {
+    const rows = [
+      { id: 'viral-remote', is_remote: 1, actor_id: 'https://mastodon.example/users/a', score: 0.99 },
+      { id: 'local-1', is_remote: 0, score: 0.4 },
+      { id: 'local-2', is_remote: 0, score: 0.3 },
+    ];
+    assert.deepEqual(
+      presentForYou(rows, 3, false, true).map((row) => row.id),
+      ['local-1', 'viral-remote', 'local-2'],
+    );
+    // `external=hide` drops the high-scoring remote candidate on both paths.
+    assert.deepEqual(
+      presentForYou(rows, 3, true, true).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+    assert.deepEqual(
+      presentForYou(rows, 3, true, false).map((row) => row.id),
+      ['local-1', 'local-2'],
+    );
+  });
+});
+
+describe('federated popularity pool', () => {
+  it('normalizes raw pool scores into a bounded 0..1 term', () => {
+    assert.equal(normalizePoolScore(null), 0);
+    assert.equal(normalizePoolScore(undefined), 0);
+    assert.equal(normalizePoolScore(0), 0);
+    assert.equal(normalizePoolScore(-5), 0);
+    assert.equal(normalizePoolScore(Number.NaN), 0);
+    assert.ok(normalizePoolScore(1) > 0);
+    assert.ok(normalizePoolScore(10) > normalizePoolScore(1));
+    assert.equal(normalizePoolScore(50), 1);
+    assert.equal(normalizePoolScore(5000), 1);
+  });
+
+  it('adds only a small bounded pool term to the base score', () => {
+    const input = { sourceScore: 0.7, popularity: 0.4, freshness: 0.9, contentQuality: 1 };
+    const local = scoreRecommendationCandidate({ ...input, poolScore: 0 });
+    const viral = scoreRecommendationCandidate({ ...input, poolScore: 5000 });
+    assert.ok(viral > local);
+    assert.ok(Math.abs(viral - local - POOL_SCORE_WEIGHT) < 1e-9);
+    // The pool term alone can never outrank a strong local source score.
+    assert.ok(viral < 1);
+  });
+
+  it('includes the pool term in base_scores so vector-less candidates can be ranked', () => {
+    const base = { sourceScore: 0.5, popularity: 0.3, freshness: 0.5, contentQuality: 0.7 };
+    const poolBase = scoreRecommendationCandidate({ ...base, poolScore: 50 });
+    const plainBase = scoreRecommendationCandidate({ ...base, poolScore: 0 });
+    assert.ok(poolBase > plainBase);
+    const ranked = rankCandidates({
+      items: [
+        { id: 'remote-pool', base: poolBase, vector: null },
+        { id: 'local', base: plainBase, vector: null },
+      ],
+      profile: [1, 0],
+      getVector: (item) => item.vector,
+      getBaseScore: (item) => item.base,
+      limit: 1,
+    });
+    assert.equal(ranked[0].id, 'remote-pool');
+  });
+
+  it('feeds pool ids into the deduplicated candidate set', () => {
+    const ids = collectRecommendationCandidateIds(
+      ['following-1'],
+      ['trending-1'],
+      ['recent-1', 'following-1'],
+      ['remote-pool-1', 'recent-1'],
+    );
+    assert.deepEqual(ids, ['following-1', 'trending-1', 'recent-1', 'remote-pool-1']);
+    assert.ok(ids.includes('remote-pool-1'));
+  });
+
+  it('builds a remote-only candidate query ordered by pool score', () => {
+    const sql = buildPoolCandidateSql('');
+    assert.match(sql, /ap_pool_metrics/);
+    assert.match(sql, /COALESCE\(pm\.score, 0\) AS pool_score/);
+    assert.match(sql, /p\.actor_id IS NOT NULL/);
+    assert.match(sql, /ORDER BY pool_score DESC LIMIT \?/);
   });
 });

@@ -11,6 +11,44 @@ export const SECURITY_CONTEXT = 'https://w3id.org/security/v1';
 /** The canonical "public" collection every federated timeline understands. */
 export const PUBLIC_COLLECTION = 'https://www.w3.org/ns/activitystreams#Public';
 
+/** Compact/relative spellings peers use for the same collection. */
+const PUBLIC_ALIASES = new Set([PUBLIC_COLLECTION, 'Public', 'as:Public']);
+
+/**
+ * True when an audience entry names the Public collection.
+ *
+ * ActivityStreams audience fields may hold a string, a Link/Object with `id`
+ * or `href`, or an array of those. All three shapes (and the three common
+ * spellings of Public) must be treated the same, otherwise a peer can make a
+ * private Note look local-only by changing its representation.
+ */
+export function isPublicAddress(value: unknown): boolean {
+  if (typeof value === 'string') return PUBLIC_ALIASES.has(value.trim());
+  if (Array.isArray(value)) return value.some(isPublicAddress);
+  if (value && typeof value === 'object') {
+    const entry = value as { id?: unknown; href?: unknown };
+    return isPublicAddress(entry.id) || isPublicAddress(entry.href);
+  }
+  return false;
+}
+
+/** Extract string addresses from string/Object/Link audience entries. */
+export function audienceEntries(values: unknown): string[] {
+  const entries: unknown[] = Array.isArray(values) ? values : values === null || values === undefined ? [] : [values];
+  const found = new Set<string>();
+  for (const entry of entries) {
+    if (typeof entry === 'string') {
+      found.add(entry);
+      continue;
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as { id?: unknown; href?: unknown };
+    if (typeof record.id === 'string') found.add(record.id);
+    if (typeof record.href === 'string') found.add(record.href);
+  }
+  return [...found];
+}
+
 /** Media type used for actors, activities and collections. */
 export const ACTIVITY_JSON = 'application/activity+json';
 
