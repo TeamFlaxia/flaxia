@@ -6,6 +6,7 @@ import { after, beforeEach, describe, it } from 'node:test';
 import { Hono } from 'hono';
 import {
   discoverForEmptyFeed,
+  ONDEMAND_COOLDOWN_KEY,
   ONDEMAND_LOCK_KEY,
   ONDEMAND_OPTIONS,
   runDiscoveryForRequest,
@@ -175,6 +176,10 @@ async function lockRows(): Promise<Array<{ key: string }>> {
   return result.results;
 }
 
+async function lockKeys(): Promise<string[]> {
+  return (await lockRows()).map((row) => row.key);
+}
+
 describe('federated on-demand discovery', () => {
   it('discovers and returns seeded posts when the pool and remote posts are both empty', async () => {
     const restore = stubFetch(mastodonFetch());
@@ -184,7 +189,7 @@ describe('federated on-demand discovery', () => {
       assert.equal(data.posts[0].ap_object_id, OBJECT_ID);
       assert.equal(data.posts[0].text, 'Discovered on demand');
       assert.ok(Number(data.posts[0].pool_score) > 0);
-      // A productive run releases its lock so the next cold request may retry.
+      // Every completed run releases its lock so the next cold request may retry.
       assert.equal((await lockRows()).length, 0);
     } finally {
       restore();
@@ -204,7 +209,7 @@ describe('federated on-demand discovery', () => {
     assert.equal(calls, 0);
   });
 
-  it('sets the lock before starting a bounded run and keeps it on a dry run', async () => {
+  it('sets the lock during a bounded run and releases it after a dry run', async () => {
     let seenOptions: typeof ONDEMAND_OPTIONS | null = null;
     let lockDuringRun = 0;
     const ran = await discoverForEmptyFeed(envFor(), async (_env, options) => {
@@ -215,7 +220,26 @@ describe('federated on-demand discovery', () => {
     assert.equal(ran, true);
     assert.equal(lockDuringRun, 1, 'the lock must exist while discovery runs');
     assert.deepEqual(seenOptions, { maxInstances: 4, maxPostsPerInstance: 40, maxTotal: 500, maxRefreshes: 0 });
-    assert.equal((await lockRows()).length, 1, 'a dry run keeps the lock until its TTL');
+    assert.deepEqual(
+      await lockKeys(),
+      [ONDEMAND_COOLDOWN_KEY],
+      'a dry run releases the run lock but leaves a short cooldown',
+    );
+  });
+
+  it('keeps a short cooldown after a dry run but allows a later retry', async () => {
+    const env = envFor();
+    let calls = 0;
+    const runner = async () => {
+      calls++;
+      return emptyResult;
+    };
+    assert.equal(await discoverForEmptyFeed(env, runner), true);
+    assert.equal(await discoverForEmptyFeed(env, runner), false, 'cooldown must suppress back-to-back runs');
+    assert.equal(calls, 1);
+    db.prepare('DELETE FROM ap_discovery_locks WHERE key = ?').bind(ONDEMAND_COOLDOWN_KEY).run();
+    assert.equal(await discoverForEmptyFeed(env, runner), true, 'a later request may retry');
+    assert.equal(calls, 2);
   });
 
   it('discovers even when CACHE is absent', async () => {
@@ -228,7 +252,7 @@ describe('federated on-demand discovery', () => {
     assert.equal(calls, 1);
   });
 
-  it('swallows runner errors and keeps the lock', async () => {
+  it('swallows runner errors and releases the lock', async () => {
     let calls = 0;
     const ran = await discoverForEmptyFeed(envFor(), async () => {
       calls++;
@@ -236,7 +260,11 @@ describe('federated on-demand discovery', () => {
     });
     assert.equal(ran, false);
     assert.equal(calls, 1, 'the runner must actually be invoked before the error is swallowed');
-    assert.equal((await lockRows()).length, 1, 'a failed run keeps the lock until its TTL');
+    assert.deepEqual(
+      await lockKeys(),
+      [ONDEMAND_COOLDOWN_KEY],
+      'a failed run releases the run lock but leaves a short cooldown',
+    );
   });
 
   it('passes the available bindings into a correctly shaped pool env', async () => {

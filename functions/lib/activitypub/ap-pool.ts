@@ -220,7 +220,12 @@ async function upsertPoolActor(db: Db, actor: PoolActor): Promise<void> {
 }
 async function isMastodon(env: PoolEnv, domain: string): Promise<boolean> {
   const document = recordOf(await fetchInstanceJson(env, domain, '/.well-known/nodeinfo'));
-  const link = asRecords(document?.links).find((e) => `${e.rel ?? ''} ${e.href ?? ''}`.includes('nodeinfo/2.1'));
+  // Mastodon instances may advertise only schema 2.0 (e.g. mastodon.social),
+  // so accept either version before falling back to the outbox.
+  const link = asRecords(document?.links).find((e) => {
+    const candidate = `${e.rel ?? ''} ${e.href ?? ''}`;
+    return candidate.includes('nodeinfo/2.1') || candidate.includes('nodeinfo/2.0');
+  });
   const href = urlOf(link?.href);
   if (!href || !sameHost(href, domain) || checkUrlForSsrf(href)) return false;
   const info = recordOf(await fetchInstanceJson(env, domain, href.pathname + href.search));

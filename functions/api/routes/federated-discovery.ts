@@ -4,7 +4,11 @@ import type { Bindings } from '../types.ts';
 
 /** One lock for all viewers: an empty first page must not stampede the peers. */
 export const ONDEMAND_LOCK_KEY = 'ap:pool:ondemand';
+/** Short negative cache after a dry/failed run so peers are not re-hammered. */
+export const ONDEMAND_COOLDOWN_KEY = 'ap:pool:ondemand:cooldown';
+/** Safety net only: the owner releases the lock as soon as its run finishes. */
 const LOCK_TTL_MS = 5 * 60 * 1000;
+const COOLDOWN_MS = 60 * 1000;
 
 export type DiscoveryOptions = {
   maxInstances: number;
@@ -58,10 +62,12 @@ export async function runDiscoveryForRequest(
  */
 async function acquireLock(db: Bindings['DB'], now: number): Promise<string | null> {
   const owner = crypto.randomUUID();
-  await db
-    .prepare('DELETE FROM ap_discovery_locks WHERE key = ? AND expires_at <= ?')
-    .bind(ONDEMAND_LOCK_KEY, now)
-    .run();
+  await db.prepare('DELETE FROM ap_discovery_locks WHERE expires_at <= ?').bind(now).run();
+  const cooling = await db
+    .prepare('SELECT 1 FROM ap_discovery_locks WHERE key = ?')
+    .bind(ONDEMAND_COOLDOWN_KEY)
+    .first();
+  if (cooling) return null;
   const result = await db
     .prepare('INSERT OR IGNORE INTO ap_discovery_locks (key, owner, expires_at) VALUES (?, ?, ?)')
     .bind(ONDEMAND_LOCK_KEY, owner, now + LOCK_TTL_MS)
@@ -72,9 +78,12 @@ async function acquireLock(db: Bindings['DB'], now: number): Promise<string | nu
 /**
  * Run one rate-limited discovery attempt. Returns true only when this caller
  * acquired the lock and the run finished; the route then re-queries the feed.
- * A dry run keeps the lock until its TTL so a failing peer is not retried on
- * every request. Lock and discovery failures are logged and swallowed so an
- * empty tab stays a valid empty tab rather than a 500.
+ * The lock is held only while the run is in flight: it is always released in a
+ * `finally` block (success, dry run, or thrown error) with the owner-token
+ * guarded DELETE. A dry/failed run must not block retries for the full TTL;
+ * the atomic acquire still prevents concurrent cold requests from stampeding
+ * the peers during the run itself. Lock and discovery failures are logged and
+ * swallowed so an empty tab stays a valid empty tab rather than a 500.
  */
 export async function discoverForEmptyFeed(env: Bindings, runner: Runner = runDiscoveryForRequest): Promise<boolean> {
   const now = Date.now();
@@ -88,23 +97,29 @@ export async function discoverForEmptyFeed(env: Bindings, runner: Runner = runDi
   }
   if (!owner) return false;
 
-  let result: PoolResult;
+  let result: PoolResult | null = null;
   try {
     result = await runner(env, ONDEMAND_OPTIONS);
   } catch (error) {
     console.error('Federated on-demand discovery failed:', (error as Error).message);
-    return false;
-  }
-  console.log('Federated on-demand discovery:', JSON.stringify(result));
-
-  if (result.stored > 0) {
+  } finally {
+    // The run lock is always released immediately (including dry runs and
+    // errors). A separate short cooldown prevents back-to-back cold requests
+    // from hammering peers without blocking a legitimate retry for minutes.
     try {
       await env.DB.prepare('DELETE FROM ap_discovery_locks WHERE key = ? AND owner = ?')
         .bind(ONDEMAND_LOCK_KEY, owner)
         .run();
+      if (!result || result.stored === 0) {
+        await env.DB.prepare('INSERT OR REPLACE INTO ap_discovery_locks (key, owner, expires_at) VALUES (?, ?, ?)')
+          .bind(ONDEMAND_COOLDOWN_KEY, owner, Date.now() + COOLDOWN_MS)
+          .run();
+      }
     } catch (error) {
       console.error('Federated on-demand lock release failed:', (error as Error).message);
     }
   }
+  if (!result) return false;
+  console.log('Federated on-demand discovery:', JSON.stringify(result));
   return true;
 }

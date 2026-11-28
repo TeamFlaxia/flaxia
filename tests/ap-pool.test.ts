@@ -133,16 +133,24 @@ function stubFetch(handler: (url: string) => { status?: number; body: unknown } 
 }
 
 /** NodeInfo + trends stub for a Mastodon instance. */
-function mastodonFetch(trends: unknown[]): (url: string) => { status?: number; body: unknown } | null {
+function mastodonFetch(
+  trends: unknown[],
+  schema: '2.0' | '2.1' = '2.1',
+): (url: string) => { status?: number; body: unknown } | null {
   return (url) => {
     if (url === `https://${DOMAIN}/.well-known/nodeinfo`) {
       return {
         body: {
-          links: [{ rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1', href: `https://${DOMAIN}/nodeinfo/2.1` }],
+          links: [
+            {
+              rel: `http://nodeinfo.diaspora.software/ns/schema/${schema}`,
+              href: `https://${DOMAIN}/nodeinfo/${schema}`,
+            },
+          ],
         },
       };
     }
-    if (url === `https://${DOMAIN}/nodeinfo/2.1`) {
+    if (url === `https://${DOMAIN}/nodeinfo/${schema}`) {
       return { body: { software: { name: 'mastodon' }, protocols: ['activitypub'] } };
     }
     if (url.startsWith(`https://${DOMAIN}/api/v1/trends/statuses`)) return { body: trends };
@@ -318,6 +326,36 @@ describe('federated popularity pool', () => {
       assert.equal(author?.preferred_username, 'alice');
       assert.equal(author?.domain, DOMAIN);
       assert.equal(author?.summary, 'Hi there');
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('detects Mastodon from a nodeinfo 2.0-only document and fetches trends', async () => {
+    const db = createTestDatabase();
+    // mastodon.social advertises only schema 2.0; detection must still select
+    // the Mastodon REST API instead of the outbox (which would fetch nothing).
+    const baseFetch = mastodonFetch([status()], '2.0');
+    let trendsFetches = 0;
+    const restore = stubFetch((url) => {
+      if (url.startsWith(`https://${DOMAIN}/api/v1/trends/statuses`)) trendsFetches++;
+      return baseFetch(url);
+    });
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(trendsFetches, 1, 'the 2.0-only instance must use the Mastodon trends endpoint');
+      assert.deepEqual(result, {
+        instances: 1,
+        fetched: 1,
+        stored: 1,
+        inserted: 1,
+        refreshed: 0,
+        skipped: 0,
+        errors: 0,
+      });
+      const post = await db.prepare('SELECT ap_object_id FROM posts WHERE ap_object_id = ?').bind(OBJECT_ID).first();
+      assert.ok(post, 'the trend status must be stored');
     } finally {
       restore();
       db.close();
