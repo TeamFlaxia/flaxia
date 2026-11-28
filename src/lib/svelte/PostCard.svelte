@@ -3,6 +3,7 @@ import { onDestroy, onMount } from 'svelte';
 import { canUsePostColors } from '../../../shared/entitlements.ts';
 import { stripPostColors } from '../../../shared/post-colors.ts';
 import { stripMediaCues } from '../../../shared/post-cues.ts';
+import { isRemotePost } from '../../../shared/post-text.ts';
 import { type Post, PostCardMode, type QuotedPost, type ReactionSummary } from '../../../shared/types/post.ts';
 import { showSignInPrompt } from '../../components/SignInPrompt.ts';
 import { t } from '../i18n.ts';
@@ -552,6 +553,7 @@ export function updatePost(next: Partial<Post>): void {
         mentions: currentMentions,
         enablePostRefs: props.enablePostRefs,
         badgeType: props.post.badge_type,
+        foldRemote: isRemotePost(props.post),
       });
       if (props.currentUser) {
         linkPreviewLoaded = true;
@@ -600,6 +602,7 @@ onMount(() => {
     mentions: props.post.mentions,
     enablePostRefs: props.enablePostRefs,
     badgeType: props.post.badge_type,
+    foldRemote: isRemotePost(props.post),
   });
   if (props.post.poll) {
     /* PollWidget renders from props below */

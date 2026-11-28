@@ -49,6 +49,20 @@ export function decodeHtmlEntities(text: string): string {
 }
 
 /**
+ * Ingest cap for imported remote text.
+ *
+ * This is a safety bound on untrusted payloads, not the product limit: local
+ * posts remain at 200 characters, while Fediverse Notes are stored in full up
+ * to 10,000 characters and folded in the UI after the first 200.
+ */
+export const MAX_REMOTE_POST_TEXT_LENGTH = 10_000;
+
+/** Sanitize a remote Note body and bound it before it reaches D1. */
+export function remotePostText(html: string): string {
+  return htmlToText(html).slice(0, MAX_REMOTE_POST_TEXT_LENGTH);
+}
+
+/**
  * Convert remote HTML into plain text.
  *
  * Script and style bodies are removed entirely (their text is code, not

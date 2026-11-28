@@ -213,12 +213,24 @@ describe('federated popularity pool', () => {
       assert.equal(result.metrics.score, computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT }));
     }));
 
-  it('caps text at 200 characters and marks sensitive posts hidden', () => {
-    const long = normalizeMastodonStatus(status({ content: `<p>${'あ'.repeat(300)}</p>` }), actorInfo(), BASE);
+  it('stores full remote text (not the local 200-character limit) and marks sensitive posts hidden', () => {
+    const body = 'あ'.repeat(300);
+    const long = normalizeMastodonStatus(
+      status({ content: `<p>${body}</p><script>alert(1)</script>` }),
+      actorInfo(),
+      BASE,
+    );
     assert.ok(long);
-    assert.equal(String(long.post.text).length, 200);
+    assert.equal(long.post.text, body, 'remote text must not be truncated to 200 characters');
+    assert.doesNotMatch(String(long.post.text), /<script|alert\(1\)/, 'remote HTML must stay sanitized');
     const sensitive = normalizeMastodonStatus(status({ sensitive: true }), actorInfo(), BASE);
     assert.equal(sensitive?.post.hidden, 1);
+  });
+
+  it('caps remote text at the 10,000-character safety bound', () => {
+    const tooLong = normalizeMastodonStatus(status({ content: `<p>${'x'.repeat(10_050)}</p>` }), actorInfo(), BASE);
+    assert.ok(tooLong);
+    assert.equal(String(tooLong.post.text).length, 10_000);
   });
 
   it('rejects boosts, private/direct statuses and unattributed or foreign statuses', () => {
@@ -326,6 +338,29 @@ describe('federated popularity pool', () => {
       assert.equal(author?.preferred_username, 'alice');
       assert.equal(author?.domain, DOMAIN);
       assert.equal(author?.summary, 'Hi there');
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('stores a discovered 200+ character Note in full and sanitized', async () => {
+    const db = createTestDatabase();
+    const body = '長'.repeat(250);
+    const objectId = `${ACTOR_URL}/statuses/long`;
+    const restore = stubFetch(
+      mastodonFetch([status({ id: objectId, content: `<p>${body}</p><script>alert(1)</script>` })]),
+    );
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.inserted, 1);
+      const post = await db
+        .prepare('SELECT text FROM posts WHERE ap_object_id = ?')
+        .bind(objectId)
+        .first<{ text: string }>();
+      assert.ok(post);
+      assert.equal(post.text, body);
+      assert.doesNotMatch(post.text, /<script|alert\(1\)/);
     } finally {
       restore();
       db.close();

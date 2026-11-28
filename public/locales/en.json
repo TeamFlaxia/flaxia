@@ -149,6 +149,8 @@
   "post.edit_attachment_removed": "Attachment removed",
   "post.nsfw_warning": "This post may contain sensitive content",
   "post.nsfw_show": "Show anyway",
+  "post_text_continue": "Continue reading",
+  "post_text_show_less": "Show less",
   "post.menu_counter_notice": "File DMCA Counter-Notice",
   "post.counter_notice_title": "DMCA Counter-Notice",
   "post.counter_notice_explanation": "If you believe your post was removed by mistake or misidentification, you may file a DMCA counter-notification. Providing false information may result in legal consequences.",

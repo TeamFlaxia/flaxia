@@ -7,7 +7,7 @@ import { type FederationEnv, normalizeActorSummary, resolveRemoteActor } from '.
 import { actorSignOptions } from './keys.ts';
 import { handleMove } from './move.ts';
 import { type Visibility } from './note.ts';
-import { htmlToText } from './text.ts';
+import { remotePostText } from './text.ts';
 
 /**
  * Processing of the activities this instance receives.
@@ -30,8 +30,6 @@ export interface IncomingActivity {
   /** Local account the activity was addressed to. */
   username: string;
 }
-
-const MAX_REMOTE_TEXT_LENGTH = 200;
 
 function objectOf(activity: Record<string, unknown>): Record<string, unknown> | null {
   const object = activity.object;
@@ -288,7 +286,7 @@ async function handleCreate(
     return;
   }
 
-  const text = htmlToText(content).slice(0, MAX_REMOTE_TEXT_LENGTH);
+  const text = remotePostText(content);
 
   // The Note must be attributed to the signing actor; otherwise any holder of
   // a federated signing key could publish content under another actor's name.

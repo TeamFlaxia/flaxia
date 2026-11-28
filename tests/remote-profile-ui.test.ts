@@ -398,3 +398,40 @@ describe('remote follow state', () => {
     }
   });
 });
+
+describe('remote profile post text', () => {
+  it('folds a long remote post and expands it on click', async () => {
+    const body = 'あ'.repeat(260);
+    const page = await mount('src/lib/svelte/RemoteProfilePage.svelte', {
+      domain: 'remote.example',
+      username: 'bob',
+      currentUser: null,
+      initialProfile: {
+        actor: {
+          actor_url: 'https://remote.example/users/bob',
+          display_name: 'Bob',
+          icon_url: null,
+          bio: null,
+        },
+        posts: [{ id: 'long-post', text: body, created_at: '2026-01-01T00:00:00.000Z' }],
+      },
+    });
+    try {
+      const text = page.root.querySelector('.post-text');
+      const toggle = page.root.querySelector('button.post-text-fold-toggle');
+      assert.ok(text);
+      assert.ok(toggle, 'a long remote post must expose a toggle');
+      assert.equal(text.textContent, 'あ'.repeat(200));
+      assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+      assert.equal(toggle.textContent?.trim(), 'post_text_continue');
+
+      toggle.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await tick();
+      assert.equal(text.textContent, body);
+      assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+      assert.equal(toggle.textContent?.trim(), 'post_text_show_less');
+    } finally {
+      page.done();
+    }
+  });
+});

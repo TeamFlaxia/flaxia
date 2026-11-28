@@ -196,6 +196,39 @@ describe('ActivityPub inbox handlers', () => {
     }
   });
 
+  it('stores an inbox-delivered Note longer than 200 characters in full and sanitized', async () => {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, status, created_at)
+         VALUES ('following-long-text', 'local-1', ?, ?, 'accepted', '2026-01-01T00:00:00.000Z')`,
+      )
+      .bind(REMOTE_ACTOR, `${REMOTE}/users/alice/inbox`)
+      .run();
+    const body = '長'.repeat(320);
+    await handleIncomingActivity(envFor(db), {
+      actorId: REMOTE_ACTOR,
+      username: 'alice',
+      activity: {
+        id: `${REMOTE}/activities/long-text`,
+        type: 'Create',
+        actor: REMOTE_ACTOR,
+        object: {
+          id: `${REMOTE}/notes/long-text`,
+          type: 'Note',
+          attributedTo: REMOTE_ACTOR,
+          content: `<p>${body}</p><script>alert(1)</script><p>&amp; more</p>`,
+        },
+      },
+    });
+    const post = await db
+      .prepare('SELECT text FROM posts WHERE ap_object_id = ?')
+      .bind(`${REMOTE}/notes/long-text`)
+      .first<{ text: string }>();
+    assert.ok(post, 'the long Note must be stored');
+    assert.equal(post.text, `${body}\n& more`, 'inbox text must not be truncated at 200 characters');
+    assert.doesNotMatch(post.text, /<script|alert\(1\)/, 'inbox HTML must stay sanitized');
+  });
+
   it('stores the same Note only once even with different activity ids', async () => {
     const object = {
       id: `${REMOTE}/notes/duplicate`,

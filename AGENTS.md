@@ -87,7 +87,7 @@ CI run with npm).
 - New SNS UI code uses `flaxia-render` (source `packages/flaxia-render/`, app boundary `src/lib/render/index.ts`) and `src/lib/layout/`; `innerHTML` is not a rendering primitive for dynamic content (see `docs/rendering.md`)
 
 ## Important Constraints
-- Post text: ≤ 200 characters
+- Post text: ≤ 200 characters for locally authored posts; imported Fediverse posts keep up to 10,000 characters (safety cap) and fold after the first 200 in the UI (`shared/post-text.ts`)
 - Payload size: ≤ 10MB (post), ≤ 200MB (ads)
 - Global and Following timelines: reverse chronological (`GET /api/posts`). For You: ranked recommendations (`GET /api/posts/recommended`); see `docs/architecture.md`.
 - `allow-same-origin` banned on all iframes

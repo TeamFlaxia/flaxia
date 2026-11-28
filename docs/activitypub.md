@@ -217,8 +217,9 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
   `/api/v1/trends/statuses` and tag timelines for hashtags popular on Flaxia;
   other implementations fall back to the actor's public Outbox.
 * Only public Notes are stored: the author must match the signed actor, the
-  object id must live on the same origin, text is capped at 200 characters and
-  unsafe HTML is discarded. `unlisted` and private Notes are rejected because
+  object id must live on the same origin, text is stored in full after HTML is
+  discarded (10,000-character safety cap) and folded after 200 characters in the
+  UI. `unlisted` and private Notes are rejected because
   this is public discovery. Numeric Mastodon ids are resolved to the same AP
   object id used by inbox delivery, so a Note appears once and a received
   `Delete` hides every copy. Blocked actors, sensitive posts and timestamps
