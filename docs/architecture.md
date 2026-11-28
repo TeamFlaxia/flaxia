@@ -209,9 +209,11 @@ Chronological feeds return `next_cursor` (the last post's `created_at`) so the
 client can keep paging. `functions/api/routes/posts/feed.ts` implements them;
 For You lives in `functions/api/routes/posts/recommendations.ts`. For You
 combines following, trending, and recent candidates, then applies freshness,
-engagement, trust, and recently-seen filters. Authors with a low trust score
-(repeated near-duplicate posts) are excluded, and exact duplicates collapse to
-their newest copy.
+engagement, trust, recently-seen and language-affinity terms; the pure scoring
+functions are in `functions/lib/recommendation-scoring.ts`. For a signed-in
+reader, a post by an author using the same language gets a small affinity
+boost. Authors with a low trust score (repeated near-duplicate posts) are
+excluded, and exact duplicates collapse to their newest copy.
 
 The explicit preference vector lives in the browser. With
 `client_rank=1&include_vectors=1`, the API also returns public candidate

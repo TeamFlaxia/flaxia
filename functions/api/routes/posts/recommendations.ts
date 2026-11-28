@@ -9,6 +9,10 @@ import {
 import { POOL_JOIN_SQL, POOL_SCORE_SQL } from '../../../lib/activitypub/ap-pool.ts';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
+import {
+  collectRecommendationCandidateIds,
+  scoreRecommendationCandidate,
+} from '../../../lib/recommendation-scoring.ts';
 import { computeQualityScore } from '../../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST } from '../../../lib/trust';
 import type { Bindings, PostRow, Variables } from '../../types';
@@ -52,6 +56,15 @@ function compareScoredPosts(
   if (ca !== 0) return ca;
   return String(b.post.id || '').localeCompare(String(a.post.id || ''));
 }
+/** Author language is already selected by RECOMMENDED_SELECT as author_language. */
+function languageAffinity(post: Record<string, unknown>, viewerLanguage: string): number {
+  if (!viewerLanguage) return 0;
+  const authorLanguage = String(post.author_language ?? '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 2);
+  return authorLanguage === viewerLanguage ? 1 : 0;
+}
 
 function rankCandidateIds(ids: string[]): Map<string, number> {
   return new Map(ids.map((id, index) => [id, index]));
@@ -81,47 +94,6 @@ const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOM
 // candidate slots or blocking the archive fallback.
 const LOCAL_ONLY_FILTER = 'AND p.actor_id IS NULL';
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
-
-/**
- * Federated popularity is a bounded nudge (log scale). For You filters
- * federated rows out before display, so this term cannot promote a remote post
- * into For You; the Federated tab ranks the same pool on its own terms.
- */
-export const POOL_SCORE_WEIGHT = 0.08;
-
-export function normalizePoolScore(poolScore: number | null | undefined): number {
-  if (typeof poolScore !== 'number' || !Number.isFinite(poolScore) || poolScore <= 0) return 0;
-  return Math.min(1, Math.log1p(poolScore) / Math.log1p(50));
-}
-
-export interface CandidateScoreInput {
-  sourceScore: number;
-  popularity: number;
-  freshness: number;
-  contentQuality: number;
-  /** Raw `ap_pool_metrics.score`; local posts have no row and score zero. */
-  poolScore?: number | null;
-  historyPenalty?: number;
-}
-
-/** Shared by the server-ranked feed and the client-ranked candidate batch. */
-export function scoreRecommendationCandidate(input: CandidateScoreInput): number {
-  const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, input.contentQuality));
-  const baseScore =
-    (0.65 * input.sourceScore + 0.18 * input.popularity + 0.17 * input.freshness) * qualityFactor +
-    POOL_SCORE_WEIGHT * normalizePoolScore(input.poolScore);
-  const historyPenalty = Math.min(0.55, Math.max(0, input.historyPenalty ?? 0));
-  return baseScore * (1 - historyPenalty);
-}
-
-/** Pool IDs join the other independent sources and pass through one dedup step. */
-export function collectRecommendationCandidateIds(...sources: ReadonlyArray<Iterable<string>>): string[] {
-  const ids = new Set<string>();
-  for (const source of sources) {
-    for (const id of source) ids.add(id);
-  }
-  return [...ids];
-}
 
 export function buildPoolCandidateSql(filterSql: string): string {
   return `SELECT p.id, ${POOL_SCORE_SQL} AS pool_score
@@ -191,6 +163,7 @@ async function loadClientRankedCandidatePage(
   asOfMs: number,
   seenIds: Set<string>,
   isArchiveCursor: boolean,
+  viewerLanguage: string = '',
 ): Promise<{
   posts: Array<Record<string, unknown>>;
   next_cursor: string | null;
@@ -275,7 +248,17 @@ async function loadClientRankedCandidatePage(
     poolCandidates.ids,
   );
   if (candidateIds.length === 0) {
-    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+    return loadClientRankedCandidatePage(
+      db,
+      currentUserId,
+      limit,
+      undefined,
+      undefined,
+      asOfMs,
+      seenIds,
+      true,
+      viewerLanguage,
+    );
   }
 
   const serializedCandidateIds = JSON.stringify(candidateIds);
@@ -353,6 +336,7 @@ async function loadClientRankedCandidatePage(
         contentQuality,
         poolScore: poolCandidates.scoreById.get(id),
         historyPenalty,
+        languageAffinity: languageAffinity(post, viewerLanguage),
       });
       delete post.eng_score;
       return { post, score };
@@ -360,7 +344,17 @@ async function loadClientRankedCandidatePage(
     .sort(compareScoredPosts);
 
   if (scored.length === 0) {
-    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+    return loadClientRankedCandidatePage(
+      db,
+      currentUserId,
+      limit,
+      undefined,
+      undefined,
+      asOfMs,
+      seenIds,
+      true,
+      viewerLanguage,
+    );
   }
 
   const page = scored.slice(0, limit);
@@ -419,6 +413,10 @@ recommendations.get('/posts/recommended', async (c) => {
 
     const db = c.env.DB;
     const currentUserId = c.get('user')?.id || null;
+    const viewerLanguage = String(c.get('user')?.language ?? '')
+      .trim()
+      .toLowerCase()
+      .slice(0, 2);
     if (clientRank) {
       const page = await loadClientRankedCandidatePage(
         db,
@@ -429,6 +427,7 @@ recommendations.get('/posts/recommended', async (c) => {
         asOfMs,
         seenIds,
         isArchiveCursor,
+        viewerLanguage,
       );
       return c.json({ ...page, posts: presentForYou(page.posts, limit) });
     }
@@ -577,6 +576,7 @@ recommendations.get('/posts/recommended', async (c) => {
         contentQuality,
         poolScore: poolCandidates.scoreById.get(id),
         historyPenalty,
+        languageAffinity: languageAffinity(post, viewerLanguage),
       });
       delete post.eng_score;
       return { post, score };
