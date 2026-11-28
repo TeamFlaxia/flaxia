@@ -33,6 +33,7 @@ function toPoolEnv(env: Bindings): PoolEnv {
   const { DB, CACHE, BASE_URL, ENVIRONMENT } = env;
   const extras = env as Bindings & {
     AP_POOL_SEED_DOMAINS?: string;
+    AP_POOL_PREFERRED_LANGUAGE?: string;
     AP_ALLOWED_PRIVATE_PEERS?: string;
   };
   return {
@@ -41,6 +42,7 @@ function toPoolEnv(env: Bindings): PoolEnv {
     BASE_URL,
     ENVIRONMENT,
     AP_POOL_SEED_DOMAINS: extras.AP_POOL_SEED_DOMAINS,
+    AP_POOL_PREFERRED_LANGUAGE: extras.AP_POOL_PREFERRED_LANGUAGE,
     AP_ALLOWED_PRIVATE_PEERS: extras.AP_ALLOWED_PRIVATE_PEERS,
   };
 }

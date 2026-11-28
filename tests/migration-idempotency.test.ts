@@ -20,7 +20,12 @@ const migrationFiles = readdirSync(MIGRATION_DIR)
   .filter((name) => name.endsWith('.sql'))
   .sort();
 
-const IDEMPOTENT_MIGRATIONS = new Set(['0150_ap_dlq.sql', '0151_ap_pool.sql', '0152_ap_dlq_retention.sql']);
+const IDEMPOTENT_MIGRATIONS = new Set([
+  '0150_ap_dlq.sql',
+  '0151_ap_pool.sql',
+  '0152_ap_dlq_retention.sql',
+  '0155_ap_pool_language.sql',
+]);
 const POOL_INDEXES = ['idx_ap_pool_fetched', 'idx_ap_pool_instance', 'idx_ap_pool_score'];
 
 function migrationSql(file: string): string {
@@ -64,7 +69,8 @@ describe('migration replay idempotency', () => {
 
       db.exec(
         `INSERT INTO ap_pool_metrics (post_id, instance, favourites, reblogs, score, fetched_at)
-         VALUES ('pool-1', 'mastodon.test', 3, 2, 4.25, '2026-01-01T00:00:00.000Z')`,
+         VALUES ('pool-1', 'mastodon.test', 3, 2, 4.25, '2026-01-01T00:00:00.000Z');
+         INSERT INTO ap_pool_language (post_id, language) VALUES ('pool-1', 'ja');`,
       );
 
       // Second pass across the whole migration set. Legacy one-shot files may
@@ -76,7 +82,7 @@ describe('migration replay idempotency', () => {
       assert.deepEqual(
         replayFailures.filter((file) => IDEMPOTENT_MIGRATIONS.has(file)),
         [],
-        '0150-0152 must be safe to replay on an already-migrated database',
+        'the opt-in AP migrations must be safe to replay on an already-migrated database',
       );
 
       const row = db
@@ -90,6 +96,10 @@ describe('migration replay idempotency', () => {
       assert.equal(row.reblogs, 2);
       assert.equal(row.score, 4.25);
       assert.equal(row.fetched_at, '2026-01-01T00:00:00.000Z');
+      const language = db.prepare('SELECT language FROM ap_pool_language WHERE post_id = ?').get('pool-1') as
+        | { language: string }
+        | undefined;
+      assert.equal(language?.language, 'ja', 'the pool language must survive a migration replay');
       assert.deepEqual(poolIndexes(db), POOL_INDEXES, 'the pool indexes must survive a replay');
 
       // The exact regression: 0151 used bare CREATE TABLE/CREATE INDEX, so its
