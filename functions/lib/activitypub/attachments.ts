@@ -3,13 +3,48 @@
 // Remote media is referenced by URL, never copied. Images/audio/video render
 // inline; games and other archives become link-only documents so a remote
 // instance can never execute code in a Flaxia surface.
-type RemoteAttachmentKind = 'image' | 'audio' | 'video' | 'document';
+export type RemoteAttachmentKind = 'image' | 'audio' | 'video' | 'document';
+export interface RemoteAttachment {
+  url: string;
+  kind: RemoteAttachmentKind;
+}
 
 interface IncomingNoteAttachment {
-  type?: string;
+  type?: string | string[];
   mediaType?: string;
-  url?: string | { href?: string };
+  url?: unknown;
+  remote_url?: unknown;
   name?: string;
+}
+
+/** Mastodon REST uses lower-case types; ActivityPub uses capitalized ones. */
+const TYPE_HINTS: Record<string, string> = {
+  image: 'image/',
+  video: 'video/',
+  gifv: 'video/',
+  audio: 'audio/',
+};
+
+function mediaTypeHint(record: IncomingNoteAttachment): string {
+  if (typeof record.mediaType === 'string' && record.mediaType) return record.mediaType;
+  const types = Array.isArray(record.type) ? record.type : [record.type];
+  for (const type of types) {
+    if (typeof type !== 'string') continue;
+    const hint = TYPE_HINTS[type.toLowerCase()];
+    if (hint) return hint;
+  }
+  return '';
+}
+
+/** AP uses `url` as a string or `{ href }`; Mastodon REST can use an array. */
+function attachmentUrls(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(attachmentUrls);
+  if (value && typeof value === 'object') {
+    const href = (value as { href?: unknown }).href;
+    return typeof href === 'string' ? [href] : [];
+  }
+  return [];
 }
 
 /** Classify a remote attachment. Games/archives become link-only "documents". */
@@ -28,40 +63,38 @@ export function remoteAttachmentKind(mediaType: string, pathname: string): Remot
 }
 
 /**
- * Read the Note's `attachment` entries. Only absolute http(s) URLs are kept;
- * the bytes stay on the origin instance (we never mirror them).
+ * Read a Note's `attachment` entries (inbox/outbox) or a Mastodon REST
+ * status's `media_attachments`. Only absolute http(s) URLs are kept; the bytes
+ * stay on the origin instance (we never mirror them and never fetch them from
+ * the server). Archives stay documents: no remote code is embedded or run.
  */
-export function parseRemoteAttachments(
-  object: Record<string, unknown>,
-): Array<{ url: string; kind: RemoteAttachmentKind }> {
-  if (!Array.isArray(object.attachment)) return [];
-  const out: Array<{ url: string; kind: RemoteAttachmentKind }> = [];
+export function parseRemoteAttachments(object: Record<string, unknown>): RemoteAttachment[] {
+  const out: RemoteAttachment[] = [];
   const seen = new Set<string>();
-  for (const item of object.attachment) {
-    if (!item || typeof item !== 'object') continue;
-    const record = item as IncomingNoteAttachment;
-    const rawUrl = typeof record.url === 'string' ? record.url : record.url?.href;
-    if (typeof rawUrl !== 'string') continue;
-    let parsed: URL;
-    try {
-      parsed = new URL(rawUrl);
-    } catch {
-      continue;
+  for (const field of ['attachment', 'media_attachments']) {
+    if (!Array.isArray(object[field])) continue;
+    for (const item of object[field]) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const record = item as IncomingNoteAttachment;
+      const rawUrls = [...attachmentUrls(record.url), ...attachmentUrls(record.remote_url)];
+      for (const rawUrl of rawUrls) {
+        let parsed: URL;
+        try {
+          parsed = new URL(rawUrl);
+        } catch {
+          continue;
+        }
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
+        if (parsed.username || parsed.password) continue;
+        if (seen.has(parsed.href)) continue;
+        seen.add(parsed.href);
+        out.push({
+          url: parsed.href,
+          kind: remoteAttachmentKind(mediaTypeHint(record), parsed.pathname),
+        });
+        if (out.length >= 32) return out;
+      }
     }
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
-    if (seen.has(parsed.href)) continue;
-    seen.add(parsed.href);
-    const typeHint =
-      record.mediaType ||
-      (record.type === 'Image'
-        ? 'image/'
-        : record.type === 'Video'
-          ? 'video/'
-          : record.type === 'Audio'
-            ? 'audio/'
-            : '');
-    out.push({ url: parsed.href, kind: remoteAttachmentKind(typeHint, parsed.pathname) });
-    if (out.length >= 32) break;
   }
   return out;
 }

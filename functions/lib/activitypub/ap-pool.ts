@@ -1,6 +1,7 @@
 /** Federated popularity pool: public posts from known instances, SSRF-safe. */
-import type { Db } from '../ports/index.ts';
+import type { Db, DbStatement } from '../ports/index.ts';
 import { checkUrlForSsrf } from '../url-guard.ts';
+import type { RemoteAttachment } from './attachments.ts';
 import { audienceEntries, isPublicAddress } from './context.ts';
 import {
   type FederationEnv,
@@ -324,6 +325,7 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: ActorCac
         visibility,
         sensitive: note.sensitive === true,
         attributedTo: attributedTo?.toString(),
+        attachment: note.attachment,
         account: { url: actor.actorUrl, acct: row.preferred_username ?? 'unknown' },
         tags: asRecords(note.tag).map((tag) => ({ name: tag.name })),
         favourites_count: 0,
@@ -336,6 +338,35 @@ async function fetchOutboxStatuses(env: PoolEnv, domain: string, cache: ActorCac
 /** `'refreshed'` counts separately from a newly `'inserted'` pool row. */
 type StoreOutcome = 'inserted' | 'refreshed' | null;
 type StoreBudget = { canInsert: boolean; canRefresh: boolean };
+
+/**
+ * Attachment rows for a discovered post. The guards keep a stale/racing post
+ * from gaining rows when its insert was ignored; the per-URL guard also makes
+ * repeated refreshes idempotent. URLs are only ever stored as links: no bytes
+ * are fetched and no remote code is executed.
+ */
+function attachmentStatements(
+  env: PoolEnv,
+  postId: string,
+  objectId: string,
+  attachments: RemoteAttachment[],
+): DbStatement[] {
+  return attachments.map((attachment, index) =>
+    env.DB.prepare(`INSERT OR IGNORE INTO post_attachments (post_id, r2_key, kind, position)
+      SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ? AND ap_object_id = ?)
+      AND NOT EXISTS (SELECT 1 FROM post_attachments WHERE post_id = ? AND r2_key = ?)`).bind(
+      postId,
+      attachment.url,
+      attachment.kind,
+      index + 1,
+      postId,
+      objectId,
+      postId,
+      attachment.url,
+    ),
+  );
+}
+
 /** Store one status, or refresh an existing pool row. Inbox posts are left alone. */
 async function storeDiscoveredStatus(
   env: PoolEnv,
@@ -371,6 +402,10 @@ async function storeDiscoveredStatus(
       score = ?, fetched_at = ? WHERE post_id = ?`)
       .bind(instance, normalized.metrics.favourites, normalized.metrics.reblogs, score, fetchedAt, existing.id)
       .run();
+    // Backfill posts the pool stored before attachments were imported.
+    if (normalized.attachments.length > 0) {
+      await env.DB.batch(attachmentStatements(env, existing.id, objectId, normalized.attachments));
+    }
     return 'refreshed';
   }
   if (!budget.canInsert) return null;
@@ -408,7 +443,13 @@ async function storeDiscoveredStatus(
     normalized.post.id,
     objectId,
   );
-  const [postWrite] = await env.DB.batch([insertPost, insertMetrics]);
+  // Attachment rows join the same atomic batch, so a post is never published
+  // with only part of its media (or with media whose post insert rolled back).
+  const [postWrite] = await env.DB.batch([
+    insertPost,
+    insertMetrics,
+    ...attachmentStatements(env, normalized.post.id as string, objectId, normalized.attachments),
+  ]);
   // INSERT OR IGNORE may be a no-op; then this is not a new pool row and must
   // not be counted as an insertion.
   const changes = (postWrite as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;

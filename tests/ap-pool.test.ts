@@ -213,6 +213,32 @@ describe('federated popularity pool', () => {
       assert.equal(result.metrics.score, computePoolScore({ favourites: 3, reblogs: 2, createdAt: CREATED_AT }));
     }));
 
+  it('keeps Mastodon REST media_attachments and AP Note attachments through normalization', () => {
+    const rest = normalizeMastodonStatus(
+      status({
+        media_attachments: [
+          { type: 'image', url: `https://${DOMAIN}/media/a.png` },
+          { type: 'unknown', url: `https://${DOMAIN}/media/game.zip` },
+        ],
+      }),
+      actorInfo(),
+      BASE,
+    );
+    assert.deepEqual(rest?.attachments, [
+      { url: `https://${DOMAIN}/media/a.png`, kind: 'image' },
+      { url: `https://${DOMAIN}/media/game.zip`, kind: 'document' },
+    ]);
+    const note = normalizeMastodonStatus(
+      status({
+        attachment: [{ type: 'Video', url: { href: `https://${DOMAIN}/media/v.mp4` } }],
+      }),
+      actorInfo(),
+      BASE,
+    );
+    assert.deepEqual(note?.attachments, [{ url: `https://${DOMAIN}/media/v.mp4`, kind: 'video' }]);
+    assert.deepEqual(normalizeMastodonStatus(status(), actorInfo(), BASE)?.attachments, []);
+  });
+
   it('caps text at 200 characters and marks sensitive posts hidden', () => {
     const long = normalizeMastodonStatus(status({ content: `<p>${'あ'.repeat(300)}</p>` }), actorInfo(), BASE);
     assert.ok(long);
@@ -326,6 +352,42 @@ describe('federated popularity pool', () => {
       assert.equal(author?.preferred_username, 'alice');
       assert.equal(author?.domain, DOMAIN);
       assert.equal(author?.summary, 'Hi there');
+    } finally {
+      restore();
+      db.close();
+    }
+  });
+
+  it('stores media_attachments of a discovered Mastodon status', async () => {
+    const db = createTestDatabase();
+    const restore = stubFetch(
+      mastodonFetch([
+        status({
+          media_attachments: [
+            { type: 'image', url: `https://${DOMAIN}/media/a.png` },
+            { type: 'video', url: `https://${DOMAIN}/media/v.mp4` },
+            { type: 'unknown', url: `https://${DOMAIN}/media/game.zip` },
+            { type: 'image', url: 'javascript:alert(1)' },
+          ],
+        }),
+      ]),
+    );
+    try {
+      const result = await runPoolDiscovery(envFor(db));
+      assert.equal(result.inserted, 1);
+      const rows = await db
+        .prepare(`SELECT r2_key, kind, position FROM post_attachments
+                  WHERE post_id = (SELECT id FROM posts WHERE ap_object_id = ?) ORDER BY position`)
+        .bind(OBJECT_ID)
+        .all<{ r2_key: string; kind: string; position: number }>();
+      assert.deepEqual(
+        rows.results.map((row) => ({ ...row })),
+        [
+          { r2_key: `https://${DOMAIN}/media/a.png`, kind: 'image', position: 1 },
+          { r2_key: `https://${DOMAIN}/media/v.mp4`, kind: 'video', position: 2 },
+          { r2_key: `https://${DOMAIN}/media/game.zip`, kind: 'document', position: 3 },
+        ],
+      );
     } finally {
       restore();
       db.close();
@@ -509,6 +571,7 @@ describe('federated popularity pool', () => {
                   content: '<p>From an outbox</p>',
                   published: CREATED_AT,
                   to: ['https://www.w3.org/ns/activitystreams#Public'],
+                  attachment: [{ type: 'Image', url: { href: 'https://social.test/media/a.png' } }],
                 },
               },
             ],
@@ -537,6 +600,16 @@ describe('federated popularity pool', () => {
       assert.equal(metrics?.favourites, 0);
       assert.equal(metrics?.reblogs, 0);
       assert.equal(metrics?.instance, 'social.test');
+
+      const attachments = await db
+        .prepare(`SELECT r2_key, kind FROM post_attachments
+                  WHERE post_id = (SELECT id FROM posts WHERE ap_object_id = ?)`)
+        .bind(noteId)
+        .all<{ r2_key: string; kind: string }>();
+      assert.deepEqual(
+        attachments.results.map((row) => ({ ...row })),
+        [{ r2_key: 'https://social.test/media/a.png', kind: 'image' }],
+      );
     } finally {
       restore();
       db.close();
@@ -743,7 +816,11 @@ describe('federated popularity pool', () => {
     const firstNow = Date.parse(CREATED_AT) + 60 * 60 * 1000;
     const secondNow = firstNow + 60 * 60 * 1000;
     const thirdNow = secondNow + 24 * 60 * 60 * 1000;
-    const viral = status({ favourites_count: 100, reblogs_count: 50 });
+    const viral = status({
+      favourites_count: 100,
+      reblogs_count: 50,
+      attachment: [{ type: 'Image', url: `https://${DOMAIN}/media/new.png` }],
+    });
     let trends: unknown[] = [status()];
     const restore = stubFetch((url) => mastodonFetch(trends)(url));
     try {
@@ -800,6 +877,17 @@ describe('federated popularity pool', () => {
       assert.equal(posts?.count, 1);
       const metricCount = await db.prepare('SELECT COUNT(*) AS count FROM ap_pool_metrics').first<{ count: number }>();
       assert.equal(metricCount?.count, 1);
+      // A refresh backfills media for pool posts stored before attachments
+      // were imported, without duplicating rows on later refreshes.
+      const attachments = await db
+        .prepare(`SELECT r2_key, kind, position FROM post_attachments
+                  WHERE post_id = (SELECT id FROM posts WHERE ap_object_id = ?)`)
+        .bind(OBJECT_ID)
+        .all<{ r2_key: string; kind: string; position: number }>();
+      assert.deepEqual(
+        attachments.results.map((row) => ({ ...row })),
+        [{ r2_key: `https://${DOMAIN}/media/new.png`, kind: 'image', position: 1 }],
+      );
     } finally {
       restore();
       db.close();

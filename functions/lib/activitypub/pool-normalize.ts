@@ -1,4 +1,5 @@
 import { freshnessBoost } from '../scoring.ts';
+import { parseRemoteAttachments, type RemoteAttachment } from './attachments.ts';
 import { htmlToText } from './text.ts';
 
 type PoolMetrics = {
@@ -66,7 +67,7 @@ export function normalizeMastodonStatus(
   status: Record<string, unknown>,
   actor: PoolActorInfo,
   baseUrl: string,
-): { post: Record<string, unknown>; metrics: PoolMetrics } | null {
+): { post: Record<string, unknown>; metrics: PoolMetrics; attachments: RemoteAttachment[] } | null {
   if (!recordOf(status) || (status.reblog !== undefined && status.reblog !== null)) return null;
   const visibility = typeof status.visibility === 'string' ? status.visibility.toLowerCase() : 'public';
   // Unlisted posts reach followers and mentions, not public timelines. The
@@ -105,6 +106,9 @@ export function normalizeMastodonStatus(
   }
   const favourites = safeCount(status.favourites_count ?? status.favourites);
   const reblogs = safeCount(status.reblogs_count ?? status.reblogs);
+  // Mastodon REST exposes `media_attachments`; AP outbox Notes use `attachment`.
+  // Both must survive normalization or the pool stores attachment-less posts.
+  const attachments = parseRemoteAttachments(status);
   return {
     post: {
       id: randomPostId(),
@@ -124,5 +128,6 @@ export function normalizeMastodonStatus(
       reblogs,
       score: computePoolScore({ favourites, reblogs, createdAt }),
     },
+    attachments,
   };
 }
