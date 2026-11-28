@@ -180,8 +180,8 @@ type FeedResponse = {
   next_cursor: string | null;
 };
 
-async function getFeed(app: Hono<AppEnv>, path: string): Promise<FeedResponse> {
-  const response = await app.request(`http://localhost${path}`, {}, {
+async function getFeed(app: Hono<AppEnv>, path: string, headers: Record<string, string> = {}): Promise<FeedResponse> {
+  const response = await app.request(`http://localhost${path}`, { headers }, {
     DB: wrapDb(db) as unknown as Bindings['DB'],
   } as Bindings);
   assert.equal(response.status, 200, `${path} → ${response.status}: ${await response.clone().text()}`);
@@ -403,5 +403,53 @@ describe('GET /api/federated/posts', () => {
     } as Bindings);
     assert.equal(response.status, 500, `expected a 500, got ${response.status}: ${await response.clone().text()}`);
     assert.deepEqual(await response.json(), { error: 'Failed to fetch federated posts' });
+  });
+
+  it('boosts posts in the viewer language without rewriting the raw pool score', async () => {
+    seedPoolPost({ id: 'p-en', actor: ACTOR_A, score: 5 });
+    seedPoolPost({ id: 'p-ja', actor: ACTOR_B, score: 4.5 });
+    db.prepare('INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)').bind('p-en', 'en').run();
+    db.prepare('INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)').bind('p-ja', 'ja-JP').run();
+
+    assert.deepEqual(ids((await getFeed(appFor(null), '/federated/posts')).posts), ['p-en', 'p-ja']);
+    const ja = await getFeed(appFor(null), '/federated/posts', { 'Accept-Language': 'ja,en;q=0.8' });
+    assert.deepEqual(ids(ja.posts), ['p-ja', 'p-en']);
+    assert.deepEqual(
+      ja.posts.map((post) => post.pool_score),
+      [4.5, 5],
+      'a language boost must not fake popularity',
+    );
+    const jaAccount = await getFeed(appFor({ ...BOB, language: 'ja' }), '/federated/posts');
+    assert.deepEqual(ids(jaAccount.posts), ['p-ja', 'p-en']);
+  });
+
+  it('boosts English posts for an en browser header without a locale cookie', async () => {
+    seedPoolPost({ id: 'p-en', actor: ACTOR_A, score: 4.5 });
+    seedPoolPost({ id: 'p-ja', actor: ACTOR_B, score: 5 });
+    db.prepare('INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)').bind('p-en', 'en').run();
+    db.prepare('INSERT INTO ap_pool_language (post_id, language) VALUES (?, ?)').bind('p-ja', 'ja').run();
+
+    assert.deepEqual(ids((await getFeed(appFor(null), '/federated/posts')).posts), ['p-ja', 'p-en']);
+    const en = await getFeed(appFor(null), '/federated/posts', { 'Accept-Language': 'en-US,en;q=0.9' });
+    assert.deepEqual(ids(en.posts), ['p-en', 'p-ja']);
+  });
+
+  it('hides federated posts seen in the last day and damps older impressions', async () => {
+    seedPoolPost({ id: 'p-fresh-seen', actor: ACTOR_A, score: 9 });
+    seedPoolPost({ id: 'p-old-seen', actor: ACTOR_B, score: 6 });
+    seedPoolPost({ id: 'p-unseen', actor: ACTOR_C, score: 3 });
+    const impression = db.prepare(
+      'INSERT INTO user_post_impressions (user_id, post_id, last_seen_at) VALUES (?, ?, ?)',
+    );
+    impression.bind(ALICE.id, 'p-fresh-seen', new Date(Date.now() - 60 * 60 * 1000).toISOString()).run();
+    impression.bind(ALICE.id, 'p-old-seen', new Date(Date.now() - 10 * 86400_000).toISOString()).run();
+
+    const viewer = await getFeed(appFor(ALICE), '/federated/posts');
+    assert.deepEqual(ids(viewer.posts), ['p-unseen', 'p-old-seen']);
+    assert.deepEqual(ids((await getFeed(appFor(null), '/federated/posts')).posts), [
+      'p-fresh-seen',
+      'p-old-seen',
+      'p-unseen',
+    ]);
   });
 });

@@ -212,10 +212,15 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
 
 * Discovery runs hourly (`5 * * * *` in `wrangler.worker.toml`) via
   `functions/lib/activitypub/ap-pool.ts`. Known actor domains from `ap_actors`
-  plus a small seed list are probed through `fetchFederationDocument()` (SSRF
-  guard, redirect re-validation). Mastodon instances contribute
-  `/api/v1/trends/statuses` and tag timelines for hashtags popular on Flaxia;
-  other implementations fall back to the actor's public Outbox.
+  plus a seed list of English- and Japanese-speaking instances (`mstdn.jp`,
+  `mastodon.jp`, `mstdn.plus`, ...) are probed through
+  `fetchFederationDocument()` (SSRF guard, redirect re-validation). Mastodon
+  instances contribute `/api/v1/trends/statuses` and tag timelines for hashtags
+  popular on Flaxia; with the default `ja` preference, fixed Japanese tag seeds
+  are interleaved with those local trends and their statuses are filtered by
+  the Mastodon `language` field (the tag endpoint itself has no language
+  parameter). Other implementations fall back to the actor's public Outbox.
+  `AP_POOL_SEED_DOMAINS` and `AP_POOL_PREFERRED_LANGUAGE` override the defaults.
 * Only public Notes are stored: the author must match the signed actor, the
   object id must live on the same origin, text is capped at 200 characters and
   unsafe HTML is discarded. `unlisted` and private Notes are rejected because
@@ -231,9 +236,14 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
   caps prevent one instance from taking over. Only pool-origin rows (marked by
   an `ap_pool_metrics` row) older than 7 days are pruned; Notes received from
   followed actors and their replies are never removed by the pool.
-* The **Federated** tab (`/federated`, `GET /api/federated/posts`) lists the pool
-  by score, not chronologically, and is readable by guests. For You never
-  includes these posts.
+* Mastodon's `status.language` is stored in `ap_pool_language` (migration 0155).
+  The **Federated** tab (`/federated`, `GET /api/federated/posts`) lists the pool
+  by score, not chronologically, and is readable by guests. A post in the
+  viewer's language — account setting, locale cookie or `Accept-Language` —
+  receives a small ranking boost. For signed-in viewers, a post seen in the
+  last 24 hours is hidden and an older impression damps its rank; this
+  "seen once" rule is limited to the Federated tab. For You never includes
+  federated posts.
 * A received `Delete` hides the pooled post through the existing inbox handler;
   user blocks apply to the Federated tab as well.
 

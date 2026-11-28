@@ -384,7 +384,7 @@
   "federated.empty": "No federated posts yet. Popular notes from other instances will appear here.",
   "federated.load_failed": "Could not load federated posts. Please try again.",
   "federated.popular_label": "Popular now",
-  "federated.hide_hint": "Prefer not to see federated posts in For You? Turn them off in Settings → Display.",
+  "federated.hide_hint": "Posts matching your language are prioritized. Posts you just saw are hidden here until later.",
   "settings.theme": "Theme",
   "settings.theme_light": "Light",
   "settings.theme_light_desc": "Always use a light theme",

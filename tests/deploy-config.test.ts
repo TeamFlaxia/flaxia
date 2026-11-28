@@ -189,6 +189,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
       'only the federation test delivers without a queue; the variable is inert outside test and development',
     ],
     ['AP_POOL_SEED_DOMAINS', 'the popularity pool falls back to its built-in instance list when unset or empty'],
+    ['AP_POOL_PREFERRED_LANGUAGE', 'the AP pool falls back to ja when unset; configured on wrangler.worker.toml'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

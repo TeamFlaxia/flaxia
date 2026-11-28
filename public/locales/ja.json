@@ -384,7 +384,7 @@
   "federated.empty": "連合投稿はまだありません。他インスタンスの人気な投稿がここに表示されます。",
   "federated.load_failed": "連合投稿を読み込めませんでした。もう一度お試しください。",
   "federated.popular_label": "人気の投稿",
-  "federated.hide_hint": "For You に連合投稿を表示しない場合は、設定 → 表示 でオフにできます。",
+  "federated.hide_hint": "使用中の言語に合う投稿を優先表示します。直前に見た投稿はしばらくここでは表示されません。",
   "settings.theme": "テーマ",
   "settings.theme_light": "ライト",
   "settings.theme_light_desc": "常にライトテーマを使用",
