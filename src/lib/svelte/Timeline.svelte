@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onDestroy, onMount } from 'svelte';
-import { isRemoteRecommendation, mixForYouFeed } from '../../../shared/recommendation/mix.ts';
+import { presentForYou } from '../../../shared/recommendation/mix.ts';
 import {
   decodeVector,
   type EncodedVector,
@@ -16,11 +16,9 @@ import { openPostModal } from '../post-modal.ts';
 import { rankCandidates } from '../recommendation/rank.ts';
 import {
   DATA_SAVER_AD_SPACING_MULTIPLIER,
-  FOR_YOU_EXTERNAL_CHANGE_EVENT,
   getForYouBatchSize,
   getTimelinePageSize,
   isDataSaverEnabled,
-  isForYouExternalHidden,
 } from '../settings.ts';
 import { signalSsrHandover } from '../ssr-handover.ts';
 import CardHost from '../timeline/CardHost.svelte';
@@ -73,7 +71,6 @@ let generation = 0;
 let destroyed = false;
 let fabButton: HTMLElement | null = null;
 let disposePostCreated: (() => void) | null = null;
-let disposeForYouExternal: (() => void) | null = null;
 let loadSentinel: HTMLDivElement;
 let observer: IntersectionObserver | null = null;
 let fabObserver: IntersectionObserver | null = null;
@@ -107,7 +104,6 @@ function buildApiUrl(pageCursor?: string): string {
   // Federated is the public, score-ranked pool; the other tabs read posts.
   if (mode === 'federated') return `/api/federated/posts?${params.toString()}`;
   if (mode === 'following') params.set('following', 'true');
-  if (mode === 'foryou' && isForYouExternalHidden()) params.set('external', 'hide');
   return `/api/${mode === 'foryou' ? 'posts/recommended' : 'posts'}?${params.toString()}`;
 }
 
@@ -119,7 +115,6 @@ async function fetchForYouBatch(pageCursor?: string): Promise<{ queue: Post[]; n
     include_vectors: '1',
   });
   if (pageCursor) params.set('cursor', pageCursor);
-  if (isForYouExternalHidden()) params.set('external', 'hide');
   const response = await fetch(`/api/posts/recommended?${params.toString()}`, saveDataFetchInit());
   if (!response.ok) return null;
   const data = (await response.json()) as {
@@ -145,15 +140,9 @@ async function fetchForYouBatch(pageCursor?: string): Promise<{ queue: Post[]; n
     getAuthor: (post) => post.actor_id ?? post.user_id,
     limit: posts.length,
   });
-  // Personal ranking decides the best posts; the 50:50 source mix is applied
-  // afterwards so Flaxia leads each pair and federated posts keep half of the
-  // feed. The "don't show" choice removes them entirely.
-  const queue = mixForYouFeed({
-    items: ranked,
-    getSource: (post) => (isRemoteRecommendation(post) ? 'remote' : 'local'),
-    limit: ranked.length,
-    hideRemote: isForYouExternalHidden(),
-  });
+  // Personal ranking decides the best posts; federated posts are then dropped
+  // so For You stays Flaxia-only. They remain available in the Federated tab.
+  const queue = presentForYou(ranked, ranked.length);
   return { queue, nextCursor: data.next_cursor || undefined };
 }
 
@@ -355,12 +344,6 @@ onMount(() => {
   window.addEventListener('postCreated', onPostCreated);
   disposePostCreated = () => window.removeEventListener('postCreated', onPostCreated);
 
-  const onForYouExternalChange = (() => {
-    if (mode === 'foryou') resetAndLoad();
-  }) as EventListener;
-  window.addEventListener(FOR_YOU_EXTERNAL_CHANGE_EVENT, onForYouExternalChange);
-  disposeForYouExternal = () => window.removeEventListener(FOR_YOU_EXTERNAL_CHANGE_EVENT, onForYouExternalChange);
-
   if (fabHost) {
     fabButton = makeFabButton(() => {
       if (!currentUser) {
@@ -396,7 +379,6 @@ onDestroy(() => {
   if (boundModeShortcut) window.removeEventListener('keydown', boundModeShortcut);
   disposePostCreated?.();
   disposePull?.();
-  disposeForYouExternal?.();
   observer?.disconnect();
   fabObserver?.disconnect();
   fabButton?.remove();

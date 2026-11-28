@@ -379,8 +379,6 @@
   "settings.nsfw_desc": "Display posts tagged with #nsfw or #r18",
   "settings.data_saver": "Data saver mode",
   "settings.data_saver_desc": "Reduces automatic loading of images, videos and ads, and loads them only on tap. Timeline page size is also reduced. Saved on this device only. Also enabled automatically when browser Save-Data is on.",
-  "settings.foryou_external": "Show federated posts in For You",
-  "settings.foryou_external_desc": "For You mixes Flaxia and federated posts 50/50. Turn this off to hide posts from other instances. Saved on this device only.",
   "federated.title": "Federated",
   "federated.subtitle": "Popular posts from across the fediverse",
   "federated.empty": "No federated posts yet. Popular notes from other instances will appear here.",

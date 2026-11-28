@@ -79,9 +79,9 @@ const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOM
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
 
 /**
- * Federated popularity is a small nudge, never a takeover: a log scale keeps
- * viral remote posts bounded and the bounded weight keeps them behind equally
- * good local candidates before the 50:50 presentation mix.
+ * Federated popularity is a bounded nudge (log scale). For You filters
+ * federated rows out before display, so this term cannot promote a remote post
+ * into For You; the Federated tab ranks the same pool on its own terms.
  */
 export const POOL_SCORE_WEIGHT = 0.08;
 
@@ -386,10 +386,6 @@ async function loadClientRankedCandidatePage(
 recommendations.get('/posts/recommended', async (c) => {
   try {
     const clientRank = c.req.query('client_rank') === '1' || c.req.query('include_vectors') === '1';
-    // `external=hide` is the server-side half of the "don't show" choice. The
-    // client sends it for its own preference so hidden posts never reach the
-    // browser, even on the unranked fallback path.
-    const hideRemote = c.req.query('external') === 'hide';
     const limit = clientRank
       ? clampLimit(c.req.query('limit'), 80, CLIENT_RANK_VECTOR_BATCH_MAX)
       : clampLimit(c.req.query('limit'), 20, 50);
@@ -430,12 +426,12 @@ recommendations.get('/posts/recommended', async (c) => {
         seenIds,
         isArchiveCursor,
       );
-      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, false) });
+      return c.json({ ...page, posts: presentForYou(page.posts, limit) });
     }
 
     if (isArchiveCursor) {
       const page = await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs);
-      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
+      return c.json({ ...page, posts: presentForYou(page.posts, limit) });
     }
 
     const blockFilter = currentUserId
@@ -500,7 +496,7 @@ recommendations.get('/posts/recommended', async (c) => {
     );
     if (candidateIds.length === 0) {
       const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
-      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
+      return c.json({ ...page, posts: presentForYou(page.posts, limit) });
     }
 
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
@@ -598,7 +594,7 @@ recommendations.get('/posts/recommended', async (c) => {
 
     if (filteredPosts.length === 0) {
       const page = await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs);
-      return c.json({ ...page, posts: presentForYou(page.posts, limit, hideRemote, true) });
+      return c.json({ ...page, posts: presentForYou(page.posts, limit) });
     }
 
     filteredPosts.sort(compareScoredPosts);
@@ -607,8 +603,8 @@ recommendations.get('/posts/recommended', async (c) => {
       return post;
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
-    // Pagination follows the ranked (unmixed) page so the score cursor stays
-    // monotonic; only the response is interleaved for display.
+    // Pagination follows the ranked page so the score cursor stays monotonic;
+    // only the response is filtered down to local posts for display.
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
     // At most 800 candidate IDs come from the four time-bounded sources (4*200).
@@ -620,7 +616,7 @@ recommendations.get('/posts/recommended', async (c) => {
         ? `archive,,,${asOfMs}`
         : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
 
-    return c.json({ posts: presentForYou(enrichedPosts, limit, hideRemote, true), next_cursor: nextCursor });
+    return c.json({ posts: presentForYou(enrichedPosts, limit), next_cursor: nextCursor });
   } catch (error: unknown) {
     console.error('Recommended posts error:', error);
     return c.json({ error: 'Internal server error' }, 500);

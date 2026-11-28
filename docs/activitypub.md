@@ -185,26 +185,24 @@ from `ap_actors` after the rows are fetched (`display_name`, `avatar_url`,
 `profile_path`, `is_remote`). The client renders the remote handle as
 `@user@domain` and links it to `/@domain/user`.
 
-## For You source mix
+## For You is local-only
 
-For You interleaves Flaxia posts and federated posts **50:50**. The local post
-takes the first slot of each pair (Flaxia priority); if one side runs out the
-other fills the remainder, so a sparse side never leaves holes. The rule lives
-in `shared/recommendation/mix.ts` and is applied in both paths:
+For You returns Flaxia posts only. Federated (Mastodon and other instances)
+posts are excluded on both paths:
 
-* the unranked server response (`GET /api/posts/recommended`) mixes after
-  scoring; the score cursor still follows the unmixed page so pagination stays
-  monotonic;
+* the unranked server response (`GET /api/posts/recommended`) filters after
+  scoring, so the score cursor still follows the ranked page and pagination
+  stays monotonic;
 * the client-ranked path (`client_rank=1`) returns candidates and the Svelte
-  timeline applies the same mix after personal re-ranking.
+  timeline applies the same filter after personal re-ranking.
 
-Settings → Display → "Show federated posts in For You" adds `external=hide` to
-both requests and removes the remote side entirely ("do not show"). The
-preference is stored on the device (`flaxia_foryou_external`).
+The shared rule lives in `shared/recommendation/mix.ts`. Federated posts belong
+to the Federated tab, not to recommendations.
 
 The unmerged `feat/activitypub-outbox-recommendations` branch was **discarded**:
-its 1:1 interleave was replaced by the shared mix above. The new source described
-below is a separate, popularity-based pool — not a revival of that branch.
+its 1:1 interleave is gone and federated posts no longer appear in For You at
+all. The source described below is a separate, popularity-based pool — not a
+revival of that branch.
 
 ## Federated popularity pool
 
@@ -234,9 +232,8 @@ public posts** and stores them once in `posts` (with `actor_id`, no local owner)
   an `ap_pool_metrics` row) older than 7 days are pruned; Notes received from
   followed actors and their replies are never removed by the pool.
 * The **Federated** tab (`/federated`, `GET /api/federated/posts`) lists the pool
-  by score, not chronologically, and is readable by guests. The same pool feeds
-  the federated half of For You through `presentForYou()`, so Flaxia still leads
-  each pair and the "do not show" setting still removes the whole remote side.
+  by score, not chronologically, and is readable by guests. For You never
+  includes these posts.
 * A received `Delete` hides the pooled post through the existing inbox handler;
   user blocks apply to the Federated tab as well.
 
