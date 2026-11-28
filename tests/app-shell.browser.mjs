@@ -951,9 +951,12 @@ test('the Svelte mail pages render settings, compose and the locked reader', {
     assert.deepEqual(compose.pageErrors, []);
     await compose.page.close();
 
-    const thread = await openApp(browser, `${origin}/mail/thread/t1`, stubs);
+    const thread = await openApp(browser, `${origin}/mail/thread/t1`, mailboxStubs);
     await thread.page.waitForSelector('.mail-thread-page', { timeout: 30_000 });
-    await thread.page.waitForSelector('.mail-empty', { timeout: 10_000 });
+    // MailView adopts the session in its own onMount, after this child mounts.
+    // init() must wait for the prop: without it the page never reaches the
+    // locked-vault state and shows the misleading "thread not found" instead.
+    await thread.page.waitForSelector('#vault-unlock-form-password', { timeout: 10_000 });
     assert.ok(await thread.page.$('.mail-thread-page .mail-empty'));
     assert.deepEqual(thread.pageErrors, []);
     await thread.page.close();

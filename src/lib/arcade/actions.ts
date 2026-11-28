@@ -15,11 +15,13 @@ export interface DmcaReport {
 
 export interface FreshResult {
   freshed: boolean;
+  is_freshed?: boolean;
   fresh_count: number;
 }
 
 export interface BookmarkResult {
   bookmarked: boolean;
+  is_bookmarked?: boolean;
   bookmark_count: number;
 }
 

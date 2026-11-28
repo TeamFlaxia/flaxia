@@ -199,3 +199,56 @@ describe('Flaxia+ game uploads above 25MB', () => {
     assert.equal(finalizeStatus, 413, await finalize.text());
   });
 });
+
+describe('Arcade first-page cache freshness', () => {
+  beforeEach(resetDb);
+
+  it('re-reads freshCount from D1 after a fresh on a warmed game', async () => {
+    const { cookie } = await seedUserAndLogin('game-fresh-cache');
+    const prepared = await prepareGame(cookie);
+    const zip = zipSync({ 'index.html': strToU8('<html>fresh cache game</html>') }, { level: 0 });
+    const uploaded = await fetch(prepared.zipUploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/zip', Cookie: cookie },
+      body: zip,
+    });
+    assert.equal(uploaded.status, 200, await uploaded.text());
+    const commit = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: prepared.postId, zipKey: prepared.zipKey, text: 'fresh cache game' }),
+    });
+    assert.equal(commit.status, 200, await commit.text());
+
+    // resetDb clears DB tables and search caches, but not `games:` KV keys.
+    // Find a first-page cache key that actually holds the new game (an
+    // unpopulated limit warms it on this request) before checking the hit.
+    let feedUrl = '';
+    for (let limit = 20; limit <= 50; limit++) {
+      const candidate = `${BASE_URL}/api/games?trending=true&limit=${limit}`;
+      const data = (await (await fetch(candidate)).json()) as { games: Array<{ id: string; freshCount: number }> };
+      if (data.games.some((game) => game.id === prepared.postId)) {
+        feedUrl = candidate;
+        break;
+      }
+    }
+    assert.ok(feedUrl, 'committed game must appear on a first page of /api/games');
+
+    const readFreshCount = async (): Promise<number> => {
+      const response = await fetch(feedUrl);
+      assert.equal(response.status, 200);
+      const data = (await response.json()) as { games: Array<{ id: string; freshCount: number }> };
+      return data.games.find((game) => game.id === prepared.postId)?.freshCount ?? -1;
+    };
+
+    assert.equal(await readFreshCount(), 0, 'a warmed cache holds the counter at publish time');
+
+    const fresh = await fetch(`${BASE_URL}/api/posts/${prepared.postId}/fresh`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(fresh.status, 200, await fresh.text());
+
+    assert.equal(await readFreshCount(), 1, 'a cache hit must overwrite freshCount with the D1 value');
+  });
+});

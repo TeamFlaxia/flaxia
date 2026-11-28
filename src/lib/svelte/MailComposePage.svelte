@@ -1,5 +1,4 @@
 <script lang="ts">
-import { onMount } from 'svelte';
 import { primaryAddressForUsername } from '../../../shared/mail-address.ts';
 import { t } from '../i18n.ts';
 import { deleteDraft, type MailSecurity } from '../mail/api.ts';
@@ -157,8 +156,13 @@ async function restore(id: string): Promise<void> {
   }
 }
 
-onMount(() => {
-  if (draftId) void restore(draftId);
+// MailView adopts the session in its own onMount; wait for the prop before
+// restoring a draft so the composer's address/key state is ready.
+let restored = false;
+$effect(() => {
+  if (!currentUser || restored || !draftId) return;
+  restored = true;
+  void restore(draftId);
 });
 </script>
 

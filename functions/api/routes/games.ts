@@ -40,6 +40,15 @@ interface ArcadeCandidateRow {
   badge_type: string | null;
 }
 
+/** Mutable engagement counters re-read from D1 on every first-page cache hit. */
+interface GameCounterRow {
+  id: string;
+  fresh_count: number;
+  reply_count: number;
+  bookmark_count: number;
+  impressions: number;
+}
+
 games.get('/games', async (c) => {
   try {
     const shuffle = c.req.query('shuffle') === 'true';
@@ -66,7 +75,44 @@ games.get('/games', async (c) => {
         // proceed without cache on KV failure
       }
       if (cachedData) {
-        const parsed = JSON.parse(cachedData);
+        const parsed = JSON.parse(cachedData) as {
+          games: Array<Record<string, unknown>>;
+          hasMore?: boolean;
+          cursor?: string | null;
+        };
+
+        // Cached DTOs are shared by every viewer for five minutes, so their
+        // counters go stale as soon as someone freshes or bookmarks a game.
+        // Re-read just the mutable counters from D1 without invalidating the
+        // cache; a DB failure still returns the cached payload unchanged.
+        const counterIds = parsed.games
+          .map((game) => game.id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        if (counterIds.length > 0 && c.env.DB) {
+          try {
+            const placeholders = counterIds.map(() => '?').join(',');
+            const { results } = await c.env.DB.prepare(
+              `SELECT id, fresh_count, COALESCE(reply_count, 0) as reply_count,
+                      COALESCE(bookmark_count, 0) as bookmark_count,
+                      COALESCE(impressions, 0) as impressions
+               FROM posts
+               WHERE id IN (${placeholders})`,
+            )
+              .bind(...counterIds)
+              .all<GameCounterRow>();
+            const countersById = new Map((results || []).map((row) => [row.id, row]));
+            parsed.games.forEach((game) => {
+              const counters = countersById.get(game.id as string);
+              if (!counters) return;
+              game.freshCount = counters.fresh_count;
+              game.replyCount = counters.reply_count;
+              game.bookmarkCount = counters.bookmark_count;
+              game.impressions = counters.impressions;
+            });
+          } catch (error: unknown) {
+            console.warn('Failed to re-read cached game counters:', error);
+          }
+        }
 
         const user = await resolveRequestUser(c, c.get('user'));
         const currentUserId = user?.id;
