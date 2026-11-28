@@ -8,7 +8,14 @@ export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 export const CROWD_SITE_ID = 'flaxia';
 
-export const CROWD_SITE_CAPABILITIES = ['ai-inference', 'vector-embed', 'nudenet', 'cc-extract', 'embed-gemma'];
+export const CROWD_SITE_CAPABILITIES = [
+  'ai-inference',
+  'vector-embed',
+  'nudenet',
+  'cc-extract',
+  'embed-gemma',
+  'theia-inference',
+];
 
 export const CROWD_NODE_MAX_CPU_LOAD = 0.15;
 
@@ -62,6 +69,13 @@ export interface CrowdNodeController {
   preloadAiModel?: (request: { task: string; model: string; dtype?: string; device?: string }) => Promise<void>;
 }
 
+interface TheiaAdapterPin {
+  url: string;
+  sha256: string;
+  maxBytes: number;
+  revision?: string;
+}
+
 /** Consent-protected browser node configuration accepted by `@flaxia/node`. */
 export interface CrowdNodeConfig {
   orchestratorUrl: string;
@@ -77,6 +91,8 @@ export interface CrowdNodeConfig {
     onConsentRequired?: (controls: CrowdConsentControls) => void;
   };
   capabilities?: string[];
+  /** LoRA adapter pins for Theia experts; browsers have no `process.env`. */
+  theiaAdapterPins?: Record<string, TheiaAdapterPin>;
   /** Exact HTTPS origins allowed to serve executable container WASM images. */
   containerImageOrigins?: string[];
   /** Exact same-origin API host allowed to serve signed scan-file tickets. */
@@ -85,6 +101,32 @@ export interface CrowdNodeConfig {
   ccRangeOrigins?: string[];
   maxCpuLoad?: number;
 }
+
+/**
+ * Theia LoRA pins from `theia/model-dev/adapters.json`. Browser nodes cannot
+ * read `process.env`, so `@flaxia/node` needs them via `theiaAdapterPins`; it
+ * advertises `theia-expert-<id>` only for pins it can verify.
+ */
+const CROWD_THEIA_ADAPTER_PINS: Record<string, TheiaAdapterPin> = {
+  code: {
+    url: 'https://huggingface.co/RemydreScarlet/theia-lora-adapters/resolve/71950bc80ab762e4968dcc8f595b4a4639da36a2/theia-code-f32.gguf',
+    sha256: 'a051b00f8fc70c2506eded1cd91df8a54a4fb0592befd28a394d6dd9bd20e755',
+    maxBytes: 80767200,
+    revision: '71950bc80ab762e4968dcc8f595b4a4639da36a2',
+  },
+  math: {
+    url: 'https://huggingface.co/RemydreScarlet/theia-lora-adapters/resolve/71950bc80ab762e4968dcc8f595b4a4639da36a2/theia-math-f32.gguf',
+    sha256: 'e4b6e02df51dc06f9cd9179a0d7bad75ae9092ac840a73e921a4e3595aae4d3b',
+    maxBytes: 80767200,
+    revision: '71950bc80ab762e4968dcc8f595b4a4639da36a2',
+  },
+  chat: {
+    url: 'https://huggingface.co/RemydreScarlet/theia-lora-adapters/resolve/71950bc80ab762e4968dcc8f595b4a4639da36a2/theia-chat-f32.gguf',
+    sha256: 'e58285ca4482343f8fa0f33a3e38667a158da74a2c69a394d945b15f114e9427',
+    maxBytes: 80767200,
+    revision: '71950bc80ab762e4968dcc8f595b4a4639da36a2',
+  },
+};
 
 /** Minimal typed surface of the versioned `@flaxia/node` runtime bundle. */
 export interface FlaxiaNodeModule {
@@ -181,6 +223,7 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
       onConsentRequired,
     },
     capabilities: CROWD_SITE_CAPABILITIES,
+    theiaAdapterPins: CROWD_THEIA_ADAPTER_PINS,
     fileSourceOrigins:
       typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
     ccRangeOrigins:
