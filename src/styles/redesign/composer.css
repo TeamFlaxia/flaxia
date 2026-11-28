@@ -965,34 +965,28 @@
   height: 32px;
 }
 
-/* Post visibility selector. Kept compact so the composer height stays stable. */
-.composer-visibility-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  padding: 4px 0 2px;
-  font-size: 12px;
-  color: var(--text-muted, var(--text-secondary, currentColor));
+/* Visibility is an icon-only footer button; the chooser is an attach-style
+   popover so the composer keeps a single, compact toolbar row. */
+.composer-visibility-group {
+  position: relative;
+  display: inline-flex;
 }
 
-.composer-visibility-label {
+.composer-visibility-toggle[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.post-composer .composer-visibility-menu {
+  min-width: 188px;
+}
+
+.post-composer .composer-visibility-menu .composer-file-button.selected {
+  color: var(--text-primary);
   font-weight: 600;
 }
 
-.composer-visibility-select {
-  min-height: 26px;
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary, transparent);
-  color: inherit;
-  font: inherit;
+.composer-visibility-check {
+  margin-left: auto;
+  color: var(--accent, var(--text-primary));
 }
-
-.composer-visibility-hint {
-  opacity: 0.75;
-}
-
-/* Federation/mention guidance is part of the normal composer, not a tooltip:
-   keep it readable while browsing so the select's description is available. */

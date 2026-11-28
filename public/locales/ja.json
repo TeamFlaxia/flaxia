@@ -891,6 +891,8 @@
   "timeline.for_you_title": "おすすめ (Alt+2)",
   "timeline.global": "全体",
   "timeline.global_title": "全体 (Alt+3)",
+  "timeline.federated": "連合",
+  "timeline.federated_title": "連合 (Alt+4)",
   "timeline.reload": "↑ 再読み込み",
   "timeline.reload_title": "投稿を再読み込み",
   "timeline.pull_to_refresh": "↓ 引っ張って更新",

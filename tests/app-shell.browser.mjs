@@ -986,7 +986,7 @@ test('the left nav renders guest and signed-in states and routes its menus', {
       await signed.page
         .locator('.left-nav .nav-item')
         .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
-      ['arcade', 'bookmarks', 'explore', 'federated', 'home', 'notifications'],
+      ['arcade', 'bookmarks', 'explore', 'home', 'notifications'],
       'signed-in nav items',
     );
     assert.equal(await signed.page.locator('.nav-tag').count(), 2, 'trending tags');
@@ -1014,7 +1014,7 @@ test('the left nav renders guest and signed-in states and routes its menus', {
       await guest.page
         .locator('.left-nav .nav-item')
         .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-nav-id')).sort()),
-      ['arcade', 'explore', 'federated', 'home'],
+      ['arcade', 'explore', 'home'],
       'guest nav items',
     );
     assert.ok(await guest.page.$('.nav-auth-buttons'), 'guest auth buttons');

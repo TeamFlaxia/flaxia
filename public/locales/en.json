@@ -891,6 +891,8 @@
   "timeline.for_you_title": "For you (Alt+2)",
   "timeline.global": "Global",
   "timeline.global_title": "Global (Alt+3)",
+  "timeline.federated": "Federated",
+  "timeline.federated_title": "Federated (Alt+4)",
   "timeline.reload": "↑ Reload",
   "timeline.reload_title": "Reload posts",
   "timeline.pull_to_refresh": "↓ Pull to refresh",

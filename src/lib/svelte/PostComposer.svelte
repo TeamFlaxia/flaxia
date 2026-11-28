@@ -56,13 +56,6 @@ interface Props {
 let { onPostCreated, currentUser = null, onDraftSaved, quotedPost = null }: Props = $props();
 let user = $state(currentUser);
 
-// The select must have its own accessible name instead of inheriting the
-// concatenated text of the label, the hints and the options.
-const visibilityUid = $props.id();
-const visibilityLabelId = `composer-visibility-label-${visibilityUid}`;
-const visibilityHintId = `composer-visibility-hint-${visibilityUid}`;
-const mentionHintId = `composer-mention-hint-${visibilityUid}`;
-
 const SAVED_DRAFTS_KEY = 'flaxia.saved_drafts';
 const AUTOSAVE_KEY = 'flaxia.post_autosave';
 
@@ -90,6 +83,7 @@ let savedDrafts = $state<Draft[]>([]);
 let draftStorageMode = $state<'loading' | 'local' | 'vault' | 'locked'>('loading');
 let draftsOpen = $state(false);
 let attachMenuOpen = $state(false);
+let visibilityMenuOpen = $state(false);
 let mentionOpen = $state(false);
 let mentionItems = $state<Array<{ label: string; sub?: string; remote?: boolean }>>([]);
 let mentionIndex = $state(0);
@@ -325,10 +319,27 @@ function removePollOption(index: number): void {
 
 function toggleAttachMenu(): void {
   attachMenuOpen = !attachMenuOpen;
-  if (attachMenuOpen)
+  if (attachMenuOpen) {
+    visibilityMenuOpen = false;
     queueMicrotask(() => {
       if (root) attachIcons(root);
     });
+  }
+}
+
+function toggleVisibilityMenu(): void {
+  visibilityMenuOpen = !visibilityMenuOpen;
+  if (visibilityMenuOpen) {
+    attachMenuOpen = false;
+    queueMicrotask(() => {
+      if (root) attachIcons(root);
+    });
+  }
+}
+
+function selectVisibility(next: PostVisibility): void {
+  visibility = next;
+  visibilityMenuOpen = false;
 }
 
 function onAttachClick(slot: string): void {
@@ -779,25 +790,6 @@ export function deleteAllDraftsPublic(): void {
       </div>
     {/if}
 
-    <div class="composer-visibility-row">
-      <span class="composer-visibility-label" id={visibilityLabelId}>{t('composer.visibility_label')}</span>
-      <select
-        class="composer-visibility-select"
-        aria-labelledby={visibilityLabelId}
-        aria-describedby="{visibilityHintId} {mentionHintId}"
-        bind:value={visibility}
-      >
-        <option value="public">{t('composer.visibility_public')}</option>
-        <option value="unlisted">{t('composer.visibility_unlisted')}</option>
-        <option value="private">{t('composer.visibility_followers')}</option>
-        <option value="direct">{t('composer.visibility_direct')}</option>
-      </select>
-      <span class="composer-visibility-hint" id={visibilityHintId}>{t('composer.visibility_hint')}</span>
-      <span class="composer-visibility-hint" id={mentionHintId}>{t('composer.mention_remote_hint')}</span>
-    </div>
-
-    <div class="composer-divider"></div>
-
     <div class="composer-footer">
       <div class="composer-actions">
         <input bind:this={fileInput} type="file" class="composer-file-input" onchange={(e) => void onFilesPicked(Array.from(e.currentTarget.files ?? []))} />
@@ -812,6 +804,38 @@ export function deleteAllDraftsPublic(): void {
               <button class="composer-file-button composer-file-button--game" type="button" onclick={() => onAttachClick('game')}><span class="action-icon" data-icon="game"></span>{t('composer.attach_game')}</button>
               <button class="composer-file-button composer-poll-button" type="button" onclick={togglePoll}><span class="action-icon" data-icon="poll"></span>{t('poll.toggle_button')}</button>
               <button class="composer-file-button composer-file-button--document" type="button" onclick={() => onAttachClick('document')}><span class="action-icon" data-icon="document"></span>{t('composer.attach_document')}</button>
+            </div>
+          {/if}
+        </div>
+        <div class="composer-visibility-group">
+          <button
+            class="composer-file-button composer-visibility-toggle"
+            type="button"
+            title={t('composer.visibility_label')}
+            aria-label={t('composer.visibility_label')}
+            aria-expanded={visibilityMenuOpen}
+            onclick={toggleVisibilityMenu}
+          >
+            <span class="action-icon" data-icon="impressions"></span>
+          </button>
+          {#if visibilityMenuOpen}
+            <div class="composer-attach-menu composer-visibility-menu" style="display:block;" role="menu">
+              <button class="composer-file-button" class:selected={visibility === 'public'} type="button" role="menuitemradio" aria-checked={visibility === 'public'} onclick={() => selectVisibility('public')}>
+                <span class="action-icon" data-icon="impressions"></span>{t('composer.visibility_public')}
+                {#if visibility === 'public'}<span class="composer-visibility-check" aria-hidden="true">✓</span>{/if}
+              </button>
+              <button class="composer-file-button" class:selected={visibility === 'unlisted'} type="button" role="menuitemradio" aria-checked={visibility === 'unlisted'} onclick={() => selectVisibility('unlisted')}>
+                <span class="action-icon" data-icon="eye-off"></span>{t('composer.visibility_unlisted')}
+                {#if visibility === 'unlisted'}<span class="composer-visibility-check" aria-hidden="true">✓</span>{/if}
+              </button>
+              <button class="composer-file-button" class:selected={visibility === 'private'} type="button" role="menuitemradio" aria-checked={visibility === 'private'} onclick={() => selectVisibility('private')}>
+                <span class="action-icon" data-icon="users"></span>{t('composer.visibility_followers')}
+                {#if visibility === 'private'}<span class="composer-visibility-check" aria-hidden="true">✓</span>{/if}
+              </button>
+              <button class="composer-file-button" class:selected={visibility === 'direct'} type="button" role="menuitemradio" aria-checked={visibility === 'direct'} onclick={() => selectVisibility('direct')}>
+                <span class="action-icon" data-icon="at-sign"></span>{t('composer.visibility_direct')}
+                {#if visibility === 'direct'}<span class="composer-visibility-check" aria-hidden="true">✓</span>{/if}
+              </button>
             </div>
           {/if}
         </div>

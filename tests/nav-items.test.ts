@@ -18,8 +18,13 @@ describe('navItemsFor', () => {
     }
   });
 
+  it('keeps federated out of the left rail (it is a home timeline tab)', () => {
+    assert.equal(ids(false).includes('federated'), false);
+    assert.equal(ids(true).includes('federated'), false);
+  });
+
   it('adds notifications and bookmarks once signed in', () => {
-    assert.deepEqual(ids(true), ['home', 'explore', 'arcade', 'federated', 'notifications', 'bookmarks']);
+    assert.deepEqual(ids(true), ['home', 'explore', 'arcade', 'notifications', 'bookmarks']);
   });
 
   it('never returns duplicate ids', () => {

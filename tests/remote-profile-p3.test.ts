@@ -499,8 +499,8 @@ describe('remote profile SSR safety', () => {
   });
 });
 
-describe('composer accessibility', () => {
-  it('gives the visibility select a single label and exposes both hints as descriptions', async () => {
+describe('composer visibility button', () => {
+  it('renders an icon-only footer button instead of the verbose select and hints', async () => {
     const component = await compileModule('src/lib/svelte/PostComposer.svelte', {
       '../../components/StampPicker.ts': stampPickerStub,
       '../file-preview.ts': filePreviewStub,
@@ -512,38 +512,33 @@ describe('composer accessibility', () => {
     const html = renderHtml(component.default as Renderable, { currentUser: { username: 'alice' } });
     const window = new Window({ url: 'https://flaxia.app' });
     window.document.body.innerHTML = html;
-    const select = window.document.querySelector('select.composer-visibility-select');
-    assert.ok(select, 'the visibility select must render');
-    let ancestor = select.parentElement;
-    let depth = 0;
-    while (ancestor && depth++ < 20) {
-      assert.notEqual(ancestor.tagName, 'LABEL', 'the select must not be wrapped by a label with extra text');
-      ancestor = ancestor.parentElement;
-    }
-
-    const labelledBy = select.getAttribute('aria-labelledby');
-    assert.ok(labelledBy, 'the select needs aria-labelledby');
-    const labels = labelledBy.split(/\s+/).map((id) => window.document.getElementById(id)?.textContent?.trim());
-    assert.deepEqual(labels, [en['composer.visibility_label']], 'the accessible name must be just the label');
-
-    const describedBy = select.getAttribute('aria-describedby');
-    assert.ok(describedBy, 'the select needs aria-describedby');
-    const descriptions = describedBy.split(/\s+/).map((id) => window.document.getElementById(id)?.textContent?.trim());
-    assert.deepEqual(descriptions, [en['composer.visibility_hint'], en['composer.mention_remote_hint']]);
+    const button = window.document.querySelector('button.composer-visibility-toggle');
+    assert.ok(button, 'the visibility button must render in the composer footer');
+    assert.equal(button.getAttribute('aria-label'), en['composer.visibility_label']);
+    assert.equal(button.getAttribute('title'), en['composer.visibility_label']);
+    assert.equal(button.querySelector('[data-icon="impressions"]') !== null, true, 'an eye icon marks the button');
+    assert.equal(window.document.querySelector('select.composer-visibility-select'), null, 'the old select is gone');
+    assert.equal(window.document.querySelector('.composer-visibility-hint'), null, 'the verbose hints are gone');
+    const footer = window.document.querySelector('.composer-footer');
+    assert.ok(footer?.querySelector('.composer-visibility-toggle'), 'the button lives in the footer');
     window.happyDOM.cancelAsync();
   });
 
-  it('keeps the federation hints visible when the composer is not focused', async () => {
+  it('anchors the visibility popover to the footer icon', async () => {
     const css = await readFile(join(ROOT, 'src/styles/redesign/composer.css'), 'utf8');
     const window = new Window({ url: 'https://flaxia.app' });
     window.document.body.innerHTML =
-      '<div class="post-composer"><span class="composer-visibility-hint">hint</span></div>';
+      '<div class="post-composer"><div class="composer-actions">' +
+      '<div class="composer-visibility-group"><div class="composer-attach-menu composer-visibility-menu"></div></div>' +
+      '</div></div>';
     const style = window.document.createElement('style');
     style.textContent = css;
     window.document.head.appendChild(style);
-    const hint = window.document.querySelector('.composer-visibility-hint');
-    assert.ok(hint);
-    assert.notEqual(window.getComputedStyle(hint).display, 'none', 'hints must be readable during normal browsing');
+    const group = window.document.querySelector('.composer-visibility-group');
+    const menu = window.document.querySelector('.composer-visibility-menu');
+    assert.ok(group && menu);
+    assert.equal(window.getComputedStyle(group).position, 'relative');
+    assert.equal(window.getComputedStyle(menu).position, 'absolute');
     window.happyDOM.cancelAsync();
   });
 });

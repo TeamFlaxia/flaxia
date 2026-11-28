@@ -204,13 +204,19 @@ after(() => {
 });
 
 describe('federated navigation and routing', () => {
-  it('exposes a public Federated item in both rails', () => {
+  it('keeps Federated out of both rails (it is a home timeline tab)', () => {
     for (const signedIn of [false, true]) {
       const item = navItemsFor(signedIn).find((entry) => entry.id === 'federated');
-      assert.ok(item, `federated missing from ${signedIn ? 'signed-in' : 'guest'} rail`);
-      assert.equal(item.labelKey, 'nav.federated');
-      assert.equal(item.icon, 'explore');
+      assert.equal(item, undefined, `federated leaked into the ${signedIn ? 'signed-in' : 'guest'} rail`);
     }
+  });
+
+  it('offers Federated as the fourth home timeline tab', async () => {
+    const source = await read('src/lib/svelte/Timeline.svelte');
+    assert.match(source, /type Mode = 'foryou' \| 'following' \| 'global' \| 'federated'/);
+    assert.match(source, /switchMode\('federated'\)/);
+    assert.match(source, /mode === 'federated'.*api\/federated\/posts/);
+    assert.match(source, /e\.key === '4'/);
   });
 
   it('parses /federated as its own view and highlights the discovery tab', () => {

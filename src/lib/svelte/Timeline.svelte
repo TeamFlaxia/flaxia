@@ -42,7 +42,7 @@ interface Props {
 
 let { sandboxOrigin, currentUser = null }: Props = $props();
 
-type Mode = 'foryou' | 'following' | 'global';
+type Mode = 'foryou' | 'following' | 'global' | 'federated';
 
 let root: HTMLDivElement;
 let postList: HTMLDivElement;
@@ -104,6 +104,8 @@ function buildApiUrl(pageCursor?: string): string {
   const params = new URLSearchParams();
   params.set('limit', String(getTimelinePageSize()));
   if (pageCursor) params.set('cursor', pageCursor);
+  // Federated is the public, score-ranked pool; the other tabs read posts.
+  if (mode === 'federated') return `/api/federated/posts?${params.toString()}`;
   if (mode === 'following') params.set('following', 'true');
   if (mode === 'foryou' && isForYouExternalHidden()) params.set('external', 'hide');
   return `/api/${mode === 'foryou' ? 'posts/recommended' : 'posts'}?${params.toString()}`;
@@ -319,6 +321,9 @@ function onKeydown(e: KeyboardEvent): void {
   } else if (e.key === '3') {
     e.preventDefault();
     switchMode('global');
+  } else if (e.key === '4') {
+    e.preventDefault();
+    switchMode('federated');
   }
 }
 
@@ -441,6 +446,7 @@ function updateFab(): void {
       <button class="feed-toggle-btn" class:active={mode === 'foryou'} type="button" onclick={() => switchMode('foryou')}>{t('timeline.for_you')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'following'} type="button" onclick={() => switchMode('following')}>{t('timeline.following')}</button>
       <button class="feed-toggle-btn" class:active={mode === 'global'} type="button" onclick={() => switchMode('global')}>{t('timeline.global')}</button>
+      <button class="feed-toggle-btn" class:active={mode === 'federated'} type="button" title={t('timeline.federated_title')} onclick={() => switchMode('federated')}>{t('timeline.federated')}</button>
       <button class="feed-toggle-btn feed-reload-btn" type="button" onclick={resetAndLoad}>{t('timeline.reload')}</button>
     </div>
   </div>
