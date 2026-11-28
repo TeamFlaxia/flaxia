@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { deriveActionSignals } from '../functions/lib/recommendation-candidates.ts';
 import {
   ACTION_SIGNAL_WEIGHTS,
   type ActionSignalName,
@@ -23,6 +24,16 @@ describe('action-signal normalization', () => {
       assert.equal(normalizeActionSignal(value), 0);
     }
     assert.equal(normalizeActionSignal('0.5' as unknown as number), 0);
+  });
+});
+
+describe('candidate signal hydration', () => {
+  it('uses reload_count as the share propensity proxy without touching other signals', () => {
+    assert.deepEqual(deriveActionSignals({ reload_count: 5 }, 10), { share: 0.5 });
+    assert.deepEqual(deriveActionSignals({ reload_count: 20 }, 10), { share: 1 });
+    assert.deepEqual(deriveActionSignals({ reload_count: 3 }, 0), { share: 0 });
+    assert.deepEqual(deriveActionSignals({}, 10), { share: 0 });
+    assert.deepEqual(deriveActionSignals({ reload_count: Number.NaN }, 10), { share: 0 });
   });
 });
 

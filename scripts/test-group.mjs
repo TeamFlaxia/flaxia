@@ -134,6 +134,7 @@ const groups = {
     'quote-notification-visibility',
     'recommendation-visibility',
     'recommendation-action-signals',
+    'recommendation-ranking-adjustments',
     'reply-visibility',
     'visibility-quote-media',
     'visibility-read-paths',
