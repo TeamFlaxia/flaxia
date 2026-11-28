@@ -113,8 +113,8 @@ function applyAvatar(): void {
 }
 
 function applyBanner(): void {
-  if (!banner || !data) return;
-  banner.style.backgroundImage = data.header_key ? `url(${nativeApiHref(`/api/images/${data.header_key}`)})` : '';
+  if (!banner) return;
+  banner.style.backgroundImage = data?.header_key ? `url(${nativeApiHref(`/api/images/${data.header_key}`)})` : '';
 }
 
 async function loadPinned(): Promise<void> {
@@ -168,7 +168,12 @@ async function loadUser(): Promise<void> {
     if (!result.user || gen !== generation) return;
     data = result.user;
     frozen = Boolean(result.user.frozen);
-    if (frozen) return;
+    if (frozen) {
+      // The frozen branch renders its own banner; wait for Svelte to bind it
+      // before applying the user's uploaded header image (or clearing an empty one).
+      queueMicrotask(() => applyBanner());
+      return;
+    }
 
     following = result.user.is_following ?? false;
     blocked = result.user.is_blocked ?? false;
@@ -365,11 +370,12 @@ onDestroy(() => {
   {#if notFound}
     <p class="profile-not-found">{t('profile.not_found')}</p>
   {:else if frozen}
-    <div class="profile-banner"></div>
+    <div bind:this={banner} class="profile-banner" class:profile-banner--empty={!data?.header_key}></div>
     <div class="profile-header"><div class="profile-avatar-section"><div bind:this={avatar} class="profile-avatar fx-display">{username.charAt(0).toUpperCase()}</div><div class="profile-info"><div bind:this={displayName} class="profile-display-name fx-display">{data?.display_name || username}</div></div></div></div>
     <p class="profile-frozen-notice">{t('profile.frozen_notice', { reason: data?.frozen_reason || '' })}</p>
   {:else}
-    <div bind:this={banner} class="profile-banner" class:profile-banner--editable={own} onclick={() => { if (own) editProfile(); }} role={own ? 'button' : undefined}>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div bind:this={banner} class="profile-banner" class:profile-banner--editable={own} class:profile-banner--empty={!data?.header_key} tabindex={own ? 0 : undefined} aria-label={own ? t('profile.change_header') : undefined} onclick={() => { if (own) editProfile(); }} onkeydown={(e) => { if (own && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); editProfile(); } }} role={own ? 'button' : undefined}>
       <div class="profile-banner-overlay">{t('profile.change_header')}</div>
     </div>
 

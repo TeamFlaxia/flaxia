@@ -52,12 +52,77 @@ describe('styles/css-entry', () => {
     assert.match(read('src/lib/svelte/MapsPage.svelte'), /import ['"]\.\.\/\.\.\/styles\/redesign\/maps\.css['"]/);
   });
 
-  it('neutralizes the legacy avatar overlap when the profile banner is hidden', () => {
+  it('neutralizes the legacy avatar overlap only when the profile banner is empty', () => {
     const pages = read('src/styles/redesign/pages.css');
-    assert.match(pages, /\.main-container:has\(\.profile-page\) \.profile-banner\s*\{\s*display:\s*none/);
-    const avatar = pages.match(/\.main-container:has\(\.profile-page\) \.profile-avatar\s*\{[^}]+\}/);
-    assert.ok(avatar, 'profile avatar needs a banner-hidden offset override');
+    // A real `header_key` must keep its image, so only the empty placeholder
+    // marker added by ProfilePage.svelte may be hidden.
+    assert.match(pages, /\.main-container:has\(\.profile-page\) \.profile-banner--empty\s*\{\s*display:\s*none/);
+    assert.doesNotMatch(
+      pages,
+      /\.main-container:has\(\.profile-page\) \.profile-banner\s*\{\s*display:\s*none/,
+      'an unconditional hide would also remove uploaded header images',
+    );
+    const avatar = pages.match(
+      /\.main-container:has\(\.profile-page \.profile-banner--empty\) \.profile-avatar\s*\{[^}]+\}/,
+    );
+    assert.ok(avatar, 'profile avatar needs a banner-hidden offset override scoped to the empty banner');
     assert.match(avatar[0], /top:\s*0/);
     assert.match(avatar[0], /margin-bottom:\s*0/);
+    const header = pages.match(
+      /\.main-container:has\(\.profile-page \.profile-banner--empty\) \.profile-header\s*\{[^}]+\}/,
+    );
+    assert.ok(header, 'profile header needs a banner-hidden padding override scoped to the empty banner');
+    assert.match(header[0], /padding-top:\s*16px/);
+  });
+
+  it('marks the profile banner empty without a header image but still applies that image', () => {
+    const page = read('src/lib/svelte/ProfilePage.svelte');
+    assert.match(page, /class:profile-banner--empty=\{!data\?\.header_key\}/);
+    const applyBanner = page.match(/function applyBanner\(\): void \{[\s\S]*?\n\}/);
+    assert.ok(applyBanner, 'applyBanner must still be present');
+    assert.match(applyBanner[0], /data\.header_key/);
+  });
+
+  it('keeps the mobile banner height above the later legacy main.css rule', () => {
+    const pages = read('src/styles/redesign/pages.css');
+    const blocks = [...pages.matchAll(/@media \(max-width: 480px\) \{([\s\S]*?)\n\}/g)].map((match) => match[1]);
+    const bannerBlock = blocks.find((block) => /\.profile-banner\s*\{/.test(block));
+    assert.ok(bannerBlock, 'the profile banner needs a height override inside @media (max-width: 480px)');
+    assert.match(
+      bannerBlock,
+      /\.main-container:has\(\.profile-page\) \.profile-banner\s*\{\s*height:\s*72px;/,
+      'main.css is imported later with height:160px, so the mobile override needs a higher-specificity selector',
+    );
+  });
+
+  it('applies a frozen profile header image and hides an empty frozen banner', () => {
+    const page = read('src/lib/svelte/ProfilePage.svelte');
+    assert.match(
+      page,
+      /\{:else if frozen\}\s*<div bind:this=\{banner\} class="profile-banner"[^>]*class:profile-banner--empty=\{!data\?\.header_key\}/,
+      'the frozen banner needs the same binding and empty marker as the editable banner',
+    );
+    const loadUser = page.match(/async function loadUser\(\): Promise<void> \{[\s\S]*?\n\}/);
+    assert.ok(loadUser, 'loadUser must still be present');
+    assert.match(
+      loadUser[0],
+      /if \(frozen\) \{[\s\S]*?queueMicrotask\(\(\) => applyBanner\(\)\);\s*return;\s*\}/,
+      'a frozen user still needs applyBanner() after Svelte binds the frozen banner',
+    );
+  });
+
+  it('makes the editable banner keyboard accessible without changing its role', () => {
+    const page = read('src/lib/svelte/ProfilePage.svelte');
+    const banner = page.match(
+      /<div bind:this=\{banner\} class="profile-banner" class:profile-banner--editable=\{own\}[\s\S]*?role=\{own \? 'button' : undefined\}>/,
+    );
+    assert.ok(banner, 'editable banner markup must keep its role and click handler');
+    assert.match(banner[0], /tabindex=\{own \? 0 : undefined\}/);
+    assert.match(banner[0], /aria-label=\{own \? t\('profile\.change_header'\) : undefined\}/);
+    assert.match(banner[0], /onclick=\{\(\) => \{ if \(own\) editProfile\(\); \}\}/);
+    assert.match(banner[0], /onkeydown=/);
+    assert.match(banner[0], /e\.key === 'Enter'/);
+    assert.match(banner[0], /e\.key === ' '/);
+    assert.match(banner[0], /editProfile\(\)/);
   });
 });

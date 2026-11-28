@@ -738,7 +738,9 @@
 }
 
 @media (max-width: 480px) {
-  .profile-banner {
+  /* main.css is imported after this file and sets `.profile-banner` to 160px,
+     so the mobile height needs a more specific selector to win the cascade. */
+  .main-container:has(.profile-page) .profile-banner {
     height: 72px;
   }
 
@@ -2899,22 +2901,24 @@
 
 /* --- v5 polish pass (Lead) --- */
 /* A plain grey strip read as a failed image: drop it and let the avatar
-   and type define the profile header. */
-.main-container:has(.profile-page) .profile-banner {
+   and type define the profile header. Only the empty placeholder is hidden;
+   a profile with a real `header_key` must keep its uploaded image visible. */
+.main-container:has(.profile-page) .profile-banner--empty {
   display: none;
 }
 
-/* The banner is hidden above, so the legacy banner-overlap offset must be
+/* When the empty banner is hidden, the legacy banner-overlap offset must be
    removed too: `top:-44px` would pull the avatar under the sticky topbar and
-   shift the bio up, clipping the profile header. */
-.main-container:has(.profile-page) .profile-avatar {
+   shift the bio up, clipping the profile header. A real header image keeps
+   the intended overlap. */
+.main-container:has(.profile-page .profile-banner--empty) .profile-avatar {
   top: 0;
   margin-top: 0;
   margin-bottom: 0;
   border-width: 1px;
 }
 
-.main-container:has(.profile-page) .profile-header {
+.main-container:has(.profile-page .profile-banner--empty) .profile-header {
   padding-top: 16px;
 }
 
