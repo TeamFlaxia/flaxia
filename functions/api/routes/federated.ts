@@ -86,12 +86,17 @@ federated.get('/federated/posts', async (c) => {
 
   const result = await db
     .prepare(
-      `SELECT p.*, pm.score AS pool_score
+      `SELECT p.*, COALESCE(pm.score, 0) AS pool_score
        FROM posts p
-       JOIN ap_pool_metrics pm ON pm.post_id = p.id
+       LEFT JOIN ap_pool_metrics pm ON pm.post_id = p.id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.actor_id IS NOT NULL
+         -- The hourly discovery cron may not have populated the pool yet (or it
+         -- may have temporarily failed). Until then show the newest public
+         -- remote posts instead of an empty tab; once any pool row exists the
+         -- ranking is exactly as before.
+         AND (pm.post_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ap_pool_metrics))
          ${blockSql} ${cursorSql} ${visibility.sql}
-       ORDER BY pm.score DESC, p.created_at DESC, p.id DESC
+       ORDER BY COALESCE(pm.score, 0) DESC, p.created_at DESC, p.id DESC
        LIMIT ?`,
     )
     .bind(...blockParams, ...cursorParams, ...visibility.params, limit)

@@ -207,6 +207,33 @@ describe('GET /api/federated/posts', () => {
     );
   });
 
+  it('falls back to recent public remote posts while the pool is empty', async () => {
+    const insertRemote = (id: string, createdAt: string) =>
+      db
+        .prepare(
+          `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, actor_id, ap_object_id,
+                            status, hidden, visibility, created_at)
+         VALUES (?, '', 'remote', ?, '[]', '[]', ?, ?, 'published', 0, 'public', ?)`,
+        )
+        .bind(id, `note ${id}`, ACTOR_A, `https://example.example/notes/${id}`, createdAt)
+        .run();
+    insertRemote('r-old', '2026-11-25T00:00:00.000Z');
+    insertRemote('r-new', '2026-11-26T00:00:00.000Z');
+
+    const data = await getFeed(appFor(null), '/federated/posts');
+    assert.deepEqual(ids(data.posts), ['r-new', 'r-old']);
+    assert.deepEqual(
+      data.posts.map((post) => post.pool_score),
+      [0, 0],
+    );
+
+    // As soon as discovery publishes a ranked row, the fallback stops and the
+    // pool alone drives the tab.
+    seedPoolPost({ id: 'p-ranked', actor: ACTOR_B, score: 4 });
+    const ranked = await getFeed(appFor(null), '/federated/posts');
+    assert.deepEqual(ids(ranked.posts), ['p-ranked']);
+  });
+
   it('excludes hidden, unpublished and non-federated rows', async () => {
     seedPoolPost({ id: 'p-ok', actor: ACTOR_A, score: 3 });
     seedPoolPost({ id: 'p-hidden', actor: ACTOR_A, score: 8, hidden: 1 });
