@@ -1,8 +1,10 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { isPublicAddress } from './lib/activitypub/context.ts';
+import { pruneDeadLetters, storeDeadLetters } from './lib/activitypub/dlq-store.ts';
 import { backfillGameTitles } from './lib/game-title-backfill.ts';
 import { parsePublicHttpUrl } from './lib/url-guard.ts';
+
+export { pruneDeadLetters, storeDeadLetters } from './lib/activitypub/dlq-store.ts';
 
 /** How long a quarantined message may stay in D1 before the daily prune. */
 export const AP_DLQ_RETENTION_DAYS = 14;
@@ -204,144 +206,6 @@ export default {
     }
   },
 };
-
-function serializeDeadLetterValue(value: unknown): string {
-  try {
-    return JSON.stringify(value) ?? '';
-  } catch {
-    return String(value);
-  }
-}
-
-/** The original payload and the failure reason of a quarantined message. */
-function deadLetterFields(body: unknown): { payload: string; error: string | null } {
-  if (typeof body === 'string') {
-    try {
-      const parsed: unknown = JSON.parse(body);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'payload' in parsed) {
-        const envelope = parsed as { payload?: unknown; error?: unknown };
-        return {
-          payload: typeof envelope.payload === 'string' ? envelope.payload : serializeDeadLetterValue(envelope.payload),
-          error:
-            envelope.error === undefined
-              ? null
-              : typeof envelope.error === 'string'
-                ? envelope.error
-                : serializeDeadLetterValue(envelope.error),
-        };
-      }
-    } catch {
-      // An arbitrary string is a perfectly valid queue payload: keep it as-is.
-    }
-    return { payload: body, error: null };
-  }
-  return { payload: serializeDeadLetterValue(body), error: null };
-}
-
-type JsonRecord = Record<string, unknown>;
-
-function isJsonRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * Drop private body fields from a non-public Create before it reaches D1.
- *
- * Structural fields (id/type/actor/object id) and the surrounding queue
- * message are preserved so operators can still identify the failed delivery.
- * An activity addressed to the Public collection keeps its content: that
- * material is already published and useful when redriving a poison message.
- */
-function redactPrivateActivity(record: JsonRecord): boolean {
-  const activity = isJsonRecord(record.activity) ? record.activity : record;
-  if (activity.type !== 'Create') return false;
-
-  const object = activity.object;
-  if (
-    isPublicAddress(activity.to) ||
-    isPublicAddress(activity.cc) ||
-    (isJsonRecord(object) && (isPublicAddress(object.to) || isPublicAddress(object.cc)))
-  ) {
-    return false;
-  }
-
-  // `summary`, `name` and `attachment` can carry the private body just as
-  // well as `content` (and a CW is often the most sensitive part of all).
-  const privateKeys = ['to', 'cc', 'bto', 'bcc', 'audience', 'content', 'contentMap', 'summary', 'name', 'attachment'];
-  let changed = false;
-  for (const key of privateKeys) {
-    if (key in activity) {
-      delete activity[key];
-      changed = true;
-    }
-  }
-  if (isJsonRecord(object)) {
-    for (const key of privateKeys) {
-      if (key in object) {
-        delete object[key];
-        changed = true;
-      }
-    }
-  }
-  return changed;
-}
-
-/** Redact only the stored copy; the original queue message is never mutated. */
-function redactDeadLetterPayload(payload: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return payload;
-  }
-  if (!isJsonRecord(parsed)) return payload;
-
-  // The DLQ envelope is {"payload": "<original message>", "error": "..."}.
-  if (typeof parsed.payload === 'string') {
-    const inner = redactDeadLetterPayload(parsed.payload);
-    if (inner === parsed.payload) return payload;
-    parsed.payload = inner;
-    return JSON.stringify(parsed);
-  }
-
-  if (!redactPrivateActivity(parsed)) return payload;
-  return JSON.stringify(parsed);
-}
-
-/** Remove dead letters older than `cutoffIso`; returns the number of rows. */
-export async function pruneDeadLetters(db: D1Database, cutoffIso: string): Promise<number> {
-  const result = await db.prepare('DELETE FROM ap_dlq WHERE received_at < ?').bind(cutoffIso).run();
-  return result.meta?.changes ?? 0;
-}
-
-/**
- * Persist dead letters and acknowledge every message.
- *
- * The queue keeps a dead letter only for its retention window (14 days by
- * default). D1 is the durable copy, but private (followers-only/direct) Create
- * bodies are redacted first and a daily cron enforces a 14-day ceiling. A
- * missing table or a database outage must not turn the DLQ consumer into an
- * infinite retry loop, so failures are logged and the message is acked either
- * way.
- */
-export async function storeDeadLetters(batch: MessageBatch<unknown>, env: Env): Promise<void> {
-  for (const message of batch.messages) {
-    try {
-      const { payload, error } = deadLetterFields(message.body);
-      const storedPayload = redactDeadLetterPayload(payload);
-      await env.DB.prepare('INSERT INTO ap_dlq (id, queue, payload, error, received_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(message.id, batch.queue, storedPayload, error, new Date().toISOString())
-        .run();
-      message.ack();
-    } catch (cause) {
-      console.error('Could not persist an ActivityPub dead letter (acknowledging to avoid a retry loop):', {
-        messageId: message.id,
-        error: (cause as Error).message,
-      });
-      message.ack();
-    }
-  }
-}
 
 async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { inboxUrl, activity, senderUsername } = msg;

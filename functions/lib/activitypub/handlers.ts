@@ -5,6 +5,7 @@ import { audienceEntries, isPublicAddress } from './context.ts';
 import { deliverToInbox } from './delivery.ts';
 import { type FederationEnv, normalizeActorSummary, resolveRemoteActor } from './fetch.ts';
 import { actorSignOptions } from './keys.ts';
+import { handleMove } from './move.ts';
 import { type Visibility } from './note.ts';
 import { htmlToText } from './text.ts';
 
@@ -226,7 +227,10 @@ export function visibilityFromInboundAudience(
     to.push(...audienceEntries(source.to));
     cc.push(...audienceEntries(source.cc));
   }
-  if (to.length === 0 && cc.length === 0) return inboundAudience(activity, object).length === 0 ? 'public' : 'direct';
+  // A Note with no audience at all is addressed (at most) to the inbox that
+  // received it. Defaulting to public would publish a private conversation
+  // just because the sender omitted the addressing fields.
+  if (to.length === 0 && cc.length === 0) return 'direct';
   if (to.some(isPublicAddress)) return 'public';
   if (cc.some(isPublicAddress)) return 'unlisted';
   if ([...to, ...cc].some((value) => isFollowersCollection(value, actorId))) return 'private';
@@ -1026,36 +1030,6 @@ async function handleBlock(
     .bind(randomId(), userId, actorId)
     .run();
   console.log('Block recorded from:', actorId, 'target:', target);
-}
-
-async function handleMove(
-  env: HandlerEnv,
-  activity: Record<string, unknown>,
-  actorId: string,
-  username: string,
-): Promise<void> {
-  const object = objectOf(activity);
-  // Mastodon emits `target`; other peers use `movedTo` on the object.
-  const movedTo =
-    typeof activity.target === 'string' ? activity.target : typeof object?.movedTo === 'string' ? object.movedTo : null;
-  if (!movedTo) return;
-  if (typeof object?.id === 'string' && object.id !== actorId) return;
-  let target: URL;
-  let source: URL;
-  try {
-    target = new URL(movedTo);
-    source = new URL(actorId);
-  } catch {
-    return;
-  }
-  // Only a valid URL on the signing actor's origin may become its new identity.
-  if (!['http:', 'https:'].includes(target.protocol) || target.origin !== source.origin) return;
-  await env.DB.prepare(
-    `UPDATE ap_actors SET moved_to = ?, fetched_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE actor_url = ?`,
-  )
-    .bind(movedTo, actorId)
-    .run();
-  console.log('Remote actor moved:', actorId, '->', movedTo);
 }
 
 /** URLs of the local actor, exported for the delivery side. */

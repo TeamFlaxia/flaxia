@@ -71,9 +71,9 @@ max_retries = 3
 dead_letter_queue = "activitypub-delivery-dlq"
 
 # Dead letters are consumed by this worker as well: it stores them in the
-# ap_dlq D1 table and acknowledges them. A bounded retry keeps a transient
-# database error from looping forever; persistence failures are logged and
-# acked in the worker so a not-yet-migrated environment cannot spin either.
+# ap_dlq D1 table and acknowledges them only after a successful insert. A
+# failed insert is retried (bounded by max_retries) instead of acknowledged,
+# so a database outage cannot silently discard the durable copy.
 [[queues.consumers]]
 queue = "activitypub-delivery-dlq"
 max_batch_size = 10

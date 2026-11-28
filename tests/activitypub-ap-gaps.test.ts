@@ -83,7 +83,7 @@ describe('ActivityPub dead-letter queue consumer', () => {
     assert.deepEqual(retried, [], 'a dead letter must never be retried by this consumer');
   });
 
-  it('acknowledges when the ap_dlq table is missing instead of looping', async () => {
+  it('retries instead of acknowledging when the ap_dlq table is missing', async () => {
     const { batch, acked, retried } = dlqBatch(['{"payload":"{}"}']);
     const missingTable = {
       prepare() {
@@ -94,8 +94,10 @@ describe('ActivityPub dead-letter queue consumer', () => {
       DB: missingTable as unknown as QueueEnv['DB'],
       BASE_URL: 'https://flaxia.app',
     });
-    assert.deepEqual(acked, ['dead-letter-0']);
-    assert.deepEqual(retried, []);
+    // A dead letter is the durable copy: acknowledging a failed insert would
+    // lose it during exactly the incident the DLQ exists to survive.
+    assert.deepEqual(acked, []);
+    assert.deepEqual(retried, ['dead-letter-0']);
   });
 
   it('leaves the delivery path untouched', async () => {

@@ -28,6 +28,27 @@ function envFor(db: TestDatabase, queue: QueueMessage[] = []): HandlerEnv {
 }
 
 /** Stub the remote actor document the handler fetches. */
+/**
+ * Serve the target actor documents fetched when a Move is processed. A target
+ * without a back-reference is served as an unrelated actor (empty document
+ * fields), so the handler must refuse to update `moved_to`.
+ */
+function stubMoveTargets(targets: Record<string, Record<string, unknown>>): () => void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input).replace(/\/$/, '');
+    const document = targets[url];
+    if (!document) return new Response('not found', { status: 404 });
+    return new Response(JSON.stringify({ id: url, type: 'Person', ...document }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/activity+json' },
+    });
+  }) as typeof fetch;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
 function stubRemoteActor(originalFetch: typeof fetch): () => void {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -731,70 +752,95 @@ describe('ActivityPub inbox handlers', () => {
   });
 
   it('records the new actor of a Move with movedTo', async () => {
-    await handleIncomingActivity(envFor(db), {
-      actorId: REMOTE_ACTOR,
-      username: 'alice',
-      activity: {
-        id: `${REMOTE}/activities/move-1`,
-        type: 'Move',
-        actor: REMOTE_ACTOR,
-        object: {
-          id: REMOTE_ACTOR,
-          type: 'Person',
-          movedTo: `${REMOTE}/users/alice-new`,
-        },
-      },
-    });
-
-    const actor = await db
-      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
-      .bind(REMOTE_ACTOR)
-      .first<{ moved_to: string | null }>();
-    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-new`);
-  });
-
-  it('records a Move that only names a target (the form Mastodon sends)', async () => {
-    await handleIncomingActivity(envFor(db), {
-      actorId: REMOTE_ACTOR,
-      username: 'alice',
-      activity: {
-        id: `${REMOTE}/activities/move-target`,
-        type: 'Move',
-        actor: REMOTE_ACTOR,
-        object: REMOTE_ACTOR,
-        target: `${REMOTE}/users/alice-target`,
-      },
-    });
-
-    const actor = await db
-      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
-      .bind(REMOTE_ACTOR)
-      .first<{ moved_to: string | null }>();
-    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-target`, 'a target-only Move must be honoured');
-  });
-
-  it('ignores a Move whose target is foreign or not a URL', async () => {
-    for (const [id, target] of [
-      ['move-foreign', 'https://evil.example/users/alice'],
-      ['move-invalid', 'not-a-url'],
-    ]) {
+    const target = `${REMOTE}/users/alice-new`;
+    const restore = stubMoveTargets({ [target]: { movedFrom: REMOTE_ACTOR } });
+    try {
       await handleIncomingActivity(envFor(db), {
         actorId: REMOTE_ACTOR,
         username: 'alice',
         activity: {
-          id: `${REMOTE}/activities/${id}`,
+          id: `${REMOTE}/activities/move-1`,
+          type: 'Move',
+          actor: REMOTE_ACTOR,
+          object: {
+            id: REMOTE_ACTOR,
+            type: 'Person',
+            movedTo: target,
+          },
+        },
+      });
+    } finally {
+      restore();
+    }
+
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, target);
+  });
+
+  it('records a Move that only names a target (the form Mastodon sends)', async () => {
+    const target = `${REMOTE}/users/alice-target`;
+    const restore = stubMoveTargets({ [target]: { alsoKnownAs: [REMOTE_ACTOR] } });
+    try {
+      await handleIncomingActivity(envFor(db), {
+        actorId: REMOTE_ACTOR,
+        username: 'alice',
+        activity: {
+          id: `${REMOTE}/activities/move-target`,
           type: 'Move',
           actor: REMOTE_ACTOR,
           object: REMOTE_ACTOR,
           target,
         },
       });
+    } finally {
+      restore();
+    }
+
+    const actor = await db
+      .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
+      .bind(REMOTE_ACTOR)
+      .first<{ moved_to: string | null }>();
+    assert.equal(actor?.moved_to, target, 'a target-only Move must be honoured');
+  });
+
+  it('ignores a Move whose target does not back-reference the source or is not a URL', async () => {
+    const foreign = 'https://evil.example/users/alice';
+    const sameOrigin = `${REMOTE}/users/alice-new`;
+    await db.prepare('UPDATE ap_actors SET moved_to = NULL WHERE actor_url = ?').bind(REMOTE_ACTOR).run();
+    const restore = stubMoveTargets({
+      // A public target is fetched, but neither actor acknowledges the move.
+      [foreign]: {},
+      [sameOrigin]: {},
+    });
+    try {
+      for (const [id, target] of [
+        ['move-foreign', foreign],
+        ['move-invalid', 'not-a-url'],
+        ['move-no-backref', `${REMOTE}/users/alice-new`],
+      ]) {
+        await handleIncomingActivity(envFor(db), {
+          actorId: REMOTE_ACTOR,
+          username: 'alice',
+          activity: {
+            id: `${REMOTE}/activities/${id}`,
+            type: 'Move',
+            actor: REMOTE_ACTOR,
+            object: REMOTE_ACTOR,
+            target,
+          },
+        });
+      }
+    } finally {
+      restore();
     }
     const actor = await db
       .prepare('SELECT moved_to FROM ap_actors WHERE actor_url = ?')
       .bind(REMOTE_ACTOR)
       .first<{ moved_to: string | null }>();
-    assert.equal(actor?.moved_to, `${REMOTE}/users/alice-target`, 'an untrusted target must not replace the actor');
+    assert.equal(actor?.moved_to, null, 'an untrusted target must not replace the actor');
   });
 
   it('treats an actor Delete with a string object as an actor deletion', async () => {
