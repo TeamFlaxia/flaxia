@@ -136,6 +136,7 @@ const groups = {
     'visibility-quote-media',
     'visibility-read-paths',
     'federated-api',
+    'federated-ondemand',
     'remote-lookup',
     'remote-mentions',
     'zip-range',

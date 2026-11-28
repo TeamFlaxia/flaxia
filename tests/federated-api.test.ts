@@ -234,6 +234,18 @@ describe('GET /api/federated/posts', () => {
     assert.deepEqual(ids(ranked.posts), ['p-ranked']);
   });
 
+  it('keeps deep cursors within the Cloudflare URL budget', async () => {
+    for (let i = 0; i < 520; i++) {
+      seedPoolPost({ id: `p-${String(i).padStart(4, '0')}`, actor: ACTOR_A, score: 1 });
+    }
+    let cursor: string | null = null;
+    for (let page = 0; page < 15 && cursor !== null; page++) {
+      const data = await getFeed(appFor(null), `/federated/posts?limit=50&cursor=${encodeURIComponent(cursor)}`);
+      cursor = data.next_cursor;
+      assert.ok(!cursor || cursor.length <= 12_000, `cursor too long for a URL: ${cursor?.length}`);
+    }
+  });
+
   it('excludes hidden, unpublished and non-federated rows', async () => {
     seedPoolPost({ id: 'p-ok', actor: ACTOR_A, score: 3 });
     seedPoolPost({ id: 'p-hidden', actor: ACTOR_A, score: 8, hidden: 1 });

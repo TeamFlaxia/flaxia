@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { clampLimit } from '../../lib/pagination.ts';
 import { resolveRequestUser } from '../helpers.ts';
 import { type Bindings, dbFromContext, type PostRow, type Variables } from '../types.ts';
+import { discoverForEmptyFeed } from './federated-discovery.ts';
 import { enrichFeedPosts, visibilityFilter } from './posts/helpers.ts';
 
 /**
@@ -24,6 +25,9 @@ interface Cursor {
 const CURSOR_PREFIX = 'v2.';
 /** Bound the URL size of a cursor; beyond this depth pagination stops safely. */
 const MAX_CURSOR_IDS = 500;
+// Cloudflare rejects URLs above ~16 KB. 500 ten-char ids encode to ~8.7 KB,
+// which leaves room for the rest of the query string.
+const MAX_CURSOR_CHARS = 12_000;
 
 function encodeBase64Url(value: string): string {
   let binary = '';
@@ -43,7 +47,7 @@ function decodeBase64Url(value: string): string {
  * guarantees that no post is skipped or repeated across a cron run.
  */
 function parseCursor(raw: string | undefined): Cursor | null {
-  if (!raw?.startsWith(CURSOR_PREFIX)) return null;
+  if (!raw?.startsWith(CURSOR_PREFIX) || raw.length > MAX_CURSOR_CHARS + CURSOR_PREFIX.length) return null;
   try {
     const parsed: unknown = JSON.parse(decodeBase64Url(raw.slice(CURSOR_PREFIX.length)));
     if (!parsed || typeof parsed !== 'object') return null;
@@ -58,7 +62,9 @@ function parseCursor(raw: string | undefined): Cursor | null {
 
 function encodeCursor(seen: string[]): string | null {
   if (seen.length === 0 || seen.length > MAX_CURSOR_IDS) return null;
-  return `${CURSOR_PREFIX}${encodeBase64Url(JSON.stringify({ seen }))}`;
+  const encoded = encodeBase64Url(JSON.stringify({ seen }));
+  if (encoded.length > MAX_CURSOR_CHARS) return null;
+  return `${CURSOR_PREFIX}${encoded}`;
 }
 
 federated.get('/federated/posts', async (c) => {
@@ -84,27 +90,54 @@ federated.get('/federated/posts', async (c) => {
   const cursorSql = cursor ? 'AND p.id NOT IN (SELECT value FROM json_each(?))' : '';
   const cursorParams = cursor ? [JSON.stringify(cursor.seen)] : [];
 
-  const result = await db
-    .prepare(
-      `SELECT p.*, COALESCE(pm.score, 0) AS pool_score
-       FROM posts p
-       LEFT JOIN ap_pool_metrics pm ON pm.post_id = p.id
-       WHERE p.status = 'published' AND p.hidden = 0 AND p.actor_id IS NOT NULL
-         -- The hourly discovery cron may not have populated the pool yet (or it
-         -- may have temporarily failed). Until then show the newest public
-         -- remote posts instead of an empty tab; once any pool row exists the
-         -- ranking is exactly as before.
-         AND (pm.post_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ap_pool_metrics))
-         ${blockSql} ${cursorSql} ${visibility.sql}
-       ORDER BY COALESCE(pm.score, 0) DESC, p.created_at DESC, p.id DESC
-       LIMIT ?`,
-    )
-    .bind(...blockParams, ...cursorParams, ...visibility.params, limit)
-    .all();
+  // Reusable so discovery can be followed by the exact same query, with the
+  // same binds, cursor and block/visibility predicates.
+  const loadFeed = () =>
+    db
+      .prepare(
+        `SELECT p.*, COALESCE(pm.score, 0) AS pool_score
+         FROM posts p
+         LEFT JOIN ap_pool_metrics pm ON pm.post_id = p.id
+         WHERE p.status = 'published' AND p.hidden = 0 AND p.actor_id IS NOT NULL
+           -- The hourly discovery cron may not have populated the pool yet (or it
+           -- may have temporarily failed). Until then show the newest public
+           -- remote posts instead of an empty tab; once any pool row exists the
+           -- ranking is exactly as before.
+           AND (pm.post_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM ap_pool_metrics))
+           ${blockSql} ${cursorSql} ${visibility.sql}
+         ORDER BY COALESCE(pm.score, 0) DESC, p.created_at DESC, p.id DESC
+         LIMIT ?`,
+      )
+      .bind(...blockParams, ...cursorParams, ...visibility.params, limit)
+      .all();
 
+  let result = await loadFeed();
   if (!result.success) {
     console.error('Federated pool query failed:', result);
     return c.json({ error: 'Failed to fetch federated posts' }, 500);
+  }
+
+  // Cold start: the separate AP worker has not written a pool row yet. Run a
+  // bounded discovery right here and re-run the same query. The cheap EXISTS
+  // check avoids false triggers when a viewer's blocks hide available posts.
+  if (!cursor && (result.results ?? []).length === 0) {
+    const state = await db
+      .prepare(
+        `SELECT EXISTS(SELECT 1 FROM ap_pool_metrics) AS has_metrics,
+                EXISTS(SELECT 1 FROM posts
+                       WHERE actor_id IS NOT NULL AND status = 'published' AND hidden = 0) AS has_remote`,
+      )
+      .first<{ has_metrics: number; has_remote: number }>();
+    if (state && !state.has_metrics && !state.has_remote) {
+      const { env } = c;
+      if (await discoverForEmptyFeed(env)) {
+        result = await loadFeed();
+        if (!result.success) {
+          console.error('Federated pool query failed after discovery:', result);
+          return c.json({ error: 'Failed to fetch federated posts' }, 500);
+        }
+      }
+    }
   }
 
   const posts = (result.results ?? []) as PoolPost[];
