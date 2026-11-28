@@ -43,6 +43,38 @@ jobs:
       - run: npm run build
         env:
           SANDBOX_ORIGIN: https://sandbox.flaxia.app
+      - name: Reconcile pre-existing D1 schema changes
+        # A migration can be present in the remote schema without being recorded
+        # in d1_migrations (for example after a manual hotfix). Wrangler would
+        # replay the ALTER and fail with "duplicate column name". Mark only those
+        # migrations as applied whose column already exists; fresh databases keep
+        # the normal migration path.
+        run: |
+          set -euo pipefail
+          query() {
+            npx wrangler d1 execute flaxia --remote --json --command "$1" |
+              node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const r of (JSON.parse(s)[0]?.results||[])) if(r.name) console.log(r.name)})'
+          }
+          contains() { printf '%s\n' "$2" | grep -qx "$1"; }
+          npx wrangler d1 execute flaxia --remote --command \
+            'CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)' >/dev/null
+          posts_columns=$(query "SELECT name FROM pragma_table_info('posts')")
+          actor_columns=$(query "SELECT name FROM pragma_table_info('ap_actors')")
+          applied=$(query 'SELECT name FROM d1_migrations')
+          reconcile() {
+            local migration="$1" column="$2" columns="$3"
+            if contains "$column" "$columns" && ! contains "$migration" "$applied"; then
+              echo "Marking $migration as applied: column $column already exists in production"
+              npx wrangler d1 execute flaxia --remote --command \
+                "INSERT OR IGNORE INTO d1_migrations (name) VALUES ('$migration')" >/dev/null
+            fi
+          }
+          reconcile 0148_add_post_visibility.sql visibility "$posts_columns"
+          reconcile 0149_ap_actor_summary.sql summary "$actor_columns"
+          reconcile 0153_reply_visibility_root.sql visibility_root_author_id "$posts_columns"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Apply production D1 migrations
         run: |
           set -euo pipefail
