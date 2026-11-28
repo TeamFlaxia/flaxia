@@ -133,6 +133,7 @@ const groups = {
     'pending-follow-visibility',
     'quote-notification-visibility',
     'recommendation-visibility',
+    'recommendation-action-signals',
     'reply-visibility',
     'visibility-quote-media',
     'visibility-read-paths',
