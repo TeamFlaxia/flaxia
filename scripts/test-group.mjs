@@ -235,6 +235,8 @@ const groups = {
     'activitypub-dlq-provision',
     'activitypub-inbox',
     'activitypub-inbox-handlers',
+    'activitypub-reaction-sync',
+    'activitypub-outbound-reactions',
     'activitypub-attachments',
     'activitypub-inbox-integrity',
     'activitypub-note',

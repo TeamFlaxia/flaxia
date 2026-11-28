@@ -93,7 +93,10 @@ export function buildLikeActivity(
     type: 'Like',
     actor: actorOf(baseUrl, username),
     object: objectUrl,
-    to: [objectUrl],
+    // A Like of a remote note is addressed to that note. A Like of a local
+    // post follows the post's audience instead, so peers can place it in the
+    // same timeline as the original Create.
+    to: audience.to ?? [objectUrl],
     cc: audience.cc ?? [],
   };
 }

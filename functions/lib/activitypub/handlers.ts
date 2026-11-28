@@ -33,6 +33,16 @@ export interface IncomingActivity {
 
 const MAX_REMOTE_TEXT_LENGTH = 200;
 
+/**
+ * Emoji used to expose an inbound ActivityPub Like as a Flaxia reaction.
+ *
+ * Remote actors have no local user id, so the signed actor URL is stored in
+ * the `reactions.user_id` column (that table has no local-user foreign key).
+ * `INSERT OR IGNORE` on its primary key makes a replayed Like idempotent even
+ * when a peer re-sends it under a new activity id.
+ */
+export const REMOTE_LIKE_EMOJI = '❤️';
+
 function objectOf(activity: Record<string, unknown>): Record<string, unknown> | null {
   const object = activity.object;
   if (typeof object === 'string') return { id: object };
@@ -739,6 +749,16 @@ async function handleLike(
     .bind(postId)
     .run();
 
+  // Show the remote Like in Flaxia's reaction chips too. The signed actor URL
+  // is the identity of the row, so a local user who picks the same emoji keeps
+  // an independent reaction and an Undo only retracts this remote one.
+  const reaction = await env.DB.prepare('INSERT OR IGNORE INTO reactions (post_id, user_id, emoji) VALUES (?, ?, ?)')
+    .bind(postId, actorId, REMOTE_LIKE_EMOJI)
+    .run();
+  if ((reaction.meta?.changes ?? 0) === 0) {
+    console.log('Remote Like reaction already exists:', postId, actorId);
+  }
+
   if (post.user_id) {
     try {
       // Idempotent: a delivered Like that is retried with a new activity id
@@ -868,6 +888,11 @@ async function handleUndo(
             'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 2.0) WHERE id = ?',
           )
             .bind(postId)
+            .run();
+          // Only the reaction of the verified actor is retracted; a local
+          // reaction with the same emoji must survive the Undo.
+          await env.DB.prepare('DELETE FROM reactions WHERE post_id = ? AND user_id = ? AND emoji = ?')
+            .bind(postId, actorId, REMOTE_LIKE_EMOJI)
             .run();
           await env.DB.prepare("DELETE FROM notifications WHERE post_id = ? AND actor_id = ? AND type = 'ap_like'")
             .bind(postId, actorId)
