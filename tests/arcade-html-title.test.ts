@@ -23,7 +23,9 @@ test('post text is the fallback when the game has no HTML title', () => {
 });
 
 test('the games API reads game_title and uses the shared resolver', async () => {
-  const source = await read('functions/api/routes/games.ts');
+  // The shuffled feed lives in its own module so the route file stays within
+  // the file-size guardrail; both halves must still use the shared resolver.
+  const source = (await read('functions/api/routes/games.ts')) + (await read('functions/api/routes/games-shuffle.ts'));
   assert.equal((source.match(/p\.game_title/g) ?? []).length >= 4, true, 'all game SELECTs need game_title');
   assert.equal(
     (source.match(/arcadeGameTitle\(row\.game_title/g) ?? []).length,

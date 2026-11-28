@@ -109,20 +109,27 @@ const SIDE_EFFECT = /\b(?:sendPushToAll|deliverToActorInbox|deliverToFollowers)\
 const AWAITED_SIDE_EFFECT =
   /\bawait\s+(?:sendPushToAll|deliverToActorInbox|deliverToFollowers|deliverReloadActivity)\s*\(/;
 
-function assertAsyncSideEffects(path: string, minSchedules: number): void {
-  const src = source(path);
+function assertAsyncSideEffects(paths: string | string[], minSchedules: number): void {
+  const labels = Array.isArray(paths) ? paths : [paths];
+  // A route and its extracted helper module are checked together: scheduling
+  // may live in either file, but nothing may run on the request critical path.
+  const src = labels.map(source).join('\n');
+  const label = labels.join(' + ');
   const schedules = callRegions(src, 'waitUntil');
-  assert.ok(schedules.length >= minSchedules, `${path}: expected >= ${minSchedules} waitUntil schedules`);
+  assert.ok(schedules.length >= minSchedules, `${label}: expected >= ${minSchedules} waitUntil schedules`);
   // Everything outside the scheduled callbacks must be free of push/federation
   // calls, in particular inline `await`s on the request's critical path.
   const criticalPath = mask(src, schedules);
-  assert.ok(!AWAITED_SIDE_EFFECT.test(criticalPath), `${path}: push/federation must not be awaited inline`);
-  assert.ok(!SIDE_EFFECT.test(criticalPath), `${path}: push/federation calls must be scheduled via waitUntil`);
+  assert.ok(!AWAITED_SIDE_EFFECT.test(criticalPath), `${label}: push/federation must not be awaited inline`);
+  assert.ok(!SIDE_EFFECT.test(criticalPath), `${label}: push/federation calls must be scheduled via waitUntil`);
 }
 
 describe('async side effects stay off the click critical path', () => {
   it('engagement schedules fresh/reload push and federation after the JSON response', () => {
-    assertAsyncSideEffects('../functions/api/routes/posts/engagement.ts', 4);
+    assertAsyncSideEffects(
+      ['../functions/api/routes/posts/engagement.ts', '../functions/api/routes/posts/engagement-federation.ts'],
+      4,
+    );
   });
 
   it('composer schedules publish mention/quote push and federation after the JSON response', () => {
