@@ -1,6 +1,7 @@
 <script lang="ts">
 // biome-ignore-all lint/correctness/noUnusedImports: types and markup-only helpers
 // biome-ignore-all lint/correctness/noUnusedVariables: Svelte markup reads these
+import { foldRemoteText } from '../../../shared/post-text.ts';
 import type { PostAttachment } from '../../../shared/types/post.ts';
 import { attachmentUrl, isAbsoluteMediaUrl } from '../../components/MediaCarousel.ts';
 import { t } from '../i18n.ts';
@@ -49,6 +50,7 @@ let avatarUrl = $state<string | null>(initialActor?.icon_url ?? null);
 let bio = $state<string | null>(initialActor?.bio ?? null);
 let actorUrl = $state<string | null>(initialActor?.actor_url ?? null);
 let posts = $state<RemotePost[]>(initialProfile?.posts ?? []);
+let expandedPostTextIds = $state<ReadonlySet<string>>(new Set());
 let notFound = $state(Boolean(initialProfile) && !initialActor);
 // `follow_state` distinguishes an accepted follow from a pending request,
 // which the old boolean `following` alone could not express.
@@ -67,6 +69,13 @@ const followLabel = $derived(
 // be loaded or opened.
 const safeActorUrl = $derived(actorUrl && /^https?:\/\//i.test(actorUrl) ? actorUrl : null);
 const safeAvatarUrl = $derived(avatarUrl && /^https?:\/\//i.test(avatarUrl) ? avatarUrl : null);
+
+function togglePostText(id: string): void {
+  const next = new Set(expandedPostTextIds);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedPostTextIds = next;
+}
 
 // The SSR load already supplied this handle's data. Skip the duplicate fetch on
 // the first client effect; later param changes (outside the keyed route) fetch.
@@ -233,9 +242,20 @@ async function toggleFollow(): Promise<void> {
       <div class="timeline-empty">{t('remote_profile.empty')}</div>
     {:else}
       {#each posts as post (post.id)}
+        {@const fold = foldRemoteText(post.text)}
         <div class="post-card">
           <div class="post-author">{handle}</div>
-          <div class="post-text">{post.text}</div>
+          <div class="post-text">{fold && !expandedPostTextIds.has(post.id) ? fold.preview : post.text}</div>
+          {#if fold}
+            <button
+              type="button"
+              class="post-text-fold-toggle"
+              aria-expanded={expandedPostTextIds.has(post.id)}
+              onclick={() => togglePostText(post.id)}
+            >
+              {expandedPostTextIds.has(post.id) ? t('post_text_show_less') : t('post_text_continue')}
+            </button>
+          {/if}
           {#if post.attachments?.length}
             <div class="remote-post-attachments">
               {#each post.attachments as att (att.position)}
@@ -266,3 +286,21 @@ async function toggleFollow(): Promise<void> {
     {/if}
   </div>
 </div>
+
+<style>
+  .post-text-fold-toggle {
+    margin-top: 0.25rem;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  .post-text-fold-toggle:hover,
+  .post-text-fold-toggle:focus-visible {
+    text-decoration: underline;
+  }
+</style>

@@ -54,7 +54,7 @@ docs/                       # Developer documentation
 - Keep `functions/** → src/**` imports at 0; share through `shared/`.
 
 ## Constraints (NON-NEGOTIABLE)
-- Post text ≤ 200 chars. Free uploads ≤ 25MB/file; Flaxia+ ≤ 128MB/file (256MB per post).
+- Post text ≤ 200 chars for local posts; imported Fediverse text is stored up to 10,000 chars (safety cap) and folded after 200 chars in the UI. Free uploads ≤ 25MB/file; Flaxia+ ≤ 128MB/file (256MB per post).
 - Global and Following timelines: reverse chronological (`GET /api/posts`). For You: ranked (`GET /api/posts/recommended`); see `docs/architecture.md`.
 - `allow-same-origin` banned on all game iframes.
 - `Sponsored` label mandatory on all ad cards.

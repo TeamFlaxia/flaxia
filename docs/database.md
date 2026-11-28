@@ -66,7 +66,7 @@ owned in `user_titles` before it can be equipped.
 |---|---|---|
 | id | TEXT | nanoid, PK |
 | user_id | TEXT | FK → users(id) |
-| text | TEXT | ≤ 200 chars |
+| text | TEXT | ≤ 200 chars for local posts; remote posts ≤ 10,000 chars (import safety cap, folded after 200 in the UI) |
 | hashtags | TEXT | JSON array |
 | payload_key | TEXT | R2 key for ZIP/SWF |
 | payload_type | TEXT | 'zip', 'swf', 'image', 'audio' |

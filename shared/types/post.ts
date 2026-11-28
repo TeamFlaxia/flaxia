@@ -186,6 +186,8 @@ export interface PostTextProps {
   authorId?: string;
   /** Author's current badge; text colors are a Flaxia+ entitlement. */
   badgeType?: string | null;
+  /** Imported Fediverse posts fold after 200 characters; local posts never fold. */
+  foldRemote?: boolean;
 }
 
 export interface PostStageProps {

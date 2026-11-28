@@ -149,6 +149,8 @@
   "post.edit_attachment_removed": "添付ファイルを削除しました",
   "post.nsfw_warning": "この投稿はセンシティブな内容を含む可能性があります",
   "post.nsfw_show": "表示する",
+  "post_text_continue": "続き",
+  "post_text_show_less": "閉じる",
   "post.menu_counter_notice": "DMCA 異議申し立て",
   "post.counter_notice_title": "DMCA 異議申し立て",
   "post.counter_notice_explanation": "あなたの投稿が誤認または誤特定により削除されたと思われる場合、DMCAに基づく異議申し立て（カウンター通知）を提出できます。虚偽の情報を提供すると法的制裁を受ける可能性があります。",

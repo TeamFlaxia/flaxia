@@ -1,5 +1,5 @@
 import { freshnessBoost } from '../scoring.ts';
-import { htmlToText } from './text.ts';
+import { remotePostText } from './text.ts';
 
 type PoolMetrics = {
   favourites: number;
@@ -94,7 +94,7 @@ export function normalizeMastodonStatus(
   try {
     if (new URL(baseUrl).origin === objectId.origin) return null;
   } catch {}
-  const text = htmlToText(firstString(status.content, status.text) ?? '').slice(0, 200);
+  const text = remotePostText(firstString(status.content, status.text) ?? '');
   const createdAt = firstString(status.created_at, status.published);
   const timestamp = createdAt ? new Date(createdAt).getTime() : Number.NaN;
   if (!text || !createdAt || !Number.isFinite(timestamp) || timestamp > Date.now() + MAX_CLOCK_SKEW_MS) return null;
