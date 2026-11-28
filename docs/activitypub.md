@@ -190,11 +190,11 @@ from `ap_actors` after the rows are fetched (`display_name`, `avatar_url`,
 For You returns Flaxia posts only. Federated (Mastodon and other instances)
 posts are excluded on both paths:
 
-* the unranked server response (`GET /api/posts/recommended`) filters after
-  scoring, so the score cursor still follows the ranked page and pagination
-  stays monotonic;
-* the client-ranked path (`client_rank=1`) returns candidates and the Svelte
-  timeline applies the same filter after personal re-ranking.
+* both server paths (`GET /api/posts/recommended`, including `client_rank=1`)
+  exclude federated rows at query time, before scoring, so remote posts cannot
+  consume candidate slots or block the archive fallback;
+* `presentForYou()` applies the same local-only filter to the response, and the
+  Svelte timeline applies it again after personal re-ranking.
 
 The shared rule lives in `shared/recommendation/mix.ts`. Federated posts belong
 to the Federated tab, not to recommendations.

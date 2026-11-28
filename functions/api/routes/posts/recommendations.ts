@@ -76,6 +76,10 @@ function decayingRecommendationPenalty(
 }
 
 const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
+// For You is local-only. Remote rows (which carry an actor id) belong to the
+// Federated tab; excluding them at the source keeps them from consuming
+// candidate slots or blocking the archive fallback.
+const LOCAL_ONLY_FILTER = 'AND p.actor_id IS NULL';
 const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
 
 /**
@@ -226,7 +230,7 @@ async function loadClientRankedCandidatePage(
         `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY p.created_at DESC LIMIT ?`,
       )
       .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, sourceLimit)
@@ -236,7 +240,7 @@ async function loadClientRankedCandidatePage(
         `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+           ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
          ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
       )
       .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
@@ -249,7 +253,7 @@ async function loadClientRankedCandidatePage(
              WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                AND p.created_at >= ? AND p.created_at <= ?
                AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-               ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
+               ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER}
              ORDER BY p.created_at DESC LIMIT ?`,
           )
           .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, sourceLimit)
@@ -282,7 +286,7 @@ async function loadClientRankedCandidatePage(
        LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (SELECT value FROM json_each(?))
          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
+         ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER}
          AND p.created_at >= ? AND p.created_at <= ?`,
     )
     .bind(asOfUnixSeconds, serializedCandidateIds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso)
@@ -450,7 +454,7 @@ recommendations.get('/posts/recommended', async (c) => {
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY p.created_at DESC LIMIT ?`,
         )
         .bind(...blockParams, ...visibilityParams, recentCutoff, asOfIso, limit * 4)
@@ -460,7 +464,7 @@ recommendations.get('/posts/recommended', async (c) => {
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+             ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
         .bind(asOfUnixSeconds, ...blockParams, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
@@ -473,7 +477,7 @@ recommendations.get('/posts/recommended', async (c) => {
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                  AND p.created_at >= ? AND p.created_at <= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-                 ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
+                 ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER}
                ORDER BY p.created_at DESC LIMIT ?`,
             )
             .bind(trendingCutoff, asOfIso, currentUserId, ...blockParams, ...visibilityParams, limit * 4)
@@ -506,7 +510,7 @@ recommendations.get('/posts/recommended', async (c) => {
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER}
         AND p.created_at >= ? AND p.created_at <= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
@@ -649,7 +653,7 @@ async function loadRecommendedArchivePage(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-         AND ${cursorFilter} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER}
+         AND ${cursorFilter} ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER}
          AND p.created_at <= ?
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )

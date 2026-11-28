@@ -175,7 +175,8 @@ async function seedPost(post: SeedPost): Promise<void> {
 /**
  * Public/unlisted plus private/direct (own, followed and mentioned). At most
  * two posts per author so the server path's per-author diversity cap cannot
- * hide a seeded post from the exact-set assertions.
+ * hide a seeded post from the exact-set assertions. `remote-pub` is seeded as a
+ * negative control: For You is local-only, so it must never appear in the feed.
  */
 async function seedVisibilitySet(createdAt?: string): Promise<void> {
   const at = createdAt ?? new Date(Date.now() - 3600_000).toISOString();
@@ -219,11 +220,11 @@ async function seedVisibilitySet(createdAt?: string): Promise<void> {
 
 // For You excludes the viewer's own ordinary posts (as in the existing
 // posts.test.ts contract), but private/direct posts stay visible to their author.
-const ANON_IDS = ['legacy-dave', 'pub-bob', 'remote-pub', 'unl-carol'];
-const ALICE_IDS = ['dir-alice', 'legacy-dave', 'pri-alice', 'pub-bob', 'remote-pub', 'unl-carol'];
-const BOB_IDS = ['dir-alice', 'legacy-dave', 'pri-bob', 'remote-pub', 'unl-carol'];
-const CAROL_IDS = ['legacy-dave', 'pri-alice', 'pub-bob', 'remote-pub'];
-const DAVE_IDS = ['pub-bob', 'remote-pub', 'unl-carol'];
+const ANON_IDS = ['legacy-dave', 'pub-bob', 'unl-carol'];
+const ALICE_IDS = ['dir-alice', 'legacy-dave', 'pri-alice', 'pub-bob', 'unl-carol'];
+const BOB_IDS = ['dir-alice', 'legacy-dave', 'pri-bob', 'unl-carol'];
+const CAROL_IDS = ['legacy-dave', 'pri-alice', 'pub-bob'];
+const DAVE_IDS = ['pub-bob', 'unl-carol'];
 
 const RECENT_PATHS = ['/posts/recommended?limit=20', '/posts/recommended?client_rank=1&limit=20'];
 
@@ -299,6 +300,22 @@ describe('GET /api/posts/recommended — visibility', () => {
       assert.deepEqual(await getIds(path, ALICE), ALICE_IDS, path);
       assert.deepEqual(await getIds(path, CAROL), CAROL_IDS, path);
       assert.deepEqual(await getIds(path, BOB), BOB_IDS, path);
+    }
+  });
+
+  it('never returns federated posts, on the ranked or archive paths', async () => {
+    await seedVisibilitySet(new Date(Date.now() - 30 * 86400_000).toISOString());
+    for (const path of [
+      ...RECENT_PATHS,
+      '/posts/recommended?cursor=archive&limit=20',
+      '/posts/recommended?client_rank=1&cursor=archive&limit=20',
+    ]) {
+      for (const viewer of [null, ALICE, BOB]) {
+        assert.ok(
+          !(await getIds(path, viewer)).includes('remote-pub'),
+          `${path}: federated posts belong to the Federated tab, not For You`,
+        );
+      }
     }
   });
 
