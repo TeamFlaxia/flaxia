@@ -91,8 +91,8 @@ flaxia.app (Pages)
   (`@flaxia/mail-contract`) live outside this repo.
 - **Crowd** is an HTTP boundary: Flaxia submits tasks to
   `https://crowd.flaxia.app` and verifies the signed webhooks it receives back.
-  The pinned browser node bundle (`@flaxia/node` 0.11.1, a vendored tarball) is
-  copied into the static output at `/crowd/v0.11.1-0/` by
+  The pinned browser node bundle (`@flaxia/node` 0.11.2, a vendored tarball) is
+  copied into the static output at `/crowd/v0.11.2-0/` by
   `scripts/postbuild.mjs` and served same-origin. Flaxia does not read or write
   Crowd's orchestration state.
 

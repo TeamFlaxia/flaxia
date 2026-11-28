@@ -95,7 +95,7 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@flaxia/mail-contract": "file:vendor/flaxia-mail-contract-0.1.1.tgz",
-    "@flaxia/node": "file:vendor/flaxia-node-0.11.1.tgz",
+    "@flaxia/node": "file:vendor/flaxia-node-0.11.2.tgz",
     "@flaxia/sdk": "file:vendor/flaxia-sdk-0.9.1.tgz",
     "@noble/curves": "^2.3.0",
     "@noble/hashes": "^2.4.0",
