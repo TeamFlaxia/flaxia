@@ -121,7 +121,7 @@
     "postal-mime": "^2.7.6",
     "qrcode": "^1.5.4",
     "stripe": "^22.6.0",
-    "web-push": "^3.6.7"
+    "web-push": "^4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
