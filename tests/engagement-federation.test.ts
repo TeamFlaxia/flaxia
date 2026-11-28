@@ -92,6 +92,23 @@ function appFor(viewer: User): Hono<AppEnv> {
   return app;
 }
 
+type CapturedPush = { userId: string; body: string };
+
+/** Record the exact push payload a recipient would receive through the fake DO. */
+function apiWithPushCapture(api: Bindings, pushes: CapturedPush[]): Bindings {
+  const notificationStream = {
+    idFromName: (name: string) => name,
+    get: (id: string) => ({
+      fetch: async (_url: string, init?: RequestInit) => {
+        const message = JSON.parse(String(init?.body)) as { push?: { body?: string } };
+        if (message.push?.body) pushes.push({ userId: id, body: message.push.body });
+        return new Response(null, { status: 204 });
+      },
+    }),
+  };
+  return { ...api, NOTIFICATION_STREAM: notificationStream } as unknown as Bindings;
+}
+
 /** Send an API request and await every task handed to waitUntil. */
 async function post(
   app: Hono<AppEnv>,
@@ -145,6 +162,39 @@ async function seed(db: TestDatabase): Promise<void> {
       .bind(actor, `${actor}/inbox`, actor.split('/').pop(), 'remote.example')
       .run();
   }
+}
+
+/** Insert a post with an explicit audience, optionally mirroring a remote note. */
+async function seedPost(
+  db: TestDatabase,
+  options: {
+    id: string;
+    userId: string;
+    username: string;
+    visibility: string;
+    text: string;
+    mentions?: string;
+    actorId?: string | null;
+    objectId?: string | null;
+  },
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status, visibility, actor_id, ap_object_id, engagement_hotness, created_at)
+       VALUES (?, ?, ?, ?, '[]', ?, 'published', ?, ?, ?, 1.0, ?)`,
+    )
+    .bind(
+      options.id,
+      options.userId,
+      options.username,
+      options.text,
+      options.mentions ?? '[]',
+      options.visibility,
+      options.actorId ?? null,
+      options.objectId ?? null,
+      NOW,
+    )
+    .run();
 }
 
 async function countersFor(db: TestDatabase, postId: string): Promise<Counters> {
@@ -564,5 +614,192 @@ describe('outbound Fresh and Reload federation', () => {
     assert.equal(queue[0].inboxUrl, `${REMOTE_BOB}/inbox`);
     assert.equal(queue[0].activity?.type, 'Announce');
     assert.equal(queue[0].activity?.object, `${BASE}/api/notes/local-post`);
+  });
+
+  it('404s fresh, batch fresh and reload for private/direct posts the viewer cannot read', async () => {
+    await seedLocalUser(db, { id: 'local-2', username: 'bob', displayName: 'Bob' });
+    const hidden: Array<{
+      id: string;
+      visibility: string;
+      mentions?: string;
+      actorId?: string;
+    }> = [
+      { id: 'hidden-private', visibility: 'private' },
+      { id: 'hidden-direct', visibility: 'direct', mentions: JSON.stringify([{ user_id: 'local-3' }]) },
+      { id: 'hidden-remote-private', visibility: 'private', actorId: REMOTE_ALICE },
+      {
+        id: 'hidden-remote-direct',
+        visibility: 'direct',
+        mentions: JSON.stringify([{ user_id: 'local-3' }]),
+        actorId: REMOTE_BOB,
+      },
+    ];
+    for (const postInfo of hidden) {
+      await seedPost(db, {
+        id: postInfo.id,
+        userId: postInfo.actorId ? '' : 'local-2',
+        username: 'bob',
+        visibility: postInfo.visibility,
+        mentions: postInfo.mentions,
+        text: `secret ${postInfo.id}`,
+        actorId: postInfo.actorId,
+        objectId: postInfo.actorId ? `${REMOTE}/notes/${postInfo.id}` : null,
+      });
+    }
+
+    const pushes: CapturedPush[] = [];
+    const pushApi = apiWithPushCapture(api, pushes);
+    for (const { id } of hidden) {
+      const fresh = await post(app, `/posts/${id}/fresh`, null, pushApi);
+      assert.equal(fresh.status, 404, `${id} fresh: ${JSON.stringify(fresh.data)}`);
+      assert.deepEqual(fresh.data, { error: 'Post not found' });
+
+      const batch = await post(app, '/posts/fresh/batch', { post_ids: [id], action: 'add' }, pushApi);
+      assert.equal(batch.status, 404, `${id} batch fresh: ${JSON.stringify(batch.data)}`);
+      assert.deepEqual(batch.data.error, 'Some posts not found');
+
+      const reload = await post(app, `/posts/${id}/reload`, null, pushApi);
+      assert.equal(reload.status, 404, `${id} reload: ${JSON.stringify(reload.data)}`);
+      assert.deepEqual(reload.data, { error: 'Post not found' });
+    }
+
+    // A mixed batch must reject the whole request instead of quietly
+    // freshening the post the caller is allowed to see.
+    const mixed = await post(
+      app,
+      '/posts/fresh/batch',
+      { post_ids: ['local-post', 'hidden-private'], action: 'add' },
+      pushApi,
+    );
+    assert.equal(mixed.status, 404);
+    assert.deepEqual(mixed.data.invalid_ids, ['hidden-private']);
+
+    for (const { id } of hidden) {
+      assert.deepEqual(await countersFor(db, id), { fresh_count: 0, engagement_hotness: 1 });
+    }
+    assert.equal(await count(db, 'SELECT COUNT(*) AS n FROM freshs'), 0);
+    assert.equal(await count(db, 'SELECT COUNT(*) AS n FROM shares'), 0);
+    assert.equal(queue.length, 0);
+    assert.equal(pushes.length, 0);
+  });
+
+  it('does not federate or push the text of readable private/direct posts', async () => {
+    await seedLocalUser(db, { id: 'local-2', username: 'bob', displayName: 'Bob' });
+    const viewerMention = JSON.stringify([{ username: 'alice', user_id: VIEWER.id }]);
+    await seedPost(db, {
+      id: 'own-private',
+      userId: VIEWER.id,
+      username: 'alice',
+      visibility: 'private',
+      text: 'OWN PRIVATE SECRET',
+    });
+    await seedPost(db, {
+      id: 'direct-to-alice',
+      userId: 'local-2',
+      username: 'bob',
+      visibility: 'direct',
+      mentions: viewerMention,
+      text: 'DIRECT PRIVATE SECRET',
+    });
+    await seedPost(db, {
+      id: 'remote-direct',
+      userId: '',
+      username: 'alice',
+      visibility: 'direct',
+      mentions: viewerMention,
+      text: 'REMOTE DIRECT SECRET',
+      actorId: REMOTE_ALICE,
+      objectId: `${REMOTE}/notes/remote-direct`,
+    });
+    // A local reload would otherwise announce to this follower: restricted
+    // posts must not be broadcast even when the viewer may read them.
+    await db
+      .prepare(
+        `INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
+         VALUES ('follower-1', ?, ?, ?, ?)`,
+      )
+      .bind(VIEWER.id, REMOTE_BOB, `${REMOTE_BOB}/inbox`, NOW)
+      .run();
+
+    const pushes: CapturedPush[] = [];
+    const pushApi = apiWithPushCapture(api, pushes);
+    const secrets = ['OWN PRIVATE SECRET', 'DIRECT PRIVATE SECRET', 'REMOTE DIRECT SECRET'];
+    const ids = ['own-private', 'direct-to-alice', 'remote-direct'];
+
+    // Add and remove every engagement so Like/Undo and Announce/Undo paths
+    // are both exercised.
+    for (const id of ids) {
+      for (const path of [`/posts/${id}/fresh`, `/posts/${id}/fresh`, `/posts/${id}/reload`, `/posts/${id}/reload`]) {
+        const response = await post(app, path, null, pushApi);
+        assert.equal(response.status, 200, `${path}: ${JSON.stringify(response.data)}`);
+      }
+    }
+    const batchIds = ['direct-to-alice', 'remote-direct'];
+    for (const action of ['add', 'remove']) {
+      const response = await post(app, '/posts/fresh/batch', { post_ids: batchIds, action }, pushApi);
+      assert.equal(response.status, 200, `${action}: ${JSON.stringify(response.data)}`);
+    }
+
+    assert.equal(queue.length, 0, 'no Like/Undo or Announce/Undo may leave the instance');
+    assert.ok(
+      pushes.every(({ body }) => secrets.every((secret) => !body.includes(secret))),
+      `push body leaked restricted text: ${JSON.stringify(pushes)}`,
+    );
+    assert.equal(await count(db, 'SELECT COUNT(*) AS n FROM freshs'), 0);
+    assert.equal(await count(db, 'SELECT COUNT(*) AS n FROM shares'), 0);
+  });
+
+  it('keeps federation and push text for public/unlisted posts', async () => {
+    await seedLocalUser(db, { id: 'local-2', username: 'bob', displayName: 'Bob' });
+    await seedPost(db, {
+      id: 'public-local',
+      userId: 'local-2',
+      username: 'bob',
+      visibility: 'public',
+      text: 'PUBLIC BODY',
+    });
+    await seedPost(db, {
+      id: 'unlisted-remote',
+      userId: '',
+      username: 'alice',
+      visibility: 'unlisted',
+      text: 'UNLISTED BODY',
+      actorId: REMOTE_BOB,
+      objectId: `${REMOTE}/notes/unlisted-remote`,
+    });
+
+    const pushes: CapturedPush[] = [];
+    const pushApi = apiWithPushCapture(api, pushes);
+    for (const path of ['/posts/public-local/fresh', '/posts/public-local/reload']) {
+      assert.equal((await post(app, path, null, pushApi)).status, 200);
+      assert.ok(
+        pushes.some(({ body }) => body.includes('PUBLIC BODY')),
+        `${path}: ${JSON.stringify(pushes)}`,
+      );
+    }
+
+    const fresh = await post(app, '/posts/unlisted-remote/fresh', null, pushApi);
+    assert.equal(fresh.status, 200);
+    assert.equal(queue.length, 1, 'unlisted remote posts still get a Like');
+    assert.equal(queue[0].inboxUrl, `${REMOTE_BOB}/inbox`);
+    assert.equal(queue[0].activity?.type, 'Like');
+    assert.equal(queue[0].activity?.object, `${REMOTE}/notes/unlisted-remote`);
+
+    queue.length = 0;
+    const reload = await post(app, '/posts/unlisted-remote/reload', null, pushApi);
+    assert.equal(reload.status, 200);
+    assert.equal(queue.length, 1, 'unlisted remote posts still get an Announce');
+    assert.equal(queue[0].inboxUrl, `${REMOTE_BOB}/inbox`);
+    assert.equal(queue[0].activity?.type, 'Announce');
+    assert.equal(queue[0].activity?.object, `${REMOTE}/notes/unlisted-remote`);
+
+    // Toggle off again so the batch add actually re-likes the remote post.
+    await post(app, '/posts/unlisted-remote/fresh', null, pushApi);
+    queue.length = 0;
+    const batch = await post(app, '/posts/fresh/batch', { post_ids: ['unlisted-remote'], action: 'add' }, pushApi);
+    assert.equal(batch.status, 200);
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].activity?.type, 'Like');
+    assert.equal(queue[0].activity?.object, `${REMOTE}/notes/unlisted-remote`);
   });
 });

@@ -18,10 +18,15 @@ export async function servePublicLoader<E extends { Bindings: Bindings }>(c: Con
     return c.text('Not found', 404);
   }
   try {
-    const post = await c.env.DB.prepare('SELECT payload_key, hidden, status FROM posts WHERE id = ?')
+    const post = await c.env.DB.prepare('SELECT payload_key, hidden, status, visibility FROM posts WHERE id = ?')
       .bind(postId)
-      .first<{ payload_key: string; hidden: number; status: string }>();
-    if (!post || post.hidden || post.status !== 'published') return c.text('Not found', 404);
+      .first<{ payload_key: string; hidden: number; status: string; visibility: string | null }>();
+    // The public loader has no viewer context: followers-only and direct
+    // games must never be fetchable by URL, including through /archive.
+    const audience = post?.visibility ?? 'public';
+    if (!post || post.hidden || post.status !== 'published' || !['public', 'unlisted'].includes(audience)) {
+      return c.text('Not found', 404);
+    }
     let key = post.payload_key;
     let version = requestedVersion;
     if (version) {

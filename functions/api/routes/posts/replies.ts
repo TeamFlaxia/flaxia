@@ -28,6 +28,7 @@ type ParentRow = {
   root_id: string | null;
   visibility?: unknown;
   mentions?: unknown;
+  visibility_root_author_id?: string | null;
 };
 
 type MentionEntry = { username?: unknown; user_id?: unknown };
@@ -49,12 +50,15 @@ function inheritedVisibility(parent: { visibility?: unknown }): PostVisibility {
 }
 
 /**
- * A followers-only reply belongs to the parent author's followers, not to the
- * followers of the user who wrote the reply. Other visibilities keep their
- * inherited value and leave the column NULL (legacy rows do the same).
+ * A followers-only reply belongs to the root thread author's followers, not
+ * to the followers of the user who wrote the parent reply. The parent may be a
+ * private reply itself, so carry its pinned root author forward and only fall
+ * back to the parent author for legacy rows with no pinned value. Other
+ * visibilities keep their inherited value and leave the column NULL.
  */
 function inheritedVisibilityRootAuthorId(parent: ParentRow): string | null {
-  return inheritedVisibility(parent) === 'private' ? parent.user_id : null;
+  if (inheritedVisibility(parent) !== 'private') return null;
+  return parent.visibility_root_author_id ?? parent.user_id;
 }
 
 /**
@@ -334,7 +338,7 @@ replies.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
     // Validate parent post exists, is published, and is visible to the author
     const visibility = visibilityFilter(c.get('user')?.id);
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility, visibility_root_author_id FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)
@@ -463,7 +467,7 @@ replies.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     // Validate parent still exists, is published, and is visible to the author
     const visibility = visibilityFilter(c.get('user')?.id);
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at, visibility, visibility_root_author_id FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 " +
         visibility.sql,
     )
       .bind(postId, ...visibility.params)

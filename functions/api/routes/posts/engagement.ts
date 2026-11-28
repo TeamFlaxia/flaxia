@@ -1,14 +1,19 @@
-import { type Context, Hono } from 'hono';
+import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { buildLikeActivity, buildUndoActivity } from '../../../lib/activitypub/activities';
 import { enrichPostsWithRemoteAuthors } from '../../../lib/activitypub/authors';
-import { deliverToActorInbox, deliverToFollowers } from '../../../lib/activitypub/delivery';
 import { enrichPostsWithAttachments } from '../../../lib/attachments';
 import { sendPushToAll, waitUntil } from '../../../lib/notify';
 import { clampLimit } from '../../../lib/pagination';
 import { enrichPostsWithQuotes, enrichPostsWithReactions } from '../../feed-enrichment';
 import { requireAuth } from '../../helpers';
 import type { Bindings, PostRow, Variables } from '../../types';
+import {
+  deliverFreshLike,
+  deliverReloadActivity,
+  type FederatedPost,
+  isPublicVisibility,
+  type PostsContext,
+} from './engagement-federation.ts';
 import { ensureReactionsTable, visibilityFilter } from './helpers.ts';
 
 export const engagement = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -18,11 +23,15 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
   const userId = c.get('user')?.id || '';
   const currentUser = c.get('user');
 
-  // Get post to check ownership for notification and remote actor
+  // Get post to check ownership for notification and remote actor. Reader
+  // visibility is enforced here too, so a restricted post cannot be liked by
+  // guessing its id.
+  const v = visibilityFilter(userId);
   const post = (await c.env.DB.prepare(
-    "SELECT id, user_id, actor_id, username, text, ap_object_id FROM posts WHERE id = ? AND status = 'published'",
+    `SELECT p.id, p.user_id, p.actor_id, p.username, p.text, p.ap_object_id, p.visibility
+     FROM posts p WHERE p.id = ? AND p.status = 'published' ${v.sql}`,
   )
-    .bind(postId)
+    .bind(postId, ...v.params)
     .first()) as {
     id: string;
     user_id: string;
@@ -30,6 +39,7 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
     username: string;
     text: string;
     ap_object_id: string | null;
+    visibility: string | null;
   } | null;
 
   if (!post) {
@@ -96,10 +106,12 @@ engagement.post('/posts/:id/fresh', requireAuth, async (c) => {
           )
             .bind(nanoid(), post.user_id, 'fresh', postId, userId)
             .run();
-          {
+          // A restricted post must never leave the instance inside a push
+          // body, even though the author is allowed to see it.
+          if (isPublicVisibility(post.visibility)) {
             const actor = c.get('user');
 
-            const textPreview = ((post as Record<string, unknown>).text as string) || '';
+            const textPreview = post.text || '';
             waitUntil(
               c,
               () =>
@@ -407,11 +419,16 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
     }
 
     // Get posts to check ownership for notifications and to address the
-    // ActivityPub Like/Undo to the original author of a remote note.
+    // ActivityPub Like/Undo to the original author of a remote note. The
+    // viewer filter keeps restricted posts out of both the counters and the
+    // outbound activities.
+    const v = visibilityFilter(userId);
     const posts = await c.env.DB.prepare(`
-      SELECT id, user_id, actor_id, ap_object_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
+      SELECT p.id, p.user_id, p.actor_id, p.ap_object_id, p.visibility
+      FROM posts p
+      WHERE p.id IN (${post_ids.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${v.sql}
     `)
-      .bind(...post_ids)
+      .bind(...post_ids, ...v.params)
       .all();
 
     const validPostIds = posts.results?.map((p) => p.id) || [];
@@ -578,80 +595,6 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
   }
 });
 
-type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
-
-/** Post columns needed to address a Like to the right object and inbox. */
-type FederatedPost = {
-  id: string;
-  actor_id: string | null;
-  ap_object_id: string | null;
-};
-
-/**
- * ActivityPub object id of a post. Mirrored remote posts keep the id they were
- * published with; local posts are addressed by their canonical note URL.
- */
-function engagementObjectUrl(baseUrl: string, post: FederatedPost): string {
-  return post.ap_object_id ?? `${baseUrl}/api/notes/${post.id}`;
-}
-
-/**
- * Queue a Like (or its Undo) for the author of a remote post.
- *
- * Only mirrored remote posts carry an `actor_id`, i.e. an inbox that can
- * receive the Like; a purely local post has no remote author to notify. Callers
- * pass at most one entry per post, so a batch produces exactly one activity per
- * post. Delivery is always scheduled with `waitUntil` and never awaited on the
- * request's critical path.
- */
-function deliverFreshLike(c: PostsContext, post: FederatedPost, username: string, action: 'add' | 'remove'): void {
-  const actorUrl = post.actor_id;
-  if (!actorUrl) return;
-  const like = buildLikeActivity(c.env.BASE_URL, username, engagementObjectUrl(c.env.BASE_URL, post), nanoid());
-  const activity = action === 'add' ? like : buildUndoActivity(c.env.BASE_URL, username, like, nanoid());
-  waitUntil(
-    c,
-    () => deliverToActorInbox(c.env, { actorUrl, username, activity }),
-    `Failed to deliver ${activity.type} to remote actor`,
-  );
-}
-
-/**
- * Delivers a reload Announce/Undo to the reloading user's federated followers
- * and, for remote posts, to the original author's inbox.
- */
-function deliverReloadActivity(
-  c: PostsContext,
-  post: { actor_id: string | null },
-  currentUser: { id: string; username: string },
-  activity: Record<string, unknown>,
-): void {
-  const actorUrl = post.actor_id;
-  waitUntil(
-    c,
-    async () => {
-      try {
-        await deliverToFollowers(c.env, {
-          userId: currentUser.id,
-          username: currentUser.username,
-          activity,
-        });
-      } catch (e) {
-        console.error('Failed to deliver reload activity to followers:', e);
-      }
-
-      if (actorUrl) {
-        try {
-          await deliverToActorInbox(c.env, { actorUrl, username: currentUser.username, activity });
-        } catch (e) {
-          console.error('Failed to deliver reload activity to remote actor:', e);
-        }
-      }
-    },
-    'Failed to deliver reload activity',
-  );
-}
-
 // POST /api/posts/:id/reload - toggle reload (retweet, protected)
 const toggleReload = async (c: PostsContext, legacyAlias = false) => {
   try {
@@ -659,10 +602,12 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
     const currentUser = c.get('user');
     if (!currentUser) return c.json({ error: 'Unauthorized' }, 401);
 
+    const v = visibilityFilter(currentUser.id);
     const post = (await c.env.DB.prepare(
-      "SELECT id, user_id, actor_id, ap_object_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      `SELECT p.id, p.user_id, p.actor_id, p.ap_object_id, p.username, p.text, p.visibility
+       FROM posts p WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0 ${v.sql}`,
     )
-      .bind(postId)
+      .bind(postId, ...v.params)
       .first()) as {
       id: string;
       user_id: string;
@@ -670,6 +615,7 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
       ap_object_id: string | null;
       username: string;
       text: string;
+      visibility: string | null;
     } | null;
 
     if (!post) {
@@ -758,20 +704,22 @@ const toggleReload = async (c: PostsContext, legacyAlias = false) => {
           )
             .bind(nanoid(), post.user_id, 'reload', postId, currentUser.id)
             .run();
-          waitUntil(
-            c,
-            () =>
-              sendPushToAll(
-                c.env,
-                post.user_id,
-                'reload',
-                currentUser.username,
-                currentUser.display_name,
-                post.text,
-                postId,
-              ),
-            'Failed to send reload push',
-          );
+          if (isPublicVisibility(post.visibility)) {
+            waitUntil(
+              c,
+              () =>
+                sendPushToAll(
+                  c.env,
+                  post.user_id,
+                  'reload',
+                  currentUser.username,
+                  currentUser.display_name,
+                  post.text,
+                  postId,
+                ),
+              'Failed to send reload push',
+            );
+          }
         }
       } catch (e) {
         console.error('Failed to create reload notification:', e);

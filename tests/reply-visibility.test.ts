@@ -444,4 +444,104 @@ describe('reply visibility inheritance', () => {
       );
     }
   });
+
+  it('keeps the root author on a private reply to a private reply (depth 2)', async () => {
+    await seedParent({ id: 'depth-two-root', text: 'alice root only', visibility: 'private' });
+    const first = await commitReply(CAROL, 'depth-two-root', {
+      replyId: 'depth-two-first',
+      text: 'carol depth 1',
+    });
+    assert.equal(first.status, 200, first.raw);
+    assert.equal(await storedVisibilityRootAuthorId('depth-two-first'), ALICE.id);
+
+    // Erin follows Alice, so she can read Carol's private reply and answer it.
+    const second = await commitReply(ERIN, 'depth-two-first', {
+      replyId: 'depth-two-second',
+      text: 'erin depth 2',
+    });
+    assert.equal(second.status, 200, second.raw);
+    assert.equal(second.payload.reply?.visibility, 'private');
+    assert.equal(
+      await storedVisibilityRootAuthorId('depth-two-second'),
+      ALICE.id,
+      'the original thread author must survive a second level of private replies',
+    );
+    const meta = await db
+      .prepare('SELECT depth, root_id FROM posts WHERE id = ?')
+      .bind('depth-two-second')
+      .first<{ depth: number; root_id: string }>();
+    assert.equal(meta?.depth, 2);
+    assert.equal(meta?.root_id, 'depth-two-root');
+
+    // The root author and her followers keep the inherited audience.
+    for (const viewer of [ALICE, CAROL, ERIN]) {
+      assert.equal(await canReadPost(viewer, 'depth-two-second'), true, `${viewer.id}: root audience`);
+    }
+    // Dave follows only Carol (the intermediate author), not Alice: the old
+    // parent.user_id fallback would have leaked this reply to him and cut off
+    // the root author.
+    assert.equal(await canReadPost(DAVE, 'depth-two-second'), false);
+    assert.equal(await canReadPost(BOB, 'depth-two-second'), false);
+    assert.equal(await canReadPost(null, 'depth-two-second'), false);
+
+    const daveReplies = await listReplies(DAVE, 'depth-two-first');
+    assert.equal(daveReplies.status, 404, 'the intermediate author’s follower cannot load the parent');
+    for (const viewer of [ALICE, ERIN]) {
+      const list = await listReplies(viewer, 'depth-two-first');
+      assert.equal(list.status, 200, `${viewer.id}: inherited audience must see the reply`);
+      assert.deepEqual(
+        list.replies.map((reply) => [reply.id, reply.text]),
+        [['depth-two-second', 'erin depth 2']],
+      );
+      const thread = await threadReplies(viewer, 'depth-two-root');
+      assert.equal(thread.status, 200);
+      assert.ok(
+        thread.replies.some((reply) => reply.id === 'depth-two-second'),
+        `${viewer.id}: the depth-2 reply must appear in the thread`,
+      );
+    }
+  });
+
+  it('pins the root author when preparing and publishing a draft reply to a private reply', async () => {
+    await seedParent({ id: 'draft-root', text: 'alice private root', visibility: 'private' });
+    const first = await commitReply(CAROL, 'draft-root', {
+      replyId: 'draft-depth-one',
+      text: 'carol depth 1',
+    });
+    assert.equal(first.status, 200, first.raw);
+    assert.equal(await storedVisibilityRootAuthorId('draft-depth-one'), ALICE.id);
+
+    const prepared = await prepareReply(ERIN, 'draft-depth-one');
+    assert.equal(prepared.status, 200, prepared.raw);
+    const replyId = prepared.payload.replyId;
+    const gifKey = prepared.payload.gifKey;
+    assert.ok(replyId && gifKey);
+    const pending = await storedPost(replyId);
+    assert.equal(pending?.status, 'pending');
+    assert.equal(pending?.visibility, 'private');
+    assert.equal(
+      await storedVisibilityRootAuthorId(replyId),
+      ALICE.id,
+      'the prepared draft must pin the root author, not the intermediate author',
+    );
+
+    const published = await commitReply(ERIN, 'draft-depth-one', {
+      replyId,
+      gifKey,
+      text: 'erin draft depth 2',
+    });
+    assert.equal(published.status, 200, published.raw);
+    assert.equal(published.payload.reply?.visibility, 'private');
+    assert.equal((await storedPost(replyId))?.status, 'published');
+    assert.equal(
+      await storedVisibilityRootAuthorId(replyId),
+      ALICE.id,
+      'publishing the draft must keep the root author',
+    );
+
+    assert.equal(await canReadPost(ALICE, replyId), true, 'the root author must keep access');
+    assert.equal(await canReadPost(ERIN, replyId), true, 'a root-author follower must keep access');
+    assert.equal(await canReadPost(DAVE, replyId), false, 'the intermediate author’s follower must not gain access');
+    assert.equal(await canReadPost(null, replyId), false);
+  });
 });

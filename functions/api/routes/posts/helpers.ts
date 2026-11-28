@@ -118,7 +118,7 @@ export function visibilityFilter(currentUserId: string | null | undefined): {
           WHERE follower_id = ? AND followee_id = COALESCE(p.visibility_root_author_id, p.user_id)
         ) OR EXISTS (
           SELECT 1 FROM ap_following f
-          WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status != 'rejected'
+          WHERE f.local_user_id = ? AND f.target_actor_url = p.actor_id AND f.status = 'accepted'
         )
       ))
       OR (COALESCE(p.visibility, 'public') = 'direct' AND (
@@ -135,8 +135,11 @@ export function visibilityFilter(currentUserId: string | null | undefined): {
 
 /**
  * Re-apply the visibility rule to an already-fetched list of posts. Used for
- * user-agnostic KV cache hits (trending), where the rows were fetched for a
- * different viewer. Fails closed if the lookup fails.
+ * user-agnostic KV cache hits (trending, search, games), where the rows were
+ * fetched for a different viewer and possibly before a moderation action.
+ * Publication state must be rechecked as well or a hidden/unpublished post
+ * could still be served straight from the cache. Fails closed if the lookup
+ * fails.
  */
 export async function filterVisiblePosts(
   db: D1Database,
@@ -147,7 +150,9 @@ export async function filterVisiblePosts(
   if (ids.length === 0) return [];
   const { sql, params } = visibilityFilter(currentUserId);
   const result = await db
-    .prepare(`SELECT p.id FROM posts p WHERE p.id IN (${ids.map(() => '?').join(',')}) ${sql}`)
+    .prepare(
+      `SELECT p.id FROM posts p WHERE p.id IN (${ids.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${sql}`,
+    )
     .bind(...ids, ...params)
     .all<{ id: string }>();
   if (!result.success) return [];
