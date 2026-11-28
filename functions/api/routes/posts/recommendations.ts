@@ -6,103 +6,43 @@ import {
   encodeVector,
   RECOMMENDATION_VECTOR_DIM,
 } from '../../../../shared/recommendation/vector-codec.ts';
-import { POOL_JOIN_SQL, POOL_SCORE_SQL } from '../../../lib/activitypub/ap-pool.ts';
 import { clampLimit } from '../../../lib/pagination';
 import { EXACT_DUPLICATE_FILTER } from '../../../lib/post-visibility';
+import {
+  type AuthorStats,
+  applyAuthorDiversityDecay,
+  applyNewAuthorBoost,
+  NEW_AUTHOR_BOOST_POSITION_RATIO,
+} from '../../../lib/recommendation-adjustments.ts';
+import {
+  buildPoolCandidateSql,
+  CLIENT_RANK_VECTOR_BATCH_MAX,
+  candidateRankScore,
+  compareScoredPosts,
+  decayingRecommendationPenalty,
+  deriveActionSignals,
+  diversifyPosts,
+  ENGAGEMENT_FORMULA,
+  LOCAL_ONLY_FILTER,
+  languageAffinity,
+  RECENT_CANDIDATE_WINDOW_HOURS,
+  RECOMMENDATION_TRUST_FILTER,
+  rankCandidateIds,
+  TRENDING_CANDIDATE_WINDOW_DAYS,
+} from '../../../lib/recommendation-candidates.ts';
 import {
   collectRecommendationCandidateIds,
   scoreRecommendationCandidate,
 } from '../../../lib/recommendation-scoring.ts';
 import { computeQualityScore } from '../../../lib/scoring';
-import { RECOMMENDATION_MIN_TRUST } from '../../../lib/trust';
 import type { Bindings, PostRow, Variables } from '../../types';
 
 import { enrichFeedPosts, RECOMMENDED_SELECT, visibilityFilter } from './helpers.ts';
 
 export const recommendations = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-function diversifyPosts(
-  items: Array<{ post: Record<string, unknown>; score: number }>,
-  maxCount: number,
-  maxPerUser: number,
-): Array<{ post: Record<string, unknown>; score: number }> {
-  const userCounts = new Map<string, number>();
-  const result: Array<{ post: Record<string, unknown>; score: number }> = [];
-  for (const item of items) {
-    if (result.length >= maxCount) break;
-    // Remote posts share an empty user_id; key by actor so one federated
-    // author cannot take every slot (and so they are not capped to 2 total).
-    const authorId = String(item.post.actor_id || item.post.user_id || '');
-    const count = userCounts.get(authorId) || 0;
-    if (count >= maxPerUser) continue;
-    userCounts.set(authorId, count + 1);
-    result.push(item);
-  }
-  return result;
-}
-
-// Independent sources keep the feed useful while embeddings are pending or a
-// user has not built an interest profile yet.
-const RECENT_CANDIDATE_WINDOW_HOURS = 72;
-const TRENDING_CANDIDATE_WINDOW_DAYS = 14;
-
-function compareScoredPosts(
-  a: { post: Record<string, unknown>; score: number },
-  b: { post: Record<string, unknown>; score: number },
-): number {
-  const diff = b.score - a.score;
-  if (diff !== 0) return diff;
-  const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-  if (ca !== 0) return ca;
-  return String(b.post.id || '').localeCompare(String(a.post.id || ''));
-}
-/** Author language is already selected by RECOMMENDED_SELECT as author_language. */
-function languageAffinity(post: Record<string, unknown>, viewerLanguage: string): number {
-  if (!viewerLanguage) return 0;
-  const authorLanguage = String(post.author_language ?? '')
-    .trim()
-    .toLowerCase()
-    .slice(0, 2);
-  return authorLanguage === viewerLanguage ? 1 : 0;
-}
-
-function rankCandidateIds(ids: string[]): Map<string, number> {
-  return new Map(ids.map((id, index) => [id, index]));
-}
-
-function candidateRankScore(id: string, ranks: Map<string, number>): number {
-  const rank = ranks.get(id);
-  return rank === undefined ? 0 : 1 / (1 + rank / 20);
-}
-
-function decayingRecommendationPenalty(
-  activityAt: string | null | undefined,
-  asOfMs: number,
-  maxPenalty: number,
-  halfLifeDays: number,
-): number {
-  if (!activityAt) return 0;
-  const activityMs = Date.parse(activityAt);
-  if (!Number.isFinite(activityMs)) return 0;
-  const ageMs = Math.max(0, asOfMs - activityMs);
-  return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
-}
-
-const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
-// For You is local-only. Remote rows (which carry an actor id) belong to the
-// Federated tab; excluding them at the source keeps them from consuming
-// candidate slots or blocking the archive fallback.
-const LOCAL_ONLY_FILTER = 'AND p.actor_id IS NULL';
-const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
-
-export function buildPoolCandidateSql(filterSql: string): string {
-  return `SELECT p.id, ${POOL_SCORE_SQL} AS pool_score
-    FROM posts p ${POOL_JOIN_SQL}
-    LEFT JOIN users u ON p.user_id = u.id
-    WHERE p.actor_id IS NOT NULL AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-      ${filterSql} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
-    ORDER BY pool_score DESC LIMIT ?`;
-}
+// Kept as a route export for existing importers; the implementation is pure.
+export { buildPoolCandidateSql };
 
 async function loadPoolCandidates(
   db: D1Database,
@@ -147,6 +87,24 @@ async function attachRecommendationVectors(
     }
   }
   return vectors;
+}
+
+/** Cheap per-author activity totals used only by the bounded new-author boost. */
+async function loadAuthorStats(db: D1Database, userIds: string[]): Promise<Map<string, AuthorStats>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await db
+    .prepare(
+      `SELECT user_id, COUNT(*) AS post_count, COALESCE(SUM(impressions), 0) AS impressions
+       FROM posts WHERE user_id IN (SELECT value FROM json_each(?)) GROUP BY user_id`,
+    )
+    .bind(JSON.stringify(userIds))
+    .all<{ user_id: string; post_count: number | string | null; impressions: number | string | null }>();
+  return new Map(
+    (rows.results ?? []).map((row) => [
+      String(row.user_id),
+      { postCount: Number(row.post_count) || 0, impressions: Number(row.impressions) || 0 },
+    ]),
+  );
 }
 
 /**
@@ -194,7 +152,6 @@ async function loadClientRankedCandidatePage(
   const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
   const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
   const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-  const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
   const sourceLimit = Math.min(limit * 2, 200);
 
   const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
@@ -210,7 +167,7 @@ async function loadClientRankedCandidatePage(
       .all<Record<string, unknown>>(),
     db
       .prepare(
-        `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
+        `${RECOMMENDED_SELECT}, (${ENGAGEMENT_FORMULA}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
          LEFT JOIN titles t ON t.id = u.equipped_title_id
          WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
            ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
@@ -264,7 +221,7 @@ async function loadClientRankedCandidatePage(
   const serializedCandidateIds = JSON.stringify(candidateIds);
   const candidateResult = await db
     .prepare(
-      `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+      `${RECOMMENDED_SELECT}, (${ENGAGEMENT_FORMULA}) as eng_score
        FROM posts p LEFT JOIN users u ON p.user_id = u.id
        LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (SELECT value FROM json_each(?))
@@ -308,8 +265,13 @@ async function loadClientRankedCandidatePage(
   const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
   const maxEngagement = Math.max(...candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0)), 1);
   const maxLogEngagement = Math.log1p(maxEngagement);
+  const maxReloads = Math.max(...candidatePosts.map((post) => Math.max(0, Number(post.reload_count) || 0)), 1);
+  const authorStats = await loadAuthorStats(
+    db,
+    [...new Set(candidatePosts.map((post) => String(post.user_id || '')))].filter(Boolean),
+  );
 
-  const scored = candidatePosts
+  let scored = candidatePosts
     .filter((post) => !seenIds.has(String(post.id)))
     .map((post) => {
       const id = String(post.id);
@@ -337,11 +299,18 @@ async function loadClientRankedCandidatePage(
         poolScore: poolCandidates.scoreById.get(id),
         historyPenalty,
         languageAffinity: languageAffinity(post, viewerLanguage),
+        actionSignals: deriveActionSignals(post, maxReloads),
       });
       delete post.eng_score;
       return { post, score };
     })
     .sort(compareScoredPosts);
+  scored = applyNewAuthorBoost(
+    scored,
+    (item) => String(item.post.user_id || ''),
+    authorStats,
+    Math.max(1, Math.floor(limit * NEW_AUTHOR_BOOST_POSITION_RATIO)),
+  ).sort(compareScoredPosts);
 
   if (scored.length === 0) {
     return loadClientRankedCandidatePage(
@@ -445,7 +414,6 @@ recommendations.get('/posts/recommended', async (c) => {
     const { sql: visibilitySql, params: visibilityParams } = visibilityFilter(currentUserId);
     const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-    const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
     const [recentResult, trendingResult, followingResult, poolCandidates] = await Promise.all([
       db
@@ -460,7 +428,7 @@ recommendations.get('/posts/recommended', async (c) => {
         .all<Record<string, unknown>>(),
       db
         .prepare(
-          `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          `${RECOMMENDED_SELECT}, (${ENGAGEMENT_FORMULA}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
              ${blockFilter} ${visibilitySql} ${RECOMMENDATION_TRUST_FILTER} ${LOCAL_ONLY_FILTER} AND p.created_at >= ? AND p.created_at <= ?
@@ -505,7 +473,7 @@ recommendations.get('/posts/recommended', async (c) => {
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
     // so D1's 100-parameter ceiling does not turn a populated feed into a 500.
     const serializedCandidateIds = JSON.stringify(candidateIds);
-    const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+    const candidateQuery = `${RECOMMENDED_SELECT}, (${ENGAGEMENT_FORMULA}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
           LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
@@ -551,6 +519,11 @@ recommendations.get('/posts/recommended', async (c) => {
     const engagementValues = candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0));
     const maxEngagement = Math.max(...engagementValues, 1);
     const maxLogEngagement = Math.log1p(maxEngagement);
+    const maxReloads = Math.max(...candidatePosts.map((post) => Math.max(0, Number(post.reload_count) || 0)), 1);
+    const authorStats = await loadAuthorStats(
+      db,
+      [...new Set(candidatePosts.map((post) => String(post.user_id || '')))].filter(Boolean),
+    );
     const scoredPosts = candidatePosts.map((post) => {
       const id = String(post.id);
       const sourceScore =
@@ -577,15 +550,22 @@ recommendations.get('/posts/recommended', async (c) => {
         poolScore: poolCandidates.scoreById.get(id),
         historyPenalty,
         languageAffinity: languageAffinity(post, viewerLanguage),
+        actionSignals: deriveActionSignals(post, maxReloads),
       });
       delete post.eng_score;
       return { post, score };
     });
+    const boostedPosts = applyNewAuthorBoost(
+      scoredPosts,
+      (item) => String(item.post.user_id || ''),
+      authorStats,
+      Math.max(1, Math.floor(limit * NEW_AUTHOR_BOOST_POSITION_RATIO)),
+    );
 
-    let filteredPosts = scoredPosts.filter(({ post }) => !seenIds.has(String(post.id)));
+    let filteredPosts = boostedPosts.filter(({ post }) => !seenIds.has(String(post.id)));
     const validCursor = numericCursor !== null && Number.isFinite(numericCursor) && cursorCreatedAt && cursorId;
     if (validCursor && cursorParts.length < 5) {
-      filteredPosts = scoredPosts.filter(({ post, score }) => {
+      filteredPosts = boostedPosts.filter(({ post, score }) => {
         const createdAt = String(post.created_at || '');
         const id = String(post.id || '');
         return (
@@ -602,7 +582,12 @@ recommendations.get('/posts/recommended', async (c) => {
     }
 
     filteredPosts.sort(compareScoredPosts);
-    const pagePosts = diversifyPosts(filteredPosts, limit, 2).map(({ post, score }) => {
+    // Author cap first, then X-style repeated-author decay with a floor; the
+    // re-sorted scores are what the cursor and the client see.
+    const page = applyAuthorDiversityDecay(diversifyPosts(filteredPosts, limit, 2), (item) =>
+      String(item.post.actor_id || item.post.user_id || ''),
+    );
+    const pagePosts = page.map(({ post, score }) => {
       post.score = score;
       return post;
     });
