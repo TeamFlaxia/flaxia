@@ -123,7 +123,8 @@ export default defineConfig({
             'https://www.google.com',
           ],
           'script-src-attr': ['none'],
-          'media-src': ['self', 'https:', 'blob:'],
+          // Remote ActivityPub media can be served over http as well as https.
+          'media-src': ['self', 'http:', 'https:', 'blob:'],
           'frame-src': [
             'self',
             'blob:',

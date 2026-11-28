@@ -1,8 +1,12 @@
 import { canUsePostColors } from '../../shared/entitlements.ts';
 import { resolveNameColor } from '../../shared/name-color.ts';
-import { parsePostColors, postTextStyleClass, stripPostColors } from '../../shared/post-colors.ts';
+import { parsePostColors, postTextStyleClass } from '../../shared/post-colors.ts';
 import { stripMediaCues } from '../../shared/post-cues.ts';
 import { isTitleIconImage } from '../../shared/title-icon.ts';
+import type { PostAttachment } from '../../shared/types/post.ts';
+import { assetUrl, escapeHtml, renderPostMedia } from './render-post-media.ts';
+
+export { assetUrl, escapeHtml } from './render-post-media.ts';
 
 /**
  * Lucide "leaf" icon as inline SVG. Used for the Fresh (like) count in SSR
@@ -10,15 +14,6 @@ import { isTitleIconImage } from '../../shared/title-icon.ts';
  */
 export function renderFreshIcon(className = 'ssr-fresh-icon'): string {
   return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 20a10 10 0 0010-10 25.9 25.9 0 00-1.04-7.281 1 1 0 00-1.755-.325C15.833 5.5 13 5.5 9.8 6.1A7 7 0 0011 20"/><path d="M2 21a5 5 0 012.911-4.544C7.613 15.212 8.351 15.24 11 13"/></svg>`;
-}
-
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
 
 export interface PostRow {
@@ -39,6 +34,7 @@ export interface PostRow {
   payload_key: string | null;
   swf_key: string | null;
   thumbnail_key: string | null;
+  attachments?: PostAttachment[];
   game_description?: string | null;
   game_title?: string | null;
   fresh_count: number;
@@ -79,10 +75,6 @@ export interface HtmlShellOptions {
   jsonLd?: string;
   additionalHead?: string;
   spaHeadTags?: string;
-}
-
-export function assetUrl(baseUrl: string, key: string): string {
-  return `${baseUrl}/api/images/${key}`;
 }
 
 // JSON-LD serialization lives in the platform-neutral shared/ boundary. Keep
@@ -622,41 +614,6 @@ function renderPostContent(text: string, hashtags: string, badgeType?: string | 
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
 }
 
-function renderPostMedia(
-  gifKey: string | null,
-  thumbnailKey: string | null,
-  payloadKey: string | null,
-  swfKey: string | null,
-  baseUrl: string,
-  text?: string,
-): string {
-  const parts: string[] = [];
-  const plainText = text ? stripPostColors(text).replace(/\\\{/g, '{') : '';
-  const alt = plainText ? plainText.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
-
-  if (gifKey?.startsWith('video/')) {
-    const videoUrl = `${baseUrl}/api/video/${escapeHtml(gifKey)}`;
-    const poster = thumbnailKey ? ` poster="${escapeHtml(assetUrl(baseUrl, thumbnailKey))}"` : '';
-    const mime = gifKey.endsWith('.webm') ? 'video/webm' : gifKey.endsWith('.mov') ? 'video/quicktime' : 'video/mp4';
-    const label = escapeHtml(alt || 'Post video');
-    parts.push(
-      `<video controls preload="metadata" playsinline width="640" height="360"${poster}>\n    <source src="${videoUrl}" type="${mime}">\n    ${label}\n  </video>`,
-    );
-  } else if (gifKey && !gifKey.startsWith('audio/')) {
-    parts.push(
-      `<img src="${escapeHtml(assetUrl(baseUrl, gifKey))}" alt="${escapeHtml(alt || 'Post image')}" width="1200" height="675" loading="lazy">`,
-    );
-  } else if (thumbnailKey) {
-    parts.push(
-      `<img src="${escapeHtml(assetUrl(baseUrl, thumbnailKey))}" alt="${escapeHtml(alt || 'Post thumbnail')}" width="800" height="600" loading="lazy">`,
-    );
-  }
-  if (payloadKey || swfKey) {
-    parts.push(`<p>🎮 Interactive content available</p>`);
-  }
-  return parts.join('\n    ');
-}
-
 function renderNameColorStyle(nameColor?: string | null, badgeType?: string | null): string {
   const color = resolveNameColor(nameColor, badgeType);
   return color ? ` style="color:${color}"` : '';
@@ -701,7 +658,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
     </div>
     <div class="ssr-post-body">
       ${renderPostContent(post.text, post.hashtags, post.badge_type)}
-      ${renderPostMedia(post.gif_key, post.thumbnail_key, post.payload_key, post.swf_key, baseUrl, post.text)}
+      ${renderPostMedia(post.gif_key, post.thumbnail_key, post.payload_key, post.swf_key, baseUrl, post.text, post.attachments)}
     </div>
     <div class="ssr-post-meta">
       <time datetime="${escapeHtml(post.created_at)}">${formatDate(post.created_at, locale)}</time>

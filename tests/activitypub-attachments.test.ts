@@ -1,7 +1,15 @@
 // Inbound ActivityPub attachments: media stays inline, archives become links.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseRemoteAttachments, remoteAttachmentKind } from '../functions/lib/activitypub/attachments.ts';
+import {
+  parseRemoteAttachments,
+  remoteAttachmentKind,
+  storeRemoteAttachments,
+} from '../functions/lib/activitypub/attachments.ts';
+import { enrichPostsWithAttachments } from '../functions/lib/attachments.ts';
+import { type PostRow, renderPostArticle } from '../functions/lib/render-html.ts';
+import { attachmentUrl } from '../src/lib/media/attachments.ts';
+import { createTestDatabase } from './helpers/d1.ts';
 
 describe('remoteAttachmentKind', () => {
   it('classifies by media type first', () => {
@@ -54,6 +62,176 @@ describe('parseRemoteAttachments', () => {
 
   it('handles a missing list', () => {
     assert.deepEqual(parseRemoteAttachments({}), []);
+  });
+
+  it('accepts AP Image/Video/Audio types with href URLs and type arrays', () => {
+    assert.deepEqual(
+      parseRemoteAttachments({
+        attachment: [
+          { type: ['Image'], url: { href: 'https://cdn.example/a.webp' } },
+          { type: 'Video', url: { href: 'https://cdn.example/b.mp4' } },
+          { type: 'Audio', url: { href: 'https://cdn.example/c.mp3' } },
+          { type: 'Document', url: { href: 'https://cdn.example/doc.pdf' } },
+        ],
+      }),
+      [
+        { url: 'https://cdn.example/a.webp', kind: 'image' },
+        { url: 'https://cdn.example/b.mp4', kind: 'video' },
+        { url: 'https://cdn.example/c.mp3', kind: 'audio' },
+        { url: 'https://cdn.example/doc.pdf', kind: 'document' },
+      ],
+    );
+  });
+
+  it('reads Mastodon REST media_attachments with lower-case types', () => {
+    assert.deepEqual(
+      parseRemoteAttachments({
+        media_attachments: [
+          { type: 'image', url: 'https://cdn.example/a.png' },
+          { type: 'gifv', url: 'https://cdn.example/b.mp4' },
+          { type: 'audio', remote_url: 'https://cdn.example/c.ogg' },
+          { type: 'unknown', url: 'https://cdn.example/game.zip' },
+        ],
+      }),
+      [
+        { url: 'https://cdn.example/a.png', kind: 'image' },
+        { url: 'https://cdn.example/b.mp4', kind: 'video' },
+        { url: 'https://cdn.example/c.ogg', kind: 'audio' },
+        { url: 'https://cdn.example/game.zip', kind: 'document' },
+      ],
+    );
+  });
+
+  it('drops credential-bearing URLs', () => {
+    assert.deepEqual(parseRemoteAttachments({ attachment: [{ url: 'https://user:pass@cdn.example/a.png' }] }), []);
+  });
+});
+
+describe('stored remote attachments', () => {
+  it('survive the real post_attachments schema with the right kind and position', async () => {
+    const db = createTestDatabase();
+    try {
+      await db
+        .prepare(`INSERT INTO posts (id, user_id, username, text, status, created_at)
+                  VALUES ('p1', '', 'alice@remote.example', 'hi', 'published', ?)`)
+        .bind('2026-01-01T00:00:00.000Z')
+        .run();
+      await storeRemoteAttachments(db, 'p1', {
+        attachment: [
+          { type: 'Image', url: { href: 'https://cdn.example/a.png' } },
+          { type: 'Document', mediaType: 'application/zip', url: 'https://cdn.example/game.zip' },
+        ],
+      });
+      const rows = await db
+        .prepare('SELECT r2_key, kind, position FROM post_attachments WHERE post_id = ? ORDER BY position')
+        .bind('p1')
+        .all<{ r2_key: string; kind: string; position: number }>();
+      assert.deepEqual(
+        rows.results.map((row) => ({ ...row })),
+        [
+          { r2_key: 'https://cdn.example/a.png', kind: 'image', position: 1 },
+          { r2_key: 'https://cdn.example/game.zip', kind: 'document', position: 2 },
+        ],
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it('are enriched back onto posts as remote audio/document URLs', async () => {
+    const db = createTestDatabase();
+    try {
+      await db
+        .prepare(`INSERT INTO posts (id, user_id, username, text, status, created_at)
+                  VALUES ('p1', '', 'alice@remote.example', 'hi', 'published', ?)`)
+        .bind('2026-01-01T00:00:00.000Z')
+        .run();
+      await storeRemoteAttachments(db, 'p1', {
+        attachment: [
+          { type: 'Audio', url: 'http://cdn.example/voice.mp3' },
+          { type: 'Document', url: 'https://cdn.example/archive.zip' },
+        ],
+      });
+      const posts: Array<{ id: string; attachments?: unknown }> = [{ id: 'p1' }];
+      await enrichPostsWithAttachments(posts, db);
+      assert.deepEqual(posts[0]?.attachments, [
+        { r2_key: 'http://cdn.example/voice.mp3', kind: 'audio', position: 1 },
+        { r2_key: 'https://cdn.example/archive.zip', kind: 'document', position: 2 },
+      ]);
+      assert.equal(
+        attachmentUrl({ r2_key: 'http://cdn.example/voice.mp3', kind: 'audio', position: 1 }),
+        'http://cdn.example/voice.mp3',
+      );
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe('remote media rendering', () => {
+  const ssrPost = (attachments: PostRow['attachments']): PostRow => ({
+    id: 'p1',
+    user_id: '',
+    username: 'alice@remote.example',
+    display_name: 'Alice',
+    avatar_key: null,
+    text: 'media post',
+    hashtags: '[]',
+    gif_key: null,
+    payload_key: null,
+    swf_key: null,
+    thumbnail_key: null,
+    attachments,
+    fresh_count: 0,
+    bookmark_count: 0,
+    reply_count: 0,
+    impressions: 0,
+    parent_id: null,
+    root_id: null,
+    depth: 0,
+    status: 'published',
+    hidden: 0,
+    created_at: '2026-01-01T00:00:00.000Z',
+  });
+
+  it('resolves every kind to a direct URL when the key is absolute', () => {
+    assert.equal(
+      attachmentUrl({ r2_key: 'https://cdn.example/a.png', kind: 'image', position: 1 }),
+      'https://cdn.example/a.png',
+    );
+    assert.equal(
+      attachmentUrl({ r2_key: 'https://cdn.example/v.mp4', kind: 'video', position: 1 }),
+      'https://cdn.example/v.mp4',
+    );
+    assert.equal(
+      attachmentUrl({ r2_key: 'https://cdn.example/a.mp3', kind: 'audio', position: 1 }),
+      'https://cdn.example/a.mp3',
+    );
+    assert.equal(
+      attachmentUrl({ r2_key: 'https://cdn.example/game.zip', kind: 'document', position: 1 }),
+      'https://cdn.example/game.zip',
+    );
+  });
+
+  it('renders remote images/audio/video inline and documents as links only', () => {
+    const html = renderPostArticle(
+      ssrPost([
+        { r2_key: 'https://cdn.example/a.png', kind: 'image', position: 1 },
+        { r2_key: 'https://cdn.example/v.mp4', kind: 'video', position: 2 },
+        { r2_key: 'https://cdn.example/a.mp3', kind: 'audio', position: 3 },
+        { r2_key: 'https://cdn.example/game.zip', kind: 'document', position: 4 },
+      ]),
+      'https://flaxia.app',
+    );
+    assert.match(html, /<img class="ssr-post-attachment" src="https:\/\/cdn\.example\/a\.png"/);
+    assert.match(html, /<video class="ssr-post-attachment"[^>]*src="https:\/\/cdn\.example\/v\.mp4"/);
+    assert.match(html, /<audio class="ssr-post-attachment"[^>]*src="https:\/\/cdn\.example\/a\.mp3"/);
+    assert.match(
+      html,
+      /<a class="ssr-post-attachment ssr-post-document" href="https:\/\/cdn\.example\/game\.zip"[^>]*>.*game\.zip<\/a>/,
+    );
+    // A remote archive must never become an executable embed in SSR output.
+    assert.doesNotMatch(html, /<iframe|<embed|<object|<script/i);
   });
 });
 
