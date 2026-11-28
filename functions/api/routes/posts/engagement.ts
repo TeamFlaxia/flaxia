@@ -424,7 +424,7 @@ engagement.post('/posts/fresh/batch', requireAuth, async (c) => {
     // outbound activities.
     const v = visibilityFilter(userId);
     const posts = await c.env.DB.prepare(`
-      SELECT p.id, p.user_id, p.actor_id, p.ap_object_id, p.visibility
+      SELECT p.id, p.user_id, p.username, p.actor_id, p.ap_object_id, p.visibility
       FROM posts p
       WHERE p.id IN (${post_ids.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${v.sql}
     `)
