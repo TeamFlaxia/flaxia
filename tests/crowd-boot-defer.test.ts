@@ -1,6 +1,6 @@
 // Booting the shell must not synchronously start the Crowd node: the pinned
 // vendor bundle performs a blocking, multi-gigabyte WebAssembly.Memory probe
-// on the main thread (vendor/flaxia-node-0.10.0.tgz memoryProbe.js).
+// on the main thread (vendor/flaxia-node-0.11.1.tgz memoryProbe.js).
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';

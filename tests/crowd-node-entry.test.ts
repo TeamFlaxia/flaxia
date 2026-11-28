@@ -7,7 +7,7 @@ import { crowdNodeEntry } from '../src/lib/crowd-node.ts';
 
 describe('crowd node entry path', () => {
   it('serves the pinned bundle same-origin under /crowd', () => {
-    assert.equal(crowdNodeEntry('0.10.0'), '/crowd/v0.10.0-0/index.js');
+    assert.equal(crowdNodeEntry('0.11.1'), '/crowd/v0.11.1-0/index.js');
     assert.ok(!crowdNodeEntry().includes('/api/crowd'));
     assert.ok(!crowdNodeEntry().includes('unpkg.com'));
   });

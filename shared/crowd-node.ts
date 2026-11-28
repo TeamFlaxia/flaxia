@@ -5,4 +5,4 @@
  * value. The browser bundle is copied to `/crowd/v<version>-0/` in the static
  * output (same-origin, immutable) and served from node_modules in dev.
  */
-export const CROWD_NODE_VERSION = '0.10.0';
+export const CROWD_NODE_VERSION = '0.11.1';
