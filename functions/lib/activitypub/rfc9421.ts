@@ -22,6 +22,10 @@ export interface Rfc9421VerifyOptions {
 }
 
 const DEFAULT_MAX_SKEW_MS = 30 * 60 * 1000;
+/** Fixed grace after `expires`: the 30 minute clock skew must not extend it. */
+export const EXPIRES_TOLERANCE_MS = 60_000;
+/** Algorithms this verifier can actually check with RSASSA-PKCS1-v1_5. */
+const ALLOWED_ALGORITHMS = new Set(['rsa-sha256', 'rsa-v1_5-sha256']);
 
 /** Split on separators that are not inside a quoted string. */
 function splitOutsideQuotes(input: string, separator: string): string[] {
@@ -81,6 +85,16 @@ export function parseRfc9421Signatures(signatureInput: string, signatureHeader: 
     parsed.push({ label, components, params, signature });
   }
   return parsed;
+}
+
+/** Read a parameter (e.g. `keyid`, `created`) from RFC 9421 signatures, unquoted. */
+export function rfc9421Param(signatures: Rfc9421SignatureInput[], name: string): string | undefined {
+  const target = name.toLowerCase();
+  for (const signature of signatures) {
+    const parameter = signature.params.find((entry) => entry.name === target);
+    if (parameter) return unquoteRfc9421(parameter.value);
+  }
+  return undefined;
 }
 
 /** Resolve one RFC 9421 component identifier to its signature-base value. */
@@ -159,7 +173,11 @@ export async function verifyRfc9421Signature(
     // `created` is the only freshness signal when the signer omits Date, so
     // bound it in both directions to keep old deliveries from being replayed.
     if (created !== undefined && (!Number.isFinite(created) || Math.abs(now - created * 1000) > maxSkewMs)) continue;
-    if (expires !== undefined && (!Number.isFinite(expires) || expires * 1000 < now - maxSkewMs)) continue;
+    if (expires !== undefined && (!Number.isFinite(expires) || expires * 1000 + EXPIRES_TOLERANCE_MS <= now)) {
+      continue;
+    }
+    const alg = params.has('alg') ? unquoteRfc9421(params.get('alg') ?? '').toLowerCase() : undefined;
+    if (alg !== undefined && !ALLOWED_ALGORITHMS.has(alg)) continue;
 
     const dateHeader = request.headers.get('date');
     if (!dateHeader && created === undefined) continue;
@@ -171,6 +189,7 @@ export async function verifyRfc9421Signature(
     // A signature that does not cover the target or the body can be replayed
     // against a different endpoint or with a different payload.
     if (!candidate.components.some((component) => targetComponents.has(component))) continue;
+    if (request.method.toUpperCase() !== 'GET' && !candidate.components.includes('@method')) continue;
     if (
       !['GET', 'HEAD'].includes(request.method.toUpperCase()) &&
       !candidate.components.includes('content-digest') &&
@@ -179,8 +198,15 @@ export async function verifyRfc9421Signature(
       continue;
     }
 
+    // A signed host must name the host the request actually addresses. When
+    // neither a host nor a full target URI is signed, only the path is bound,
+    // so the expected host is the remaining protection against a signature
+    // replayed on another instance (an inbox delivery is addressed to us, not
+    // to the actor's own host).
     const bindsHost = candidate.components.includes('host') || candidate.components.includes('@authority');
-    if (options.expectedHost && (bindsHost ? requestHost : url.host) !== options.expectedHost) continue;
+    const bindsFullTarget = candidate.components.includes('@target-uri');
+    if (bindsHost && requestHost !== url.host) continue;
+    if (options.expectedHost && !bindsHost && !bindsFullTarget && url.host !== options.expectedHost) continue;
 
     const base = buildRfc9421SignatureBase(request, candidate.components, candidate.params);
     if (base === null) continue;

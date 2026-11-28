@@ -5,6 +5,7 @@ import {
   handlePersonalInbox,
   handleSharedInbox,
   type InboxEnv,
+  inboxReplayKey,
   MAX_INBOX_BODY_BYTES,
 } from '../functions/lib/activitypub/inbox.ts';
 import { signRequest } from '../functions/lib/activitypub/signature.ts';
@@ -41,6 +42,17 @@ function cacheStub(): CacheStub {
 
 let privateKeyPem = '';
 let publicKeyPem = '';
+
+async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  const contents = pem
+    .replace('-----BEGIN PRIVATE KEY-----', '')
+    .replace('-----END PRIVATE KEY-----', '')
+    .replace(/\s/g, '');
+  const binary = atob(contents);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return crypto.subtle.importKey('pkcs8', bytes.buffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, true, ['sign']);
+}
 
 interface FetchCall {
   url: string;
@@ -111,6 +123,66 @@ describe('ActivityPub inbox', () => {
     return new Request(target, { method: 'POST', headers, body });
   }
 
+  /** Sign a delivery with pure RFC 9421 headers (no draft Signature parameters). */
+  async function rfc9421SignedRequest(
+    activity: Record<string, unknown>,
+    target = `${BASE}/api/inbox`,
+    options: { components?: string[]; expires?: number; created?: number; onlyContentDigest?: boolean } = {},
+  ): Promise<Request> {
+    const body = JSON.stringify(activity);
+    const url = new URL(target);
+    const encoder = new TextEncoder();
+    const digest = btoa(
+      String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(body)))),
+    );
+    const created = options.created ?? Math.floor(Date.now() / 1000);
+    const date = new Date().toUTCString();
+    const components = options.components ?? ['@method', '@target-uri', 'content-digest'];
+    const headers = new Headers({
+      'Content-Type': 'application/activity+json',
+      Host: url.host,
+      Date: date,
+      ...(options.onlyContentDigest ? {} : { Digest: `sha-256=${digest}` }),
+      'Content-Digest': `sha-256=:${digest}:`,
+    });
+    const values: Record<string, string> = {
+      '@method': 'POST',
+      '@target-uri': target,
+      '@request-target': url.pathname + url.search,
+      '@path': url.pathname,
+      '@authority': url.host,
+      host: url.host,
+      date,
+      digest: `sha-256=${digest}`,
+      'content-digest': `sha-256=:${digest}:`,
+      '(created)': String(created),
+    };
+    const params: Array<[string, string]> = [
+      ['created', String(created)],
+      ['keyid', `"${KEY_ID}"`],
+      ['alg', '"rsa-sha256"'],
+    ];
+    if (options.expires !== undefined) params.push(['expires', String(options.expires)]);
+    const base = [
+      ...components.map((component) => `"${component}": ${values[component]}`),
+      ...params.map(([name, value]) => `"${name}": ${value}`),
+    ].join('\n');
+    const signature = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      await importPrivateKey(privateKeyPem),
+      encoder.encode(base),
+    );
+    const label = 'sig1';
+    headers.set(
+      'Signature-Input',
+      `${label}=(${components.map((component) => `"${component}"`).join(' ')});${params
+        .map(([name, value]) => `${name}=${value}`)
+        .join(';')}`,
+    );
+    headers.set('Signature', `${label}=:${btoa(String.fromCharCode(...new Uint8Array(signature)))}:`);
+    return new Request(target, { method: 'POST', headers, body });
+  }
+
   it('accepts a signed activity that addresses a local actor', async () => {
     const restore = stubRemoteActor();
     try {
@@ -128,6 +200,137 @@ describe('ActivityPub inbox', () => {
       assert.equal(queue[0].username, 'alice');
       assert.equal(queue[0].actorId, REMOTE_ACTOR);
       assert.equal(queue[0].activity?.type, 'Follow');
+    } finally {
+      restore();
+    }
+  });
+
+  it('accepts a pure RFC 9421 delivery and fetches the actor key', async () => {
+    const calls: FetchCall[] = [];
+    const restore = stubRemoteActor(calls);
+    try {
+      queue.length = 0;
+      const request = await rfc9421SignedRequest({
+        id: `${REMOTE}/activities/inbox-rfc-1`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+      });
+      assert.equal(request.headers.get('Signature-Input') !== null, true);
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 202);
+      assert.equal(queue.length, 1);
+      assert.equal(queue[0].actorId, REMOTE_ACTOR);
+      assert.ok(
+        calls.some((call) => call.url === REMOTE_ACTOR),
+        'the key named by the RFC 9421 keyid must be fetched from the actor document',
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery with a mismatching digest header', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest({
+        id: `${REMOTE}/activities/inbox-rfc-2`,
+        type: 'Follow',
+        actor: REMOTE_ACTOR,
+        to: [`${BASE}/api/actors/alice`],
+      });
+      request.headers.set('Digest', 'sha-256=AAAA');
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery signed for a different key origin', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-3`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+        },
+        `${BASE}/api/inbox`,
+        { components: ['@method', '@target-uri', 'content-digest'] },
+      );
+      request.headers.set(
+        'Signature-Input',
+        (request.headers.get('Signature-Input') ?? '').replace(KEY_ID, 'https://evil.example/users/alice#main-key'),
+      );
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('refuses an RFC 9421 delivery just after its expiry', async () => {
+    const restore = stubRemoteActor();
+    try {
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-4`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+          to: [`${BASE}/api/actors/alice`],
+        },
+        `${BASE}/api/inbox`,
+        { expires: Math.floor(Date.now() / 1000) - 120 },
+      );
+      const response = await handleSharedInbox(env(), request);
+      assert.equal(response.status, 401);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fingerprints RFC 9421 Content-Digest-only requests for replay protection', async () => {
+    const activity = { id: `${REMOTE}/activities/inbox-rfc-5`, type: 'Follow', actor: REMOTE_ACTOR };
+    const request = await rfc9421SignedRequest(activity, `${BASE}/api/inbox`, { onlyContentDigest: true });
+    assert.equal(request.headers.get('Digest'), null);
+
+    const key = await inboxReplayKey(request);
+    assert.ok(key, 'an RFC 9421 request needs a replay fingerprint even without Digest/Date');
+    assert.equal(await inboxReplayKey(request.clone()), key, 'the fingerprint must be stable');
+
+    const changedDigest = request.clone();
+    changedDigest.headers.set('Content-Digest', 'sha-256=:AQIDBA==:');
+    assert.notEqual(await inboxReplayKey(changedDigest), key);
+
+    const laterSignature = await rfc9421SignedRequest(activity, `${BASE}/api/inbox`, {
+      onlyContentDigest: true,
+      created: Math.floor(Date.now() / 1000) + 1,
+    });
+    assert.notEqual(await inboxReplayKey(laterSignature), key);
+  });
+
+  it('drops an exact replay of an RFC 9421 delivery', async () => {
+    const restore = stubRemoteActor();
+    try {
+      queue.length = 0;
+      const request = await rfc9421SignedRequest(
+        {
+          id: `${REMOTE}/activities/inbox-rfc-6`,
+          type: 'Follow',
+          actor: REMOTE_ACTOR,
+          to: [`${BASE}/api/actors/alice`],
+        },
+        `${BASE}/api/inbox`,
+        { onlyContentDigest: true },
+      );
+      const sharedEnv = env();
+      const first = await handleSharedInbox(sharedEnv, request.clone());
+      assert.equal(first.status, 202);
+      const second = await handleSharedInbox(sharedEnv, request.clone());
+      assert.equal(second.status, 202);
+      assert.equal(((await second.json()) as { duplicate?: boolean }).duplicate, true);
+      assert.equal(queue.length, 1, 'a replay must not be queued twice');
     } finally {
       restore();
     }
@@ -198,9 +401,10 @@ describe('ActivityPub inbox', () => {
         to: [`${BASE}/api/actors/alice`],
       };
       const sharedEnv = env();
-      const first = await handleSharedInbox(sharedEnv, await signedRequest(activity));
+      const request = await signedRequest(activity);
+      const first = await handleSharedInbox(sharedEnv, request.clone());
       assert.equal(first.status, 202);
-      const second = await handleSharedInbox(sharedEnv, await signedRequest(activity));
+      const second = await handleSharedInbox(sharedEnv, request.clone());
       assert.equal(second.status, 202);
       const body = (await second.json()) as { duplicate?: boolean };
       assert.equal(body.duplicate, true);
@@ -222,9 +426,10 @@ describe('ActivityPub inbox', () => {
         object: `${BASE}/api/actors/alice`,
       };
       const personalEnv = env();
-      const first = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      const request = await signedRequest(activity, target);
+      const first = await handlePersonalInbox(personalEnv, request.clone(), 'alice');
       assert.equal(first.status, 202);
-      const second = await handlePersonalInbox(personalEnv, await signedRequest(activity, target), 'alice');
+      const second = await handlePersonalInbox(personalEnv, request.clone(), 'alice');
       assert.equal(second.status, 202);
       assert.equal(((await second.json()) as { duplicate?: boolean }).duplicate, true);
       assert.equal(queue.length, 1, 'a replay must not be queued twice');

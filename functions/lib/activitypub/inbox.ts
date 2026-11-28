@@ -3,7 +3,15 @@ import { localActorUsername } from './actor.ts';
 import { isDirectDelivery } from './delivery.ts';
 import { type FetchOptions, resolveActorPublicKey } from './fetch.ts';
 import { actorSignOptions, ensureActorKey } from './keys.ts';
-import { decodeSignatureBytes, parseSignatureHeader, verifyDigest, verifyHttpSignature } from './signature.ts';
+import {
+  decodeSignatureBytes,
+  parseRfc9421Signatures,
+  parseSignatureHeader,
+  rfc9421Param,
+  type SignatureHeader,
+  verifyDigest,
+  verifyHttpSignature,
+} from './signature.ts';
 
 /**
  * The inbox of this instance.
@@ -58,33 +66,53 @@ export async function readInboxBody(req: Request): Promise<string | null> {
  */
 export async function inboxReplayKey(req: Request): Promise<string | null> {
   const signatureHeader = req.headers.get('Signature');
-  const date = req.headers.get('Date');
   const digest = req.headers.get('Digest');
-  if (!signatureHeader || !date || !digest) return null;
-  let keyId: string;
-  let created: number | undefined;
-  let signatureBytes: Uint8Array | null;
-  try {
-    const parsed = parseSignatureHeader(signatureHeader);
-    keyId = parsed.keyId;
-    created = parsed.created;
-    signatureBytes = decodeSignatureBytes(parsed.signature);
-  } catch {
-    return null;
+  const contentDigest = req.headers.get('Content-Digest');
+  if (!signatureHeader || (!digest && !contentDigest)) return null;
+
+  const parts: string[] = [];
+  const signatureInput = req.headers.get('Signature-Input');
+  const rfcSignatures = signatureInput ? parseRfc9421Signatures(signatureInput, signatureHeader) : [];
+  if (rfcSignatures.length > 0) {
+    // RFC 9421 has no single `keyId`/`signature` pair: hash every labelled
+    // signature so that relabelling or dropping a label changes the key too.
+    parts.push('rfc9421');
+    for (const candidate of rfcSignatures) {
+      const signatureBytes = decodeSignatureBytes(candidate.signature);
+      if (!signatureBytes) return null;
+      parts.push(
+        candidate.label,
+        rfc9421Param([candidate], 'keyid') ?? '',
+        rfc9421Param([candidate], 'created') ?? '',
+        rfc9421Param([candidate], 'expires') ?? '',
+        hexBytes(signatureBytes),
+      );
+    }
+  } else {
+    let parsed: SignatureHeader;
+    try {
+      parsed = parseSignatureHeader(signatureHeader);
+    } catch {
+      return null;
+    }
+    const signatureBytes = decodeSignatureBytes(parsed.signature);
+    if (!signatureBytes) return null;
+    parts.push(
+      'draft',
+      parsed.keyId,
+      parsed.created === undefined ? '' : String(parsed.created),
+      parsed.expires === undefined ? '' : String(parsed.expires),
+      hexBytes(signatureBytes),
+    );
   }
-  if (!signatureBytes) return null;
+
+  // Only the semantic parts of the signature enter the fingerprint: extra
+  // parameters (algorithm, vendor extensions, ordering) must not turn the same
+  // signed delivery into a different replay key. RFC 9421 signers may omit
+  // Date and use `created`, and may send only Content-Digest.
+  parts.push(req.headers.get('Date') ?? '', normalizeHeaderValue(digest), normalizeHeaderValue(contentDigest));
   try {
-    // Only the semantic parts of the signature enter the fingerprint: extra
-    // parameters (algorithm, key version, vendor extensions, ordering) must not
-    // turn the same signed delivery into a different replay key.
-    const fingerprint = [
-      keyId,
-      created === undefined ? '' : String(created),
-      date,
-      digest.replace(/\s+/g, '').toLowerCase(),
-      Array.from(signatureBytes, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-    ].join('\n');
-    const bytes = new TextEncoder().encode(fingerprint);
+    const bytes = new TextEncoder().encode(parts.join('\n'));
     const hash = await crypto.subtle.digest('SHA-256', bytes);
     return `ap:replay:${Array.from(new Uint8Array(hash))
       .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -92,6 +120,16 @@ export async function inboxReplayKey(req: Request): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** Canonical representation of raw signature bytes in a fingerprint. */
+function hexBytes(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Header values are compared semantically, not by incidental whitespace/case. */
+function normalizeHeaderValue(value: string | null): string {
+  return value ? value.replace(/\s+/g, '').toLowerCase() : '';
 }
 
 async function checkInboxRateLimit(env: InboxEnv, req: Request): Promise<boolean> {
@@ -174,11 +212,17 @@ export async function verifyIncomingActivity(
   }
 
   let keyId: string | undefined;
-  let keyIdOrigin: string | null = null;
   try {
-    const parsed = parseSignatureHeader(signatureHeader);
-    keyId = parsed.keyId;
-    keyIdOrigin = new URL(parsed.keyId).origin;
+    // RFC 9421 puts the keyid in a `Signature-Input` parameter and uses a
+    // labelled byte string in `Signature`. Draft-cavage peers put both in the
+    // `Signature` header; double-knocking peers send both formats.
+    if (req.headers.has('Signature-Input')) {
+      const rfcSignatures = parseRfc9421Signatures(req.headers.get('Signature-Input') ?? '', signatureHeader);
+      keyId = rfc9421Param(rfcSignatures, 'keyid');
+    }
+    if (!keyId) keyId = parseSignatureHeader(signatureHeader).keyId;
+
+    const keyIdOrigin = new URL(keyId).origin;
     const actorOrigin = new URL(actorId).origin;
     if (keyIdOrigin !== actorOrigin) {
       console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);

@@ -203,6 +203,45 @@ describe('ActivityPub signature verification', () => {
     assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
   });
 
+  it('rejects a signature whose expires passed just outside the grace period', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRequest(
+      URL_UNDER_TEST,
+      '{}',
+      privateKeyPem,
+      'https://remote.example/users/alice#main-key',
+    );
+    headers.set('Host', 'remote.example');
+    const parsed = parseSignatureHeader(headers.get('Signature') ?? '');
+    const seconds = Math.floor(Date.now() / 1000);
+    // Well inside the old 30 minute skew, but beyond the fixed one-minute grace.
+    headers.set(
+      'Signature',
+      `keyId="${parsed.keyId}",created="${seconds - 180}",expires="${seconds - 120}",headers="${parsed.headers.join(' ')}",signature="${parsed.signature}"`,
+    );
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects a matching Content-Digest when the signed Digest does not match', async () => {
+    const { privateKeyPem } = await keyPair();
+    const body = '{"type":"Follow"}';
+    const headers = await signRequest(
+      URL_UNDER_TEST,
+      body,
+      privateKeyPem,
+      'https://remote.example/users/alice#main-key',
+    );
+    const otherDigest = btoa(
+      String.fromCharCode(
+        ...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('{"type":"Delete"}'))),
+      ),
+    );
+    headers.set('Content-Digest', `sha-256=:${otherDigest}:`);
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyDigest(request, body), false, 'both digest headers must match the same body');
+  });
+
   it('verifies a signature that covers (created) and (expires)', async () => {
     const { privateKeyPem, publicKeyPem } = await keyPair();
     const body = '{}';
@@ -270,6 +309,7 @@ describe('ActivityPub RFC 9421 signatures', () => {
     created?: number;
     expires?: number;
     label?: string;
+    alg?: string;
   }): Promise<Headers> {
     const url = options.url ?? URL_UNDER_TEST;
     const body = options.body ?? '{"type":"Follow"}';
@@ -307,7 +347,7 @@ describe('ActivityPub RFC 9421 signatures', () => {
     const params: Array<[string, string]> = [
       ['created', String(created)],
       ['keyid', `"${KEY_ID}"`],
-      ['alg', '"rsa-sha256"'],
+      ['alg', `"${options.alg ?? 'rsa-sha256'}"`],
     ];
     if (options.expires !== undefined) params.push(['expires', String(options.expires)]);
 
@@ -414,6 +454,88 @@ describe('ActivityPub RFC 9421 signatures', () => {
     });
     const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
     assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('rejects a matching Digest when Content-Digest does not match', async () => {
+    const { privateKeyPem } = await keyPair();
+    const body = '{"type":"Follow"}';
+    const headers = await signRfc9421({
+      privateKeyPem,
+      body,
+      components: ['@method', '@target-uri', 'content-digest'],
+    });
+    const otherDigest = btoa(
+      String.fromCharCode(
+        ...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('{"type":"Delete"}'))),
+      ),
+    );
+    headers.set('Digest', `sha-256=${otherDigest}`);
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body });
+    assert.equal(await verifyDigest(request, body), false, 'both digest headers must match the same body');
+  });
+
+  it('rejects a signature shortly after its expiry but accepts one before it', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const expired = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      expires: Math.floor(Date.now() / 1000) - 120,
+    });
+    const expiredRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: expired,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(expiredRequest, publicKeyPem), false);
+
+    const current = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      expires: Math.floor(Date.now() / 1000) + 120,
+    });
+    const currentRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: current,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(currentRequest, publicKeyPem), true);
+  });
+
+  it('rejects a POST whose signature does not cover @method', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const headers = await signRfc9421({
+      privateKeyPem,
+      components: ['@target-uri', 'content-digest'],
+    });
+    const request = new Request(URL_UNDER_TEST, { method: 'POST', headers, body: '{"type":"Follow"}' });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), false);
+  });
+
+  it('validates the advertised algorithm', async () => {
+    const { privateKeyPem, publicKeyPem } = await keyPair();
+    const unsupported = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      alg: 'ed25519',
+    });
+    const unsupportedRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: unsupported,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(unsupportedRequest, publicKeyPem), false);
+
+    const supported = await signRfc9421({
+      privateKeyPem,
+      components: ['@method', '@target-uri', 'content-digest'],
+      alg: 'rsa-v1_5-sha256',
+    });
+    const supportedRequest = new Request(URL_UNDER_TEST, {
+      method: 'POST',
+      headers: supported,
+      body: '{"type":"Follow"}',
+    });
+    assert.equal(await verifyHttpSignature(supportedRequest, publicKeyPem), true);
   });
 
   it('parses labelled signatures and ignores labels without a matching value', () => {
