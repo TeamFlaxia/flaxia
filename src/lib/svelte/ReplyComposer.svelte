@@ -433,7 +433,6 @@ export function insertText(value: string): void {
         onkeydown={onKeydown}
         onpaste={onPaste}
       ></textarea>
-      <div class="reply-composer-remote-hint" style="color:var(--text-muted);font-size:0.75rem;margin-top:2px;">{t('composer.mention_remote_hint')}</div>
       {#if mentionOpen}
         <div bind:this={mentionDropdown} class="mention-dropdown" style="display:block;">
           {#each suggestions as suggestion, i (suggestion.key)}
