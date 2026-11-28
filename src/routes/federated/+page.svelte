@@ -1,7 +1,5 @@
 <script lang="ts">
 import { onMount } from 'svelte';
-// biome-ignore lint/correctness/noUnusedImports: used in <svelte:head>
-import { pageDescription } from '../../lib/page-title.ts';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
 import FederatedPage from '../../lib/svelte/FederatedPage.svelte';
 // biome-ignore lint/correctness/noUnusedImports: rendered in markup
@@ -27,12 +25,8 @@ onMount(() => {
 });
 </script>
 
-<svelte:head>
-  <meta name="description" content={pageDescription('/federated')} />
-  <meta property="og:description" content={pageDescription('/federated')} />
-  <meta name="twitter:description" content={pageDescription('/federated')} />
-</svelte:head>
-
+<!-- This route has no per-article title/canonical: the root layout owns its
+     description, OG, Twitter and JSON-LD tags, so no duplicate head tags here. -->
 <ShellLayout navProps={{ activeItem: 'federated', currentUser }}>
   <FederatedPage
     sandboxOrigin={import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'}

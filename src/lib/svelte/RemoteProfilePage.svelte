@@ -34,6 +34,13 @@ interface RemotePost {
 
 let { domain, username, currentUser, initialProfile }: Props = $props();
 
+// The API keeps a delivered request as `status = 'sent'` in ap_following while
+// the response body calls it `pending`; a rejected/accepted state is the only
+// finished state. Anything else still means "request sent, awaiting reply".
+function isFollowPending(state: string | null | undefined): boolean {
+  return state != null && state !== 'accepted' && state !== 'rejected';
+}
+
 const initialActor = initialProfile?.actor ?? null;
 let displayName = $state(
   initialActor?.display_name || (initialProfile ? `@${username}@${domain}` : t('profile.loading')),
@@ -48,7 +55,7 @@ let notFound = $state(Boolean(initialProfile) && !initialActor);
 let following = $state(
   initialProfile?.follow_state ? initialProfile.follow_state === 'accepted' : Boolean(initialProfile?.following),
 );
-let followPending = $state(initialProfile?.follow_state === 'pending');
+let followPending = $state(isFollowPending(initialProfile?.follow_state));
 let followVisible = $state(Boolean(initialActor));
 let followBusy = $state(false);
 
@@ -112,7 +119,7 @@ $effect(() => {
       bio = data.actor?.bio ?? null;
       actorUrl = data.actor?.actor_url ?? null;
       following = data.follow_state ? data.follow_state === 'accepted' : Boolean(data.following);
-      followPending = data.follow_state === 'pending';
+      followPending = isFollowPending(data.follow_state);
       followVisible = true;
       posts = data.posts ?? [];
       signalSsrHandover();
@@ -158,8 +165,9 @@ async function toggleFollow(): Promise<void> {
       followPending = false;
     } else {
       const body = (await response.json().catch(() => ({}))) as { status?: string };
-      followPending = body.status !== 'accepted';
-      following = body.status === 'accepted';
+      const status = body.status ?? 'pending';
+      followPending = isFollowPending(status);
+      following = status === 'accepted';
     }
   } catch {
     following = !following;

@@ -3,7 +3,9 @@ import { loadRemoteProfile } from '../../../lib/ssr-data.ts';
 import type { PageLoad } from './$types';
 
 const DOMAIN_PATTERN = /^[a-z0-9.-]+$/i;
-const USERNAME_PATTERN = /^[^\s/]+$/;
+// Same grammar as parseRemoteHandle(): the follow endpoint splits its target
+// on '@', so a username containing one would redirect to a different account.
+const USERNAME_PATTERN = /^[A-Za-z0-9_]{1,30}$/;
 
 export const load: PageLoad = async ({ fetch, params, setHeaders }) => {
   if (import.meta.env.BUILD_TARGET === 'native') return { profile: null };

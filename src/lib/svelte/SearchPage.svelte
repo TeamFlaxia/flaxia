@@ -107,6 +107,39 @@ function safeAvatarUrl(raw: string | null): string | null {
   }
 }
 
+// ap_following stores a delivered request as `sent` while the follow endpoint
+// answers `pending`. Both mean the request is still in flight; only accepted
+// (or rejected) is a final state.
+function isRemoteFollowPending(state: string | null | undefined): boolean {
+  return state != null && state !== 'accepted' && state !== 'rejected';
+}
+
+/** Read the viewer's follow state from the actor profile the lookup found. */
+async function seedRemoteFollowState(user: RemoteUserResult, id: number): Promise<void> {
+  const bare = user.handle.replace(/^@/, '');
+  const at = bare.lastIndexOf('@');
+  const username = at > 0 ? bare.slice(0, at) : bare;
+  const domain = user.domain || (at > 0 ? bare.slice(at + 1) : '');
+  if (!username || !domain) return;
+  try {
+    const response = await fetch(`/api/remote/actors/${encodeURIComponent(domain)}/${encodeURIComponent(username)}`, {
+      credentials: 'include',
+    });
+    if (id !== requestId || destroyed || remoteUser?.handle !== user.handle || !response.ok) return;
+    const data = (await response.json().catch(() => ({}))) as {
+      following?: boolean;
+      follow_state?: string | null;
+    };
+    if (id !== requestId || destroyed || remoteUser?.handle !== user.handle) return;
+    const state = data.follow_state ?? null;
+    remoteFollowing = state ? state === 'accepted' : Boolean(data.following);
+    remoteFollowPending = isRemoteFollowPending(state);
+  } catch {
+    // Lookup still succeeded; an unavailable profile just leaves the default
+    // "Follow" state in place.
+  }
+}
+
 async function lookupRemoteHandle(q: string, id: number): Promise<void> {
   remoteUser = null;
   remoteError = false;
@@ -119,7 +152,12 @@ async function lookupRemoteHandle(q: string, id: number): Promise<void> {
       remoteError = true;
       return;
     }
-    remoteUser = (await response.json()) as RemoteUserResult;
+    const found = (await response.json()) as RemoteUserResult;
+    remoteUser = found;
+    // A second request is deliberate: lookup is public and cached, but the
+    // follow state is per-viewer. Without this, an already-followed account
+    // shows "Follow" and a click only produces a 409.
+    await seedRemoteFollowState(found, id);
   } catch {
     if (id === requestId && !destroyed) remoteError = true;
   }
@@ -141,13 +179,20 @@ async function toggleRemoteFollow(): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target: remoteUser.handle.replace(/^@/, '') }),
     });
+    if (response.status === 409) {
+      // The API refuses duplicate requests. Adopt the state instead of
+      // showing a false error toast for an account we already follow.
+      remoteFollowing = true;
+      remoteFollowPending = false;
+      return;
+    }
     if (!response.ok) throw new Error('follow failed');
     // The follow state is SSR-loaded through the short-lived client cache;
     // invalidate it so returning to the profile never shows a stale state.
     window.dispatchEvent(new CustomEvent('followChanged'));
     if (!wasFollowing) {
       const body = (await response.json().catch(() => ({}))) as { status?: string };
-      remoteFollowPending = body.status === 'pending';
+      remoteFollowPending = isRemoteFollowPending(body.status ?? 'pending');
     } else {
       remoteFollowPending = false;
     }
@@ -384,6 +429,9 @@ onDestroy(() => {
           role="button"
           tabindex="0"
           onkeydown={(e) => {
+            // Enter/Space on the nested follow button must toggle the follow
+            // state, not navigate away from the search results.
+            if (e.target !== e.currentTarget) return;
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               goRemoteUser(remote);

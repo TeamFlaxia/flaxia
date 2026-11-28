@@ -270,7 +270,10 @@ describe('rendered FederatedPage', () => {
     });
     try {
       await tick();
-      assert.deepEqual(urls, ['/api/federated/posts?limit=20'], 'the page loads the ranked API');
+      // Link enrichment also warms the shared stamp cache; only the ranked
+      // feed request is relevant to this assertion.
+      const feedUrls = urls.filter((url) => url.startsWith('/api/federated/'));
+      assert.deepEqual(feedUrls, ['/api/federated/posts?limit=20'], 'the page loads the ranked API');
       // The response deliberately reverses both score and chronological order:
       // the rendered order must be exactly the order the server returned.
       assert.deepEqual(text(page.root, '.post-text'), ['newer, lower score', 'older, higher score']);
@@ -362,7 +365,7 @@ describe('GET /api/federated/posts', () => {
     path: string,
     env: Bindings,
     viewer: User | null = null,
-  ): Promise<{ status: number; ids: string[] }> {
+  ): Promise<{ status: number; ids: string[]; nextCursor: string | null }> {
     const app = new Hono<AppEnv>();
     app.use('*', async (c, next) => {
       if (viewer) c.set('user', viewer);
@@ -371,8 +374,12 @@ describe('GET /api/federated/posts', () => {
     app.route('/', federatedRoute);
     const response = await app.request(`http://localhost${path}`, {}, env);
     assert.equal(response.status, 200, `${path} → ${response.status}: ${await response.clone().text()}`);
-    const data = (await response.json()) as { posts: Array<{ id: string }> };
-    return { status: response.status, ids: data.posts.map((post) => post.id) };
+    const data = (await response.json()) as { posts: Array<{ id: string }>; next_cursor?: string | null };
+    return {
+      status: response.status,
+      ids: data.posts.map((post) => post.id),
+      nextCursor: data.next_cursor ?? null,
+    };
   }
 
   it('ranks by pool score, not by creation time, and paginates by exact id', async () => {
@@ -388,10 +395,10 @@ describe('GET /api/federated/posts', () => {
     ]);
     const firstPage = await get('/federated/posts?limit=1', env);
     assert.deepEqual(firstPage.ids, ['high-score-old']);
-    const secondPage = await get(
-      '/federated/posts?limit=1&cursor=9%2C2026-11-20T00%3A00%3A00.000Z%2Chigh-score-old',
-      env,
-    );
+    assert.ok(firstPage.nextCursor, 'a full page must return an opaque continuation cursor');
+    // The cursor format is an API implementation detail (it changed from a
+    // score tuple to an opaque token); replay exactly what the server issued.
+    const secondPage = await get(`/federated/posts?limit=1&cursor=${encodeURIComponent(firstPage.nextCursor)}`, env);
     assert.deepEqual(secondPage.ids, ['mid-score']);
   });
 

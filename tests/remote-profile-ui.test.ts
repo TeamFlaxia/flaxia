@@ -332,3 +332,69 @@ describe('remote profile bio rendering', () => {
     }
   });
 });
+
+describe('remote follow state', () => {
+  const actor = {
+    actor_url: 'https://remote.example/users/bob',
+    display_name: 'Bob',
+    icon_url: null,
+    bio: null,
+  };
+  const button = (root: Element): HTMLButtonElement => {
+    const found = root.querySelector('.profile-follow-button');
+    assert.ok(found, 'the follow button must be rendered');
+    return found as HTMLButtonElement;
+  };
+
+  it('shows a sent follow request as pending and disables the button on SSR data', async () => {
+    const page = await mount('src/lib/svelte/RemoteProfilePage.svelte', {
+      domain: 'remote.example',
+      username: 'bob',
+      currentUser: { username: 'alice' },
+      initialProfile: { actor, following: false, follow_state: 'sent', posts: [] },
+    });
+    try {
+      assert.equal(button(page.root).textContent?.trim(), 'search.remote_follow_pending');
+      assert.equal(button(page.root).disabled, true, 'a delivered request must not be sent twice');
+    } finally {
+      page.done();
+    }
+  });
+
+  it('shows a sent follow request as pending after a client fetch', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ actor, following: false, follow_state: 'sent', posts: [] }), {
+        status: 200,
+      })) as typeof fetch;
+    const page = await mount('src/lib/svelte/RemoteProfilePage.svelte', {
+      domain: 'remote.example',
+      username: 'bob',
+      currentUser: { username: 'alice' },
+    });
+    try {
+      await tick();
+      await tick();
+      assert.equal(button(page.root).textContent?.trim(), 'search.remote_follow_pending');
+      assert.equal(button(page.root).disabled, true);
+    } finally {
+      page.done();
+    }
+  });
+
+  it('keeps rejected and absent states actionable', async () => {
+    for (const followState of ['rejected', null]) {
+      const page = await mount('src/lib/svelte/RemoteProfilePage.svelte', {
+        domain: 'remote.example',
+        username: 'bob',
+        currentUser: { username: 'alice' },
+        initialProfile: { actor, following: false, follow_state: followState, posts: [] },
+      });
+      try {
+        assert.equal(button(page.root).textContent?.trim(), 'profile.follow');
+        assert.equal(button(page.root).disabled, false);
+      } finally {
+        page.done();
+      }
+    }
+  });
+});

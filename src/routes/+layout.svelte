@@ -27,7 +27,8 @@ const OWN_META_ROUTES: ReadonlySet<string> = new Set([
   '/arcade',
   '/arcade/[id]',
   '/download',
-  '/federated',
+  // `/federated` has no route-specific title/canonical: it uses the generic
+  // OG/Twitter/JSON-LD tags from this layout.
   '/docs',
   '/docs/[slug]',
   '/about',
